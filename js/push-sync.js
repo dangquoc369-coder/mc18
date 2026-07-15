@@ -6,44 +6,59 @@
  * còn đang chạy (kể cả chạy nền/tab khác), KHÔNG hoạt động khi app đã đóng
  * hẳn hoặc máy khoá lâu.
  *
- * CÁCH HOẠT ĐỘNG:
+ * FIX (đợt fix mới nhất - PHỐI HỢP VỚI login.js, "tài khoản nhẹ" tên+PIN):
+ *   Trước đây getDeviceId() TỰ SINH 1 chuỗi ngẫu nhiên nếu localStorage
+ *   chưa có gì - đây chính là nguồn gốc vấn đề "2 người dùng chung 1 thiết
+ *   bị/trình duyệt thì lẫn cảnh báo của nhau, đổi thiết bị thì mất cảnh
+ *   báo cũ" mà không có cách nào đăng nhập lại đúng "danh tính" trên thiết
+ *   bị khác.
+ *
+ *   Giờ đã có login.js lo việc hỏi Tên + PIN và lưu "tên" đó vào ĐÚNG key
+ *   DEVICE_ID_KEY này trước khi push-sync.js kịp chạy đồng bộ (login.js
+ *   luôn reload trang ngay sau khi đăng nhập xong, nên tới lúc
+ *   push-sync.js init() chạy, key này CHẮC CHẮN đã có identity thật do
+ *   người dùng chọn).
+ *
+ *   getDeviceId() ở đây được sửa lại: KHÔNG còn tự sinh id ngẫu nhiên nữa
+ *   - nếu chưa có identity thì trả về null, và mọi hàm sync đều bỏ qua
+ *     (return sớm) khi chưa có identity. Điều này đảm bảo:
+ *     (1) Không bao giờ vô tình tạo ra 1 "hồ sơ ẩn danh ngẫu nhiên" nào
+ *         trên Worker nữa - mọi deviceId gửi lên server từ giờ ĐỀU là tên
+ *         người dùng tự chọn qua login.js.
+ *     (2) Nếu vì lý do gì đó login.js không chạy được (lỗi mạng, JS bị
+ *         chặn...), push-sync.js sẽ tự động im lặng bỏ qua thay vì đồng bộ
+ *         nhầm dưới 1 danh tính rác.
+ *
+ * CÁCH HOẠT ĐỘNG (còn lại, không đổi):
  *   1) ensureSubscription(): đăng ký Push Subscription qua PushManager của
  *      trình duyệt (dùng VAPID public key lấy từ Worker), rồi gửi lên Worker
  *      để lưu lại (worker/src/index.js: POST /api/subscribe).
- *   2) syncAlerts(): mỗi khi AlertsModule có thay đổi (thêm/xoá cảnh báo),
- *      gửi TOÀN BỘ danh sách cảnh báo hiện tại lên Worker (worker/src/
- *      index.js: POST /api/alerts). Worker sẽ tự kiểm tra giá mỗi phút bằng
- *      Cron Trigger và gửi push khi giá chạm mức - hoàn toàn không phụ
- *      thuộc vào việc máy bạn có đang mở app hay không.
+ *   2) syncAlerts()/syncSignals(): mỗi khi có thay đổi, gửi TOÀN BỘ cấu
+ *      hình cảnh báo/tín hiệu hiện tại lên Worker. Worker tự kiểm tra bằng
+ *      Cron Trigger và gửi push khi tới lúc - không phụ thuộc việc máy có
+ *      đang mở app hay không.
  *
- * BẮT BUỘC: đổi WORKER_URL bên dưới thành địa chỉ Worker bạn đã deploy (xem
- * HUONG_DAN.md). Nếu để nguyên placeholder, module này sẽ không làm gì cả.
+ * BẮT BUỘC: đổi WORKER_URL bên dưới thành địa chỉ Worker bạn đã deploy, và
+ * PHẢI GIỐNG HỆT WORKER_URL trong login.js.
  */
 
 const PushSync = (function () {
   const WORKER_URL = 'https://dq-tracker-push.quocngyendanght.workers.dev';
-  const DEVICE_ID_KEY = 'dq_tracker_device_id_v1';
+  const DEVICE_ID_KEY = 'dq_tracker_device_id_v1'; // PHẢI khớp login.js
 
   function isConfigured() {
     return !!WORKER_URL && WORKER_URL.startsWith('https://');
   }
 
+  // FIX: KHÔNG còn tự sinh id ngẫu nhiên. Trả về null nếu người dùng chưa
+  // đăng nhập (chưa có identity do login.js lưu) - mọi hàm gọi hàm này bên
+  // dưới đều phải tự kiểm tra null và bỏ qua.
   function getDeviceId() {
-    let id;
     try {
-      id = localStorage.getItem(DEVICE_ID_KEY);
+      return localStorage.getItem(DEVICE_ID_KEY) || null;
     } catch (err) {
-      id = null;
+      return null;
     }
-    if (!id) {
-      id = uid('device');
-      try {
-        localStorage.setItem(DEVICE_ID_KEY, id);
-      } catch (err) {
-        // localStorage không khả dụng - vẫn dùng id tạm cho phiên này.
-      }
-    }
-    return id;
   }
 
   function urlBase64ToUint8Array(base64String) {
@@ -55,6 +70,8 @@ const PushSync = (function () {
 
   async function ensureSubscription() {
     if (!isConfigured()) return null;
+    const deviceId = getDeviceId();
+    if (!deviceId) return null; // chưa đăng nhập - chờ login.js
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) return null;
     if (!('Notification' in window) || Notification.permission !== 'granted') return null;
 
@@ -75,7 +92,7 @@ const PushSync = (function () {
       await fetch(`${WORKER_URL}/api/subscribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceId: getDeviceId(), subscription: sub.toJSON() }),
+        body: JSON.stringify({ deviceId, subscription: sub.toJSON() }),
       });
 
       return sub;
@@ -87,6 +104,8 @@ const PushSync = (function () {
 
   async function syncAlerts() {
     if (!isConfigured()) return;
+    const deviceId = getDeviceId();
+    if (!deviceId) return; // chưa đăng nhập - chờ login.js
     try {
       await ensureSubscription();
 
@@ -97,7 +116,7 @@ const PushSync = (function () {
       await fetch(`${WORKER_URL}/api/alerts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceId: getDeviceId(), alerts }),
+        body: JSON.stringify({ deviceId, alerts }),
       });
     } catch (err) {
       console.error('Lỗi khi đồng bộ cảnh báo lên Worker:', err);
@@ -106,6 +125,8 @@ const PushSync = (function () {
 
   async function syncSignals() {
     if (!isConfigured()) return;
+    const deviceId = getDeviceId();
+    if (!deviceId) return; // chưa đăng nhập - chờ login.js
     try {
       await ensureSubscription();
 
@@ -131,7 +152,7 @@ const PushSync = (function () {
       await fetch(`${WORKER_URL}/api/signals`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceId: getDeviceId(), signals }),
+        body: JSON.stringify({ deviceId, signals }),
       });
     } catch (err) {
       console.error('Lỗi khi đồng bộ tín hiệu lên Worker:', err);
@@ -148,6 +169,7 @@ const PushSync = (function () {
     }
 
     // Đồng bộ lại mỗi khi danh sách cảnh báo đổi (thêm/xoá/kích hoạt).
+    // syncAlerts() tự bỏ qua nếu chưa có deviceId (chưa đăng nhập).
     EventBus.on('alerts:changed', () => syncAlerts());
 
     // Đồng bộ tín hiệu khi có thay đổi cấu hình pane, symbol, timeframe hoặc breakout/signal
@@ -167,7 +189,10 @@ const PushSync = (function () {
     });
 
     // Đồng bộ 1 lần lúc khởi động, phòng trường hợp đã có quyền từ trước
-    // (vd mở lại app sau khi đã cấp quyền ở lần dùng trước).
+    // (vd mở lại app sau khi đã cấp quyền ở lần dùng trước). Nếu chưa đăng
+    // nhập (chưa có deviceId), 2 hàm này tự bỏ qua - login.js sẽ hiện màn
+    // đăng nhập; sau khi đăng nhập xong trang sẽ reload và luồng này chạy
+    // lại từ đầu với deviceId hợp lệ.
     setTimeout(() => {
       syncAlerts();
       syncSignals();
