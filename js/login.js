@@ -147,7 +147,7 @@ const LoginModule = (function () {
           Tên chưa ai dùng → tự tạo hồ sơ mới cho bạn.<br>
           Tên đã có → nhập đúng PIN cũ để lấy lại cảnh báo của mình.
         </div>
-        <input type="text" id="loginUsername" placeholder="Tên của bạn (vd: quoc, chi...)" autocomplete="off">
+        <input type="text" id="loginUsername" placeholder="Tên của bạn (vd: quoc, an...)" autocomplete="off">
         <input type="password" id="loginPin" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="PIN (4-6 số)" autocomplete="off">
         <div id="loginError" class="login-error"></div>
         <button id="loginSubmitBtn" type="button">Vào app</button>
@@ -279,6 +279,15 @@ const LoginModule = (function () {
       console.warn('[login.js] Chưa cấu hình WORKER_URL - bỏ qua màn hình đăng nhập.');
       return;
     }
+    // FIX: injectStyles() trước đây CHỈ được gọi bên trong buildOverlay()
+    // (nhánh "chưa đăng nhập") - nghĩa là người ĐÃ đăng nhập từ trước (đi
+    // thẳng vào buildProfileBadge()) không bao giờ có CSS responsive được
+    // chèn vào trang -> #profileBadgeBtn không bị ẩn trên mobile, và
+    // #profileBadgeSidebar (1 <div> trần, mặc định display:block) cũng
+    // luôn hiện -> cả 2 cùng hiện cùng lúc. Gọi injectStyles() ngay ở đây,
+    // KHÔNG phụ thuộc nhánh nào, để CSS luôn có mặt trước khi tạo bất kỳ
+    // nút nào bên dưới.
+    injectStyles();
     const username = getStoredUsername();
     if (!username) {
       showLoginOverlay();
