@@ -102,6 +102,35 @@ const LoginModule = (function () {
       }
       #loginOverlay button#loginSubmitBtn:disabled { opacity: 0.6; cursor: default; }
       #profileBadgeBtn .btn-text { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: bottom; }
+
+      /* FIX (đợt fix này): nút "👤 tên" trong topbar bị dồn xuống dòng 2
+         trên mobile vì topbar-right đã đủ chật (flex-wrap: wrap) - thừa 1
+         nút là bị đẩy xuống, chiếm thêm hẳn 1 dòng chiều cao. Giải pháp:
+         ẨN hẳn nút này khỏi topbar trên mobile, thay bằng 1 dòng nhỏ trong
+         sidebar-header (nơi có sẵn chỗ trống, chỉ hiện khi người dùng bấm
+         ☰ mở sidebar - không tranh chỗ với topbar nữa). */
+      #profileBadgeSidebar {
+        display: none;
+        align-items: center;
+        gap: 6px;
+        margin: 10px 12px 4px;
+        padding: 7px 10px;
+        border: 1px solid var(--border-color, #2c3244);
+        border-radius: 6px;
+        font-size: 12px;
+        color: var(--text-primary, #d1d4dc);
+        cursor: pointer;
+        width: fit-content;
+        max-width: calc(100% - 24px);
+        box-sizing: border-box;
+      }
+      #profileBadgeSidebar .pbs-name {
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px;
+      }
+      @media (max-width: 900px) {
+        #profileBadgeBtn { display: none !important; }
+        #profileBadgeSidebar { display: flex !important; }
+      }
     `;
     document.head.appendChild(style);
   }
@@ -118,7 +147,7 @@ const LoginModule = (function () {
           Tên chưa ai dùng → tự tạo hồ sơ mới cho bạn.<br>
           Tên đã có → nhập đúng PIN cũ để lấy lại cảnh báo của mình.
         </div>
-        <input type="text" id="loginUsername" placeholder="Tên của bạn (vd: quoc, an...)" autocomplete="off">
+        <input type="text" id="loginUsername" placeholder="Tên của bạn (vd: quoc, chi...)" autocomplete="off">
         <input type="password" id="loginPin" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="PIN (4-6 số)" autocomplete="off">
         <div id="loginError" class="login-error"></div>
         <button id="loginSubmitBtn" type="button">Vào app</button>
@@ -198,25 +227,50 @@ const LoginModule = (function () {
     usernameInput.focus();
   }
 
+  function confirmSwitchAccount(username) {
+    const confirmed = window.confirm(
+      `Đổi sang tài khoản khác trên máy này?\n\nApp sẽ tải lại và hỏi tên + PIN mới. Tài khoản "${username}" và cảnh báo của nó vẫn còn nguyên trên máy chủ - đăng nhập lại đúng tên + PIN là lấy lại được.`
+    );
+    if (confirmed) {
+      clearStoredUsername();
+      window.location.reload();
+    }
+  }
+
+  // FIX (đợt fix này): tạo 2 nút thay vì 1 - nút trong topbar (chỉ hiện ở
+  // desktop) và nút gọn trong sidebar-header (chỉ hiện ở mobile, xem CSS
+  // trong injectStyles). Trên mobile, topbar vốn đã chật (flex-wrap) nên
+  // thêm 1 nút nữa sẽ bị đẩy xuống dòng 2 chiếm thêm chiều cao - đặt nút
+  // trong sidebar-header giải quyết tận gốc vì sidebar có sẵn chỗ trống và
+  // chỉ hiện khi người dùng chủ động bấm ☰ mở ra.
   function buildProfileBadge(username) {
-    const btn = document.createElement('button');
-    btn.id = 'profileBadgeBtn';
-    btn.className = 'topbar-btn';
-    btn.type = 'button';
-    btn.innerHTML = `<span class="btn-icon">👤</span><span class="btn-text"> ${username}</span>`;
-    btn.title = 'Bấm để đổi sang tài khoản khác';
-    btn.addEventListener('click', () => {
-      const confirmed = window.confirm(
-        `Đổi sang tài khoản khác trên máy này?\n\nApp sẽ tải lại và hỏi tên + PIN mới. Tài khoản "${username}" và cảnh báo của nó vẫn còn nguyên trên máy chủ - đăng nhập lại đúng tên + PIN là lấy lại được.`
-      );
-      if (confirmed) {
-        clearStoredUsername();
-        window.location.reload();
-      }
-    });
-    const target = document.querySelector('.topbar-right') || document.getElementById('topbar');
-    if (target) {
-      target.appendChild(btn);
+    // --- Bản topbar (desktop) - giữ nguyên như cũ ---
+    const topbarBtn = document.createElement('button');
+    topbarBtn.id = 'profileBadgeBtn';
+    topbarBtn.className = 'topbar-btn';
+    topbarBtn.type = 'button';
+    topbarBtn.innerHTML = `<span class="btn-icon">👤</span><span class="btn-text"> ${username}</span>`;
+    topbarBtn.title = 'Bấm để đổi sang tài khoản khác';
+    topbarBtn.addEventListener('click', () => confirmSwitchAccount(username));
+    const topbarTarget = document.querySelector('.topbar-right') || document.getElementById('topbar');
+    if (topbarTarget) {
+      topbarTarget.appendChild(topbarBtn);
+    }
+
+    // --- Bản sidebar (mobile) - ẩn mặc định, CSS tự hiện khi màn hình hẹp ---
+    // Chèn làm 1 HÀNG RIÊNG ngay sau .sidebar-header (không nhét vào BÊN
+    // TRONG header - header là 1 flex-row đã chật sẵn logo + nút ☰, nhét
+    // thêm vào đó dễ bị tràn/đè lên nhau). #sidebar là flex-column nên 1
+    // phần tử block đặt làm sibling của .sidebar-header sẽ tự chiếm trọn 1
+    // dòng riêng, không ảnh hưởng gì tới bố cục header.
+    const sidebarBtn = document.createElement('div');
+    sidebarBtn.id = 'profileBadgeSidebar';
+    sidebarBtn.innerHTML = `<span>👤</span><span class="pbs-name">${username}</span><span style="margin-left:auto; opacity:0.6;">⇄</span>`;
+    sidebarBtn.title = 'Bấm để đổi sang tài khoản khác';
+    sidebarBtn.addEventListener('click', () => confirmSwitchAccount(username));
+    const sidebarHeader = document.querySelector('.sidebar-header');
+    if (sidebarHeader && sidebarHeader.parentElement) {
+      sidebarHeader.insertAdjacentElement('afterend', sidebarBtn);
     }
   }
 
