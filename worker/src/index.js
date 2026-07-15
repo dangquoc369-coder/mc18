@@ -6,62 +6,91 @@
  * giá + quyết định báo hay không" giờ chạy trên server (Cron Trigger), không
  * còn phụ thuộc vào việc tab có đang mở hay không như AlertsModule cũ.
  *
- * ĐÃ BỎ phần breakout (server-side BUY/SELL signal) để giảm số lượt đọc/ghi
- * Workers KV - tài khoản đã chạm 90% giới hạn free tier. Nếu vẫn còn chạm
- * giới hạn sau khi bỏ breakout, khả năng cao là do phía client gọi
- * /api/alerts quá thường xuyên (mỗi lần gọi tốn 1 read + có thể 1 write) -
- * nên kiểm tra lại tần suất client đồng bộ.
+ * FIX (đợt fix mới nhất - SỬA LỖI BÁO LẶP 1 CHIỀU LIÊN TỤC):
+ *   Nguyên nhân thật sự: cả CRON và CLIENT (push-sync.js gọi /api/alerts,
+ *   /api/signals) cùng đọc-sửa-ghi (read-modify-write) CHUNG 1 KEY KV chứa
+ *   cả "cấu hình" (id/symbol/price, hoặc paneId/symbol/timeframe...) LẪN
+ *   "trạng thái đã báo" (side/triggered, hoặc lastDirection/lastNotifiedTime).
  *
- * (đã thêm lại) phần breakout server-side (checkSignalsAndNotify) - xem
- * ghi chú "FIX (đợt fix này)" bên dưới về lỗi symbol không map được sang
- * Yahoo Finance ticker khiến tính năng này trước đó không hoạt động.
+ *   Kịch bản gây lỗi (race condition / lost update):
+ *     1) Cron đọc key, tính ra tín hiệu mới, chuẩn bị ghi lại key với
+ *        side/lastDirection đã cập nhật.
+ *     2) ĐÚNG lúc đó, client tự động sync lại (vd app resume sau khi khoá
+ *        màn hình - push-sync.js có gọi lại syncAlerts()/syncSignals() lúc
+ *        khởi động và mỗi khi có thay đổi cấu hình). Client đọc key NGAY
+ *        TRƯỚC khi cron ghi xong -> lấy phải bản CŨ (side/lastDirection
+ *        chưa cập nhật).
+ *     3) Cron ghi xong bản MỚI.
+ *     4) Client ghi ĐÈ lại bằng bản merge dựa trên dữ liệu CŨ nó đọc ở bước
+ *        2 -> side/lastDirection bị "hoàn tác" về giá trị trước đó.
+ *     5) Tick cron kế tiếp: vì state đã bị revert, điều kiện so sánh
+ *        side/lastDirection lại đúng dù giá/chiều không hề đổi thật ->
+ *        BÁO LẶP LẠI tín hiệu/cảnh báo cũ, dù server code so sánh "đổi
+ *        chiều mới báo" là ĐÚNG về mặt logic.
  *
- * FIX (đợt fix mới nhất - giảm tải Workers KV, đã chạm 50% giới hạn/ngày):
- *   1) checkSignalsAndNotify() trước đây gửi noti MỖI KHI có nến mới đóng
- *      thoả điều kiện breakout, kể cả khi vẫn CÙNG CHIỀU với tín hiệu đã báo
- *      trước đó (vd đang BUY, nến sau vẫn breakout lên -> báo BUY tiếp) ->
- *      vừa spam thông báo, vừa ghi KV liên tục. Giờ chỉ ghi KV + gửi push khi
- *      CHIỀU tín hiệu thực sự đảo (BUY -> SELL hoặc ngược lại).
- *   2) Cron trước đây chạy 2 lần/phút (cách nhau 30s) cho CẢ alerts giá lẫn
- *      signals BUY/SELL -> nhân đôi số lượt đọc/ghi KV mỗi ngày. Phần
- *      signals BUY/SELL không cần độ trễ 30s (khung nến ngắn nhất theo dõi
- *      là 5 phút) nên giờ chỉ chạy 1 lần/phút. Alerts giá vẫn giữ 2 lần/phút
- *      như cũ vì cần phản ứng nhanh với biến động giá.
+ *   Cách sửa: tách MỖI loại dữ liệu thành 2 key KV riêng biệt:
+ *     - *_CONFIG_KEY : CHỈ client ghi (qua /api/alerts, /api/signals) - chỉ
+ *       chứa thông tin cấu hình thuần (id/symbol/price hoặc
+ *       paneId/symbol/timeframe/higherTF/lookbackCandles). KHÔNG chứa
+ *       side/triggered/lastDirection/lastNotifiedTime.
+ *     - *_STATE_KEY   : CHỈ cron ghi (checkAlertsAndNotify/
+ *       checkSignalsAndNotify) - chứa side/triggered hoặc
+ *       lastDirection/lastNotifiedTime, khớp theo id (alerts) hoặc
+ *       paneId+symbol+timeframe (signals).
+ *   Vì client KHÔNG BAO GIỜ ghi vào *_STATE_KEY nữa, cron là bên DUY NHẤT
+ *   ghi key đó -> không còn 2 tiến trình tranh nhau ghi đè cùng 1 key ->
+ *   hết lost update -> hết báo lặp.
+ *
+ * (Các ghi chú cũ về giới hạn Workers KV, breakout server-side, tần suất
+ * cron... vẫn giữ nguyên như các đợt fix trước, không đổi.)
  *
  * 3 endpoint HTTP:
  *   GET  /api/vapid-public-key  -> trả VAPID public key cho client dùng khi
  *                                  subscribe PushManager.
  *   POST /api/subscribe         -> lưu Push Subscription của 1 thiết bị.
- *   POST /api/alerts            -> đồng bộ toàn bộ danh sách cảnh báo giá
- *                                  hiện tại của 1 thiết bị (ghi đè).
- *   POST /api/signals           -> đồng bộ toàn bộ danh sách tín hiệu
- *                                  BUY/SELL cần theo dõi của 1 thiết bị.
+ *   POST /api/alerts            -> đồng bộ CẤU HÌNH cảnh báo giá hiện tại
+ *                                  của 1 thiết bị (ghi đè CONFIG, KHÔNG đụng
+ *                                  vào STATE side/triggered).
+ *   POST /api/signals           -> đồng bộ CẤU HÌNH tín hiệu BUY/SELL cần
+ *                                  theo dõi của 1 thiết bị (ghi đè CONFIG,
+ *                                  KHÔNG đụng vào STATE lastDirection/
+ *                                  lastNotifiedTime).
  *
  * 1 cron handler (scheduled), cấu hình chạy MỖI PHÚT trong wrangler.toml:
  *   - Gom toàn bộ symbol đang cần theo dõi từ MỌI thiết bị (loại trùng).
  *   - Gọi 1 lần API CoinGecko để lấy giá hiện tại của các symbol cần theo dõi.
  *   - Với mỗi cảnh báo CHƯA triggered: so "phía" hiện tại (trên/dưới mức
- *     cảnh báo) với "phía" đã lưu lần trước - đổi phía = vừa "vượt qua" mức
- *     cảnh báo -> gửi Web Push + đánh dấu triggered (giống hệt logic
- *     checkPrice() trong alerts.js gốc, chỉ khác là chạy trên server).
+ *     cảnh báo) với "phía" đã lưu lần trước (đọc/ghi ở ALERTS_STATE_KEY) -
+ *     đổi phía = vừa "vượt qua" mức cảnh báo -> gửi Web Push + đánh dấu
+ *     triggered.
  *   - Lần đầu tiên thấy 1 cảnh báo (chưa có "side" lưu trước đó) chỉ ghi
  *     nhận baseline, KHÔNG báo ngay - tránh báo nhầm ngay khi vừa tạo cảnh
  *     báo lúc giá đã ở phía đó từ trước.
  *   - Với signals BUY/SELL: chỉ báo khi CHIỀU tín hiệu đảo so với lần báo
- *     trước (xem ghi chú FIX ở trên) - không báo liên tục khi vẫn cùng chiều.
+ *     trước (đọc/ghi ở SIGNALS_STATE_KEY) - không báo liên tục khi vẫn
+ *     cùng chiều.
  *
  * LƯU Ý VỀ GIỚI HẠN FREE TIER CỦA WORKERS KV:
  *   - Free tier: ~100.000 lượt đọc/ngày, ~1.000 lượt ghi/ngày.
  *   - Thiết kế ở đây CHỈ GHI khi có thay đổi thật (alert vừa được tạo lần
  *     đầu, vừa triggered, hoặc signal vừa đảo chiều) - không ghi mỗi tick.
+ *   - Việc tách CONFIG/STATE thành 2 key riêng KHÔNG làm tăng số lượt đọc
+ *     đáng kể (mỗi lượt cron chạy đọc thêm 1 key nhỏ), nhưng giảm hẳn số
+ *     lượt ghi "vô ích" do bị client ghi đè lặp lại logic cũ.
  *   - checkAlertsAndNotify chạy 2 lần/phút (2880 lần/ngày), checkSignalsAndNotify
  *     chỉ chạy 1 lần/phút (1440 lần/ngày) để giảm tổng số operation.
  */
 
 import { buildPushPayload } from '@block65/webcrypto-web-push';
 
-const ALERTS_KEY = 'alerts_v1'; // { [deviceId]: [{id, symbol, price, side, triggered}] }
-const SIGNALS_KEY = 'signals_v1'; // { [deviceId]: [{paneId, symbol, timeframe, higherTF, lookbackCandles, lastNotifiedTime, lastDirection}] }
+// ===== CONFIG: CHỈ client ghi (qua /api/alerts, /api/signals) =====
+const ALERTS_CONFIG_KEY = 'alerts_config_v1'; // { [deviceId]: [{id, symbol, price}] }
+const SIGNALS_CONFIG_KEY = 'signals_config_v1'; // { [deviceId]: [{paneId, symbol, timeframe, higherTF, lookbackCandles}] }
+
+// ===== STATE: CHỈ cron ghi (checkAlertsAndNotify/checkSignalsAndNotify) =====
+const ALERTS_STATE_KEY = 'alerts_state_v1'; // { [deviceId]: { [alertId]: {side, triggered} } }
+const SIGNALS_STATE_KEY = 'signals_state_v1'; // { [deviceId]: { [signalStateKey]: {lastNotifiedTime, lastDirection} } }
+
 const SUBS_KEY = 'subs_v1'; // { [deviceId]: PushSubscriptionJSON }
 
 function withCors(resp) {
@@ -83,6 +112,13 @@ async function readJSON(kv, key, fallback) {
 
 async function writeJSON(kv, key, value) {
   await kv.put(key, JSON.stringify(value));
+}
+
+// Khoá dùng để định danh 1 signal trong STATE, khớp theo pane + symbol +
+// timeframe (không dùng higherTF/lookbackCandles vì đổi mấy cái đó vẫn nên
+// giữ nguyên lịch sử lastDirection của cùng 1 "vị trí theo dõi").
+function signalStateKey(s) {
+  return `${s.paneId}__${s.symbol}__${s.timeframe}`;
 }
 
 export default {
@@ -115,6 +151,10 @@ export default {
       return withCors(Response.json({ ok: true }));
     }
 
+    // FIX: /api/alerts giờ CHỈ ghi vào ALERTS_CONFIG_KEY - không còn đọc
+    // lại "existing" để giữ side/triggered rồi ghi đè cả 2 thứ chung 1 key
+    // như bản cũ (đó chính là nguồn gốc race condition với cron). State
+    // (side/triggered) nằm hẳn ở ALERTS_STATE_KEY, chỉ cron được đụng vào.
     if (url.pathname === '/api/alerts' && request.method === 'POST') {
       let body;
       try {
@@ -127,33 +167,24 @@ export default {
         return withCors(new Response('Payload không hợp lệ', { status: 400 }));
       }
 
-      const allAlerts = await readJSON(env.TRACKER_KV, ALERTS_KEY, {});
-      const existing = allAlerts[deviceId] || [];
+      const allConfig = await readJSON(env.TRACKER_KV, ALERTS_CONFIG_KEY, {});
 
-      // Giữ lại 'side'/'triggered' đã tính của các cảnh báo còn tồn tại (so
-      // theo id) - chỉ alert THỰC SỰ MỚI mới có side=null (chưa có baseline).
       const merged = alerts
         .filter((a) => a && a.id && a.symbol && typeof a.price === 'number')
-        .map((a) => {
-          const prev = existing.find((e) => e.id === a.id);
-          return {
-            id: a.id,
-            symbol: a.symbol,
-            price: a.price,
-            side: prev ? prev.side : null,
-            triggered: prev ? !!prev.triggered : false,
-          };
-        });
+        .map((a) => ({ id: a.id, symbol: a.symbol, price: a.price }));
 
       if (merged.length > 0) {
-        allAlerts[deviceId] = merged;
+        allConfig[deviceId] = merged;
       } else {
-        delete allAlerts[deviceId];
+        delete allConfig[deviceId];
       }
-      await writeJSON(env.TRACKER_KV, ALERTS_KEY, allAlerts);
+      await writeJSON(env.TRACKER_KV, ALERTS_CONFIG_KEY, allConfig);
       return withCors(Response.json({ ok: true, count: merged.length }));
     }
 
+    // FIX: tương tự /api/alerts - /api/signals giờ CHỈ ghi vào
+    // SIGNALS_CONFIG_KEY, không còn đọc lại "existing" để giữ
+    // lastNotifiedTime/lastDirection rồi ghi đè chung 1 key với cron.
     if (url.pathname === '/api/signals' && request.method === 'POST') {
       let body;
       try {
@@ -166,31 +197,24 @@ export default {
         return withCors(new Response('Payload không hợp lệ', { status: 400 }));
       }
 
-      const allSignals = await readJSON(env.TRACKER_KV, SIGNALS_KEY, {});
-      const existing = allSignals[deviceId] || [];
+      const allConfig = await readJSON(env.TRACKER_KV, SIGNALS_CONFIG_KEY, {});
 
-      // Keep tracking information for existing signals to prevent duplicates
       const merged = signals
         .filter((s) => s && s.paneId && s.symbol && s.timeframe && s.higherTF)
-        .map((s) => {
-          const prev = existing.find((e) => e.paneId === s.paneId && e.symbol === s.symbol && e.timeframe === s.timeframe);
-          return {
-            paneId: s.paneId,
-            symbol: s.symbol,
-            timeframe: s.timeframe,
-            higherTF: s.higherTF,
-            lookbackCandles: s.lookbackCandles || 2,
-            lastNotifiedTime: prev ? prev.lastNotifiedTime : null,
-            lastDirection: prev ? prev.lastDirection : null,
-          };
-        });
+        .map((s) => ({
+          paneId: s.paneId,
+          symbol: s.symbol,
+          timeframe: s.timeframe,
+          higherTF: s.higherTF,
+          lookbackCandles: s.lookbackCandles || 2,
+        }));
 
       if (merged.length > 0) {
-        allSignals[deviceId] = merged;
+        allConfig[deviceId] = merged;
       } else {
-        delete allSignals[deviceId];
+        delete allConfig[deviceId];
       }
-      await writeJSON(env.TRACKER_KV, SIGNALS_KEY, allSignals);
+      await writeJSON(env.TRACKER_KV, SIGNALS_CONFIG_KEY, allConfig);
       return withCors(Response.json({ ok: true, count: merged.length }));
     }
 
@@ -216,8 +240,7 @@ function sleep(ms) {
  * - checkSignalsAndNotify (tín hiệu BUY/SELL breakout) CHỈ chạy 1 lần/phút
  *   vì: (1) khung nến ngắn nhất theo dõi là 5 phút nên không cần độ trễ
  *   30s, (2) mỗi lần chạy đều gọi Yahoo Finance + có thể ghi KV, nên chạy
- *   2 lần/phút sẽ nhân đôi tải không cần thiết - đây là nguyên nhân chính
- *   khiến tài khoản chạm % giới hạn Workers KV free tier.
+ *   2 lần/phút sẽ nhân đôi tải không cần thiết.
  */
 async function runCronTick(env) {
   await Promise.allSettled([checkAlertsAndNotify(env), checkSignalsAndNotify(env)]);
@@ -226,17 +249,21 @@ async function runCronTick(env) {
 }
 
 async function checkAlertsAndNotify(env) {
-  const allAlerts = await readJSON(env.TRACKER_KV, ALERTS_KEY, {});
+  const allConfig = await readJSON(env.TRACKER_KV, ALERTS_CONFIG_KEY, {});
+  const allState = await readJSON(env.TRACKER_KV, ALERTS_STATE_KEY, {});
   const subs = await readJSON(env.TRACKER_KV, SUBS_KEY, {});
 
   console.log(
-    `[cron] devices=${Object.keys(allAlerts).length} subs=${Object.keys(subs).length}`
+    `[cron] devices=${Object.keys(allConfig).length} subs=${Object.keys(subs).length}`
   );
 
   const symbolSet = new Set();
-  Object.values(allAlerts).forEach((list) => {
-    (list || []).forEach((a) => {
-      if (!a.triggered) symbolSet.add(a.symbol);
+  Object.keys(allConfig).forEach((deviceId) => {
+    const list = allConfig[deviceId] || [];
+    const deviceState = allState[deviceId] || {};
+    list.forEach((a) => {
+      const st = deviceState[a.id];
+      if (!st || !st.triggered) symbolSet.add(a.symbol);
     });
   });
   if (symbolSet.size === 0) {
@@ -251,42 +278,47 @@ async function checkAlertsAndNotify(env) {
   }
   console.log('[cron] giá hiện tại:', JSON.stringify(prices));
 
-  let alertsChanged = false;
+  let stateChanged = false;
   let subsChanged = false;
 
-  for (const deviceId of Object.keys(allAlerts)) {
-    const list = allAlerts[deviceId] || [];
+  for (const deviceId of Object.keys(allConfig)) {
+    const list = allConfig[deviceId] || [];
     const subscription = subs[deviceId];
+    // Lấy (hoặc tạo mới) object state riêng cho device này - cron là bên
+    // DUY NHẤT ghi vào đây nên không sợ bị client ghi đè mất.
+    const deviceState = allState[deviceId] || (allState[deviceId] = {});
 
-    for (const alert of list) {
-      if (alert.triggered) continue;
-      const price = prices[alert.symbol];
+    for (const alertCfg of list) {
+      const st = deviceState[alertCfg.id] || (deviceState[alertCfg.id] = { side: null, triggered: false });
+      if (st.triggered) continue;
+
+      const price = prices[alertCfg.symbol];
       if (price === undefined || Number.isNaN(price)) continue;
 
-      const side = price >= alert.price ? 'above' : 'below';
+      const side = price >= alertCfg.price ? 'above' : 'below';
 
-      if (alert.side === null || alert.side === undefined) {
+      if (st.side === null || st.side === undefined) {
         // Lần đầu thấy cảnh báo này kể từ khi đồng bộ - chỉ lưu baseline.
         console.log(
-          `[cron] baseline mới cho ${deviceId}/${alert.symbol}@${alert.price}: giá hiện tại ${price} (${side})`
+          `[cron] baseline mới cho ${deviceId}/${alertCfg.symbol}@${alertCfg.price}: giá hiện tại ${price} (${side})`
         );
-        alert.side = side;
-        alertsChanged = true;
+        st.side = side;
+        stateChanged = true;
         continue;
       }
 
-      if (alert.side !== side) {
+      if (st.side !== side) {
         console.log(
-          `[cron] KÍCH HOẠT ${deviceId}/${alert.symbol}@${alert.price}: ${alert.side} -> ${side}, giá=${price}, có subscription=${!!subscription}`
+          `[cron] KÍCH HOẠT ${deviceId}/${alertCfg.symbol}@${alertCfg.price}: ${st.side} -> ${side}, giá=${price}, có subscription=${!!subscription}`
         );
-        alert.side = side;
-        alert.triggered = true;
-        alertsChanged = true;
+        st.side = side;
+        st.triggered = true;
+        stateChanged = true;
 
         if (subscription) {
           const stillValid = await sendPush(env, subscription, {
             title: '🔔 Cảnh báo giá',
-            body: `${alert.symbol} đã chạm mức ${price}`,
+            body: `${alertCfg.symbol} đã chạm mức ${price}`,
           });
           console.log(`[cron] gửi push cho ${deviceId} - subscription còn hợp lệ: ${stillValid}`);
           if (!stillValid) {
@@ -296,9 +328,31 @@ async function checkAlertsAndNotify(env) {
         }
       }
     }
+
+    // Dọn rác: xoá state của những alert đã bị người dùng xoá khỏi config
+    // (không còn nằm trong list) - tránh state phình to vô hạn theo thời
+    // gian. Việc này không gây race vì chỉ cron đọc VÀ ghi ALERTS_STATE_KEY.
+    const validIds = new Set(list.map((a) => a.id));
+    Object.keys(deviceState).forEach((id) => {
+      if (!validIds.has(id)) {
+        delete deviceState[id];
+        stateChanged = true;
+      }
+    });
+    if (Object.keys(deviceState).length === 0) {
+      delete allState[deviceId];
+    }
   }
 
-  if (alertsChanged) await writeJSON(env.TRACKER_KV, ALERTS_KEY, allAlerts);
+  // Dọn rác state của device không còn config nào (đã xoá hết cảnh báo).
+  Object.keys(allState).forEach((deviceId) => {
+    if (!allConfig[deviceId]) {
+      delete allState[deviceId];
+      stateChanged = true;
+    }
+  });
+
+  if (stateChanged) await writeJSON(env.TRACKER_KV, ALERTS_STATE_KEY, allState);
   if (subsChanged) await writeJSON(env.TRACKER_KV, SUBS_KEY, subs);
 }
 
@@ -473,17 +527,11 @@ const INTERVAL_MAP = {
 };
 
 /**
- * FIX (đợt fix trước): trước đây fetchYahooKlines() được gọi thẳng với
- * symbol dạng sàn (vd "BTCUSDT", "ETHUSDT") - Yahoo Finance KHÔNG hiểu
- * format này (ticker crypto trên Yahoo có dạng "BTC-USD", "ETH-USD"...),
- * nên request luôn thất bại/rỗng và checkSignalsAndNotify() luôn `continue`
- * ngay ở bước kiểm tra `!entryCandles` mà KHÔNG log lỗi gì -> tính năng
- * cảnh báo tín hiệu BUY/SELL im lặng không bao giờ hoạt động.
- *
- * Hàm này tái dùng splitSymbol()/STABLECOIN_AS_USD đã có sẵn (dùng chung
- * với phần CoinGecko) để tách base/quote rồi ghép lại thành ticker Yahoo
- * đúng chuẩn "BASE-QUOTE" (coi mọi stablecoin quy về USD, giống cách xử lý
- * bên fetchCoinGeckoPrices).
+ * Yahoo Finance KHÔNG hiểu ticker dạng sàn (vd "BTCUSDT") - ticker crypto
+ * trên Yahoo có dạng "BTC-USD", "ETH-USD"... Hàm này tái dùng splitSymbol()/
+ * STABLECOIN_AS_USD (dùng chung với phần CoinGecko) để tách base/quote rồi
+ * ghép lại thành ticker Yahoo đúng chuẩn "BASE-QUOTE" (coi mọi stablecoin
+ * quy về USD, giống cách xử lý bên fetchCoinGeckoPrices).
  *
  * Trả về null nếu không tách được symbol (để phân biệt với lỗi mạng/API).
  */
@@ -522,9 +570,7 @@ function aggregateCandles(candles, multiplierInSeconds) {
 /**
  * `symbol` truyền vào đây PHẢI là ticker đúng chuẩn Yahoo Finance (vd
  * "BTC-USD"), không phải symbol dạng sàn ("BTCUSDT") - xem toYahooTicker().
- * Thêm log lỗi rõ ràng ở mọi nhánh thất bại (khác bản gốc chỉ trả về null
- * lặng lẽ) để dễ debug qua `wrangler tail` khi tính năng tín hiệu không
- * hoạt động như mong đợi.
+ * Log lỗi rõ ràng ở mọi nhánh thất bại để dễ debug qua `wrangler tail`.
  */
 async function fetchYahooKlines(symbol, timeframe) {
   const mapping = INTERVAL_MAP[timeframe];
@@ -592,14 +638,15 @@ async function fetchYahooKlines(symbol, timeframe) {
 }
 
 async function checkSignalsAndNotify(env) {
-  const allSignals = await readJSON(env.TRACKER_KV, SIGNALS_KEY, {});
+  const allConfig = await readJSON(env.TRACKER_KV, SIGNALS_CONFIG_KEY, {});
+  const allState = await readJSON(env.TRACKER_KV, SIGNALS_STATE_KEY, {});
   const subs = await readJSON(env.TRACKER_KV, SUBS_KEY, {});
 
-  if (Object.keys(allSignals).length === 0) {
+  if (Object.keys(allConfig).length === 0) {
     return;
   }
 
-  let signalsChanged = false;
+  let stateChanged = false;
   let subsChanged = false;
 
   // Cache Yahoo Finance fetch requests so we only fetch once per symbol + timeframe in the same run
@@ -614,16 +661,18 @@ async function checkSignalsAndNotify(env) {
     return promise;
   }
 
-  for (const deviceId of Object.keys(allSignals)) {
-    const list = allSignals[deviceId] || [];
+  for (const deviceId of Object.keys(allConfig)) {
+    const list = allConfig[deviceId] || [];
     const subscription = subs[deviceId];
+    // Cron là bên DUY NHẤT ghi vào deviceState - client không còn đụng vào
+    // SIGNALS_STATE_KEY nữa (xem /api/signals ở trên).
+    const deviceState = allState[deviceId] || (allState[deviceId] = {});
 
-    for (const signal of list) {
-      const { symbol, timeframe, higherTF, lookbackCandles } = signal;
+    for (const cfg of list) {
+      const { symbol, timeframe, higherTF, lookbackCandles } = cfg;
+      const sKey = signalStateKey(cfg);
+      const state = deviceState[sKey] || (deviceState[sKey] = { lastNotifiedTime: null, lastDirection: null });
 
-      // FIX: symbol lưu trong signal là dạng sàn (vd "BTCUSDT") - phải đổi
-      // sang ticker Yahoo (vd "BTC-USD") trước khi fetch, nếu không request
-      // sẽ luôn thất bại.
       const yahooSymbol = toYahooTicker(symbol);
       if (!yahooSymbol) {
         console.log(`[signals-cron] không tách được base/quote cho symbol: ${symbol} - bỏ qua.`);
@@ -667,30 +716,25 @@ async function checkSignalsAndNotify(env) {
         direction = -1; // SELL
       }
 
-      // DEBUG (tạm thời - xoá sau khi test xong): in ra các giá trị dùng để
-      // tính breakout, để xác nhận nến fetch đúng và logic tính direction
-      // chạy đúng mà không cần chờ tín hiệu thật xảy ra.
       console.log(
         `[signals-cron][DEBUG] ${symbol} (${yahooSymbol}) entry=${timeframe} higher=${higherTF} ` +
         `lastEntryClose=${lastEntry.close} maxHigh=${maxHigh} minLow=${minLow} direction=${direction} ` +
-        `lastDirection=${signal.lastDirection} lastEntryTime=${lastEntry.time}`
+        `lastDirection=${state.lastDirection} lastEntryTime=${lastEntry.time}`
       );
 
       if (direction === 0) {
         continue;
       }
 
-      // FIX (đợt fix mới nhất): chỉ báo + ghi KV khi CHIỀU tín hiệu thực sự
-      // đảo so với lần báo trước (BUY -> SELL hoặc SELL -> BUY). Trước đây
-      // so sánh theo `lastNotifiedTime !== lastEntry.time` nên MỖI nến mới
-      // đóng thoả điều kiện breakout đều báo lại, kể cả khi vẫn cùng chiều
-      // với tín hiệu đã báo - gây báo liên tục + tốn KV write không cần
-      // thiết. `lastDirection` ban đầu là null nên tín hiệu đầu tiên (BUY
-      // hoặc SELL) vẫn được báo bình thường như cũ.
-      if (signal.lastDirection !== direction) {
-        signal.lastNotifiedTime = lastEntry.time;
-        signal.lastDirection = direction;
-        signalsChanged = true;
+      // Chỉ báo + ghi KV khi CHIỀU tín hiệu thực sự đảo so với lần báo
+      // trước (BUY -> SELL hoặc SELL -> BUY). state.lastDirection ban đầu
+      // là null nên tín hiệu đầu tiên (BUY hoặc SELL) vẫn được báo bình
+      // thường. Vì chỉ cron ghi state này, giá trị không còn bị client ghi
+      // đè/hoàn tác nữa -> hết báo lặp.
+      if (state.lastDirection !== direction) {
+        state.lastNotifiedTime = lastEntry.time;
+        state.lastDirection = direction;
+        stateChanged = true;
 
         const dirLabel = direction === 1 ? 'BUY 🔵' : 'SELL 🔴';
         const tfLabel = timeframe;
@@ -708,10 +752,32 @@ async function checkSignalsAndNotify(env) {
         }
       }
     }
+
+    // Dọn rác: xoá state của những signal đã bị người dùng xoá/đổi cấu hình
+    // khỏi config (đổi timeframe/symbol tạo ra sKey khác, cái cũ không còn
+    // dùng nữa). An toàn vì chỉ cron đọc VÀ ghi SIGNALS_STATE_KEY.
+    const validKeys = new Set(list.map(signalStateKey));
+    Object.keys(deviceState).forEach((k) => {
+      if (!validKeys.has(k)) {
+        delete deviceState[k];
+        stateChanged = true;
+      }
+    });
+    if (Object.keys(deviceState).length === 0) {
+      delete allState[deviceId];
+    }
   }
 
-  if (signalsChanged) {
-    await writeJSON(env.TRACKER_KV, SIGNALS_KEY, allSignals);
+  // Dọn rác state của device không còn config nào.
+  Object.keys(allState).forEach((deviceId) => {
+    if (!allConfig[deviceId]) {
+      delete allState[deviceId];
+      stateChanged = true;
+    }
+  });
+
+  if (stateChanged) {
+    await writeJSON(env.TRACKER_KV, SIGNALS_STATE_KEY, allState);
   }
   if (subsChanged) {
     await writeJSON(env.TRACKER_KV, SUBS_KEY, subs);
