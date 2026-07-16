@@ -147,7 +147,7 @@ const LoginModule = (function () {
           Tên chưa ai dùng → tự tạo hồ sơ mới cho bạn.<br>
           Tên đã có → nhập đúng PIN cũ để lấy lại cảnh báo của mình.
         </div>
-        <input type="text" id="loginUsername" placeholder="Tên của bạn (vd: quoc, an...)" autocomplete="off">
+        <input type="text" id="loginUsername" placeholder="Tên của bạn (vd: quoc, chi...)" autocomplete="off">
         <input type="password" id="loginPin" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="PIN (4-6 số)" autocomplete="off">
         <div id="loginError" class="login-error"></div>
         <button id="loginSubmitBtn" type="button">Vào app</button>
