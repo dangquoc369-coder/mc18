@@ -229,8 +229,17 @@
 
   /**
    * Khởi tạo 1 instance TrendReferenceModule riêng cho pane này và tải dữ
-   * liệu ban đầu cho toàn bộ 7 khung cố định (m5,m15,h1,h2,h4,d1,d3) - xem
-   * TrendReferenceModule.ROLE_INTERVAL trong trend-reference.js.
+   * liệu ban đầu cho các khung THẬT lấy từ Binance - danh sách này được đọc
+   * ĐỘNG từ TrendReferenceModule.ROLE_INTERVAL (m5, m15, m30, h2, h6, h12,
+   * d1) - xem trend-reference.js. Không hardcode danh sách khung ở đây, nên
+   * nếu sau này đổi cặp khung của Trend Swing/Scalp thì CHỈ cần sửa
+   * ROLE_INTERVAL/SWING_LEGS bên trend-reference.js, app.js tự động tải
+   * đúng khung mới mà không cần sửa gì thêm.
+   *
+   * Riêng D2 (2 ngày, dùng cho chân D1 của Trend Swing) KHÔNG có trong
+   * ROLE_INTERVAL vì Binance không có interval 2 ngày - trend-reference.js
+   * tự ghép D2 nội bộ từ dữ liệu D1 đã tải, nên vòng lặp roles bên dưới
+   * KHÔNG gọi REST/WebSocket riêng cho "d2".
    */
   async function setupTrendReference(paneId, symbol) {
     const instance = TrendReferenceModule.create(paneId);
@@ -261,10 +270,10 @@
   }
 
   /**
-   * Đổi symbol -> trend tham khảo của pane đó phải tải lại từ đầu (cả 7
-   * khung), vì toàn bộ dữ liệu cũ thuộc symbol cũ không còn dùng được.
-   * KHÔNG áp dụng khi chỉ đổi timeframe của pane (trend tham khảo không phụ
-   * thuộc timeframe đang xem).
+   * Đổi symbol -> trend tham khảo của pane đó phải tải lại từ đầu (các khung
+   * thật trong ROLE_INTERVAL), vì toàn bộ dữ liệu cũ thuộc symbol cũ không
+   * còn dùng được. KHÔNG áp dụng khi chỉ đổi timeframe của pane (trend tham
+   * khảo không phụ thuộc timeframe đang xem).
    */
   async function onPaneSymbolChangedForTrendRef({ paneId, symbol }) {
     const instance = trendRefInstances[paneId];
