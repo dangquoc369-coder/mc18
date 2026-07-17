@@ -77,7 +77,7 @@ const TrendReferenceModule = (function () {
   // cả 3 đều gọi chung computeSwingLeg(). KHÔNG ảnh hưởng Trend Scalp
   // (computeScalpTrend() không dùng hằng số này, logic scalp không có
   // sideway).
-  const SIDEWAY_CONSECUTIVE_CANDLES = 12;
+  const SIDEWAY_CONSECUTIVE_CANDLES = 15;
 
   // ===== Các hàm tiện ích căn chỉnh đa khung (giống ý tưởng trong breakout.js,
   // tách riêng ở đây để trend-reference.js không phụ thuộc vào breakout.js) =====
