@@ -2,17 +2,21 @@
  * marketstatus.js
  * Nút "Trạng thái thị trường" - CHỈ 1 NÚT DUY NHẤT dùng chung cho cả 4 pane.
  *
- * CẬP NHẬT (đợt fix trước): getMarketStatus nhận { entryCandles, higherTFCandles }
- * thay vì 1 mảng candles - lấy thêm higherTFCandles từ instance.getHigherTFCandles()
- * (xem chart.js). Bổ sung hiển thị "vùng breakout thật" (crossTF).
+ * (Các đợt fix trước: getMarketStatus nhận { entryCandles, higherTFCandles },
+ * bỏ injectStyles() cứng màu để theo theme sáng/tối - không đổi, xem comment
+ * gốc phía dưới.)
  *
- * CẬP NHẬT (đợt fix này - GIAO DIỆN CHUYÊN NGHIỆP + NỀN SÁNG):
- *   - Bỏ hẳn injectStyles() (từng chèn 1 thẻ <style> với màu HEX CỨNG như
- *     #1e222d/#d1d4dc...) - đây chính là lý do panel này "kẹt cứng" ở giao
- *     diện tối, không đổi theo khi bật nền sáng (theme.js chỉ đổi biến CSS,
- *     không đụng được vào CSS hardcode). Giờ panel + nút dùng chung class
- *     .ms-panel/.topbar-btn (định nghĩa trong css/style.css bằng biến CSS)
- *     - tự động đổi màu đúng theo theme hiện tại, không cần code gì thêm.
+ * CẬP NHẬT (đợt fix này - NÚT RELOAD THỦ CÔNG + THỜI GIAN CẬP NHẬT):
+ *   Vấn đề: TrendReferenceModule đôi khi cập nhật chậm hơn 1 nhịp so với dữ
+ *   liệu nến mới nhất (do cách căn chỉnh đa khung/aligner, xem trend-
+ *   reference.js) - trước đây muốn chắc ăn phải F5 lại cả trang.
+ *   Giải pháp: thêm nút 🔄 ngay trong header của panel - bấm là gọi lại
+ *   showStatus() (tính lại toàn bộ, y hệt logic cũ, không cần reload trang).
+ *   Đồng thời thêm dòng "Cập nhật lúc HH:MM:SS" - set lại mỗi lần
+ *   showStatus() chạy (dù do bấm nút reload, do đổi pane qua
+ *   EventBus 'pane:focused', hay mở panel lần đầu) - để luôn biết chắc panel
+ *   đang hiển thị dữ liệu tính tại thời điểm nào, không đoán mò "có phải live
+ *   không".
  */
 
 (function () {
@@ -26,6 +30,11 @@
     if (!unixSeconds) return '--';
     const d = new Date(unixSeconds * 1000);
     return d.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+  }
+
+  /** Giờ:phút:giây hiện tại của MÁY người dùng - dùng cho dòng "Cập nhật lúc". */
+  function formatNowClock() {
+    return new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
   function labelForSwing(v) {
@@ -42,9 +51,9 @@
   }
 
   /**
-   * Trend tham khảo MỚI (đợt fix này): luôn báo đủ Swing H1|H4|D1 + Scalp,
-   * KHÔNG phụ thuộc timeframe đang mở của pane - lấy từ TrendReferenceModule
-   * instance riêng của pane (xem TrendRefRegistry trong app.js).
+   * Trend tham khảo MỚI: luôn báo đủ Swing H1|H4|D1 + Scalp, KHÔNG phụ thuộc
+   * timeframe đang mở của pane - lấy từ TrendReferenceModule instance riêng
+   * của pane (xem TrendRefRegistry trong app.js).
    */
   function buildTrendReferenceHTML(trendRef) {
     if (!trendRef) {
@@ -93,7 +102,6 @@
 
     return `
       <div class="ms-row ms-bold">${paneLabel}</div>
-      <div class="ms-row ms-muted">⏱️ Nến đóng gần nhất: ${formatTime(status.lastClosedCandleTime)}</div>
       <div class="ms-divider"></div>
       ${trendRefHTML}
       ${tradeHTML}
@@ -107,17 +115,23 @@
     panel.innerHTML = `
       <div class="ms-header">
         <span>📊 Trạng thái thị trường</span>
-        <span class="ms-close">✕</span>
+        <span class="ms-header-actions">
+          <span class="ms-reload" title="Làm mới ngay">🔄</span>
+          <span class="ms-close" title="Đóng">✕</span>
+        </span>
       </div>
+      <div class="ms-row ms-muted ms-updated-row" id="msLastUpdated">🕒 Cập nhật lúc --:--:--</div>
       <div id="marketStatusBody"></div>
     `;
     document.body.appendChild(panel);
     panel.querySelector('.ms-close').addEventListener('click', () => panel.classList.remove('open'));
+    panel.querySelector('.ms-reload').addEventListener('click', () => showStatus(panel));
     return panel;
   }
 
   function showStatus(panel) {
     const body = panel.querySelector('#marketStatusBody');
+    const updatedEl = panel.querySelector('#msLastUpdated');
     try {
       const activePane = Store.getActivePane();
       const instance = window.PaneRegistry.get(activePane.id);
@@ -134,6 +148,9 @@
       body.innerHTML = `<div class="ms-row ms-muted">Lỗi khi lấy trạng thái: ${err.message}</div>`;
       console.error('marketstatus.js error:', err);
     }
+    // Luôn cập nhật mốc giờ, kể cả khi có lỗi ở trên - để biết chính xác lần
+    // tính gần nhất là lúc nào.
+    if (updatedEl) updatedEl.textContent = `🕒 Cập nhật lúc ${formatNowClock()}`;
     panel.classList.add('open');
   }
 

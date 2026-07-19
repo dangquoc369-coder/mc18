@@ -5,58 +5,71 @@
  * theme.js chỉ cần đổi attribute data-theme trên <html> là toàn bộ giao
  * diện tự cập nhật, không cần sửa gì thêm ở đây.
  *
+ * CẬP NHẬT (đợt fix "chuyên nghiệp hơn"): --accent-blue giờ mang nghĩa
+ * "màu tín hiệu" (hổ phách, ăn theo đúng chấm logo Bitcoin cam ở
+ * .logo-dot) thay vì xanh dương chung chung - GIỮ NGUYÊN TÊN BIẾN để mọi
+ * chỗ đang dùng var(--accent-blue) trong CSS lẫn JS (marker/border focus)
+ * tự đổi màu theo mà không cần sửa từng file. Thêm --font-mono (JetBrains
+ * Mono) dùng riêng cho số liệu (giá/%/đếm ngược) - xem index.html đã nạp 2
+ * webfont Inter + JetBrains Mono qua Google Fonts.
+ *
  * LƯU Ý: chart Lightweight Charts vẽ bằng canvas nên KHÔNG đọc được biến
- * CSS - màu nền/lưới/chữ của chart được set trực tiếp bằng JS trong
- * chart.js (xem CHART_THEME_COLORS), phải đổi song song với bảng màu ở
- * đây nếu muốn tinh chỉnh thêm.
+ * CSS - màu nền/lưới/chữ/nến/volume được set trực tiếp bằng JS trong
+ * chart.js (CHART_THEME) và breakout.js (marker/SL line) - đã đổi khớp
+ * tay sang cùng tông màu ở 2 file đó, xem comment trong từng file.
  */
 :root {
-  --bg-main: #0c0d14;
-  --bg-panel: #161720;
-  --bg-hover: #1f212d;
-  --bg-elevated: #1e202c;
-  --border-color: #202127;
-  --text-primary: #d1d4dc;
-  --text-secondary: #787b86;
-  --accent-blue: #2962ff;
-  --accent-blue-soft: rgba(41, 98, 255, 0.14);
-  --green: #26a69a;
-  --red: #ef5350;
-  --yellow: #f5c518;
-  --green-soft: rgba(38, 166, 154, 0.12);
-  --red-soft: rgba(239, 83, 80, 0.12);
-  --overlay-bg: rgba(22, 23, 32, 0.85);
-  --overlay-bg-strong: rgba(22, 23, 32, 0.94);
-  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.28);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.38);
-  --scrollbar-thumb: #363c4a;
-  --on-accent: #ffffff;
-  --font: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --bg-main: #0a0e14;
+  --bg-panel: #10141c;
+  --bg-hover: #171d28;
+  --bg-elevated: #131922;
+  --border-color: #212837;
+  --text-primary: #e6e9f0;
+  --text-secondary: #7c8496;
+  --accent-blue: #f2a339;
+  --accent-blue-soft: rgba(242, 163, 57, 0.14);
+  --green: #22c9a0;
+  --red: #ff5a67;
+  --yellow: #d1a53d;
+  --green-soft: rgba(34, 201, 160, 0.12);
+  --red-soft: rgba(255, 90, 103, 0.12);
+  --overlay-bg: rgba(16, 20, 28, 0.86);
+  --overlay-bg-strong: rgba(16, 20, 28, 0.95);
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 10px 26px rgba(0, 0, 0, 0.42);
+  --scrollbar-thumb: #2c3444;
+  --on-accent: #0a0e14;
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
   --sidebar-width: 260px; /* đổi runtime bởi sidebar-resize.js khi kéo/thu gọn */
   color-scheme: dark;
 }
 
 /* ===== NỀN SÁNG (light theme) - xem theme.js ===== */
 :root[data-theme="light"] {
-  --bg-main: #ffffff;
-  --bg-panel: #f7f8fb;
-  --bg-hover: #eef1f8;
+  --bg-main: #f8f9fb;
+  --bg-panel: #ffffff;
+  --bg-hover: #eef1f6;
   --bg-elevated: #ffffff;
-  --border-color: #e2e5ed;
-  --text-primary: #131722;
-  --text-secondary: #6b6f7b;
-  --accent-blue: #2962ff;
-  --accent-blue-soft: rgba(41, 98, 255, 0.1);
-  --green: #089981;
-  --red: #f23645;
-  --yellow: #b8860b;
-  --green-soft: rgba(8, 153, 129, 0.1);
-  --red-soft: rgba(242, 54, 69, 0.1);
-  --overlay-bg: rgba(255, 255, 255, 0.88);
-  --overlay-bg-strong: rgba(255, 255, 255, 0.96);
+  --border-color: #e1e4ea;
+  --text-primary: #12151c;
+  --text-secondary: #676f7e;
+  --accent-blue: #c97a1a;
+  --accent-blue-soft: rgba(201, 122, 26, 0.12);
+  --green: #0e9c78;
+  --red: #e1394a;
+  --yellow: #a9781a;
+  --green-soft: rgba(14, 156, 120, 0.1);
+  --red-soft: rgba(225, 57, 74, 0.1);
+  --overlay-bg: rgba(255, 255, 255, 0.9);
+  --overlay-bg-strong: rgba(255, 255, 255, 0.97);
   --shadow-sm: 0 2px 6px rgba(20, 24, 40, 0.08);
   --shadow-md: 0 10px 28px rgba(20, 24, 40, 0.14);
   --scrollbar-thumb: #d7dbe6;
+  --on-accent: #ffffff;
   color-scheme: light;
 }
 
@@ -107,14 +120,14 @@ body,
   cursor: col-resize;
   z-index: 30;
 }
-#sidebarResizeHandle:hover { background: rgba(41, 98, 255, 0.35); }
+#sidebarResizeHandle:hover { background: rgba(242, 163, 57, 0.3); }
 
 #sidebarToggleBtn {
   margin-left: auto;
   background: transparent;
   border: 1px solid var(--border-color);
   color: var(--text-secondary);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   width: 22px;
   height: 22px;
   flex-shrink: 0;
@@ -131,6 +144,21 @@ body,
   display: none;
 }
 
+/* Khi sidebar đang thu gọn: header hẹp lại đáng kể, logo-mark (26px) +
+   nút thu/mở (margin-left: auto) không còn đủ chỗ như hồi còn dùng
+   .logo-dot nhỏ - khiến nút bị đẩy ra ngoài vùng nhìn thấy (overflow:
+   hidden của #sidebar cắt mất). Ép header dồn về giữa, bỏ margin-left:
+   auto của nút trong trạng thái này để nút luôn nằm cạnh logo, không bị
+   trôi mất. */
+#sidebar.collapsed .sidebar-header {
+  padding: 16px 6px;
+  justify-content: center;
+  gap: 6px;
+}
+
+#sidebar.collapsed #sidebarToggleBtn {
+  margin-left: 0;
+}
 .sidebar-header {
   display: flex;
   align-items: center;
@@ -139,16 +167,17 @@ body,
   border-bottom: 1px solid var(--border-color);
 }
 
-.logo-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #f7931a, #ffb84d);
+.logo-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.25));
 }
+.logo-mark svg { display: block; }
 
-.logo-text { font-size: 14px; font-weight: 500; letter-spacing: 0.2px; }
-.logo-text b { color: #f7931a; font-weight: 700; }
+.logo-text { font-size: 14.5px; font-weight: 500; letter-spacing: 0.2px; }
+.logo-text b { color: var(--accent-blue); font-weight: 700; }
 
 .symbol-search {
   position: relative;
@@ -160,7 +189,7 @@ body,
   width: 100%;
   background: var(--bg-main);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 8px 10px;
   color: var(--text-primary);
   font-size: 13px;
@@ -176,7 +205,7 @@ body,
   right: 12px;
   background: var(--bg-hover);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   max-height: 260px;
   overflow-y: auto;
   z-index: 20;
@@ -229,7 +258,7 @@ body,
   padding: 12px 16px 6px;
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.8px;
   color: var(--text-secondary);
 }
 
@@ -256,7 +285,11 @@ body,
 }
 
 .symbol-list .sym-name { font-weight: 500; }
-.symbol-list .sym-price { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.symbol-list .sym-price {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
 .symbol-list .sym-price.up { color: var(--green); }
 .symbol-list .sym-price.down { color: var(--red); }
 
@@ -288,6 +321,7 @@ body,
   font-size: 13px;
   font-weight: 500;
   color: var(--text-secondary);
+  letter-spacing: 0.2px;
 }
 
 .topbar-right {
@@ -295,17 +329,7 @@ body,
   align-items: center;
 }
 
-/* ===================== THỨ TỰ CÁC NÚT TRONG TOPBAR-RIGHT =====================
-   ĐỢT FIX NÀY: fullscreen.js và marketstatus.js đều tự appendChild nút của
-   mình vào .topbar-right - vì fullscreen.js được nạp (thẻ <script>) TRƯỚC
-   marketstatus.js trong index.html nên nút ⛶ luôn bị chèn vào TRƯỚC nút
-   📊 Trạng thái thị trường theo đúng thứ tự DOM. Thay vì sửa thứ tự
-   <script>/appendChild ở 2 file JS đó (rủi ro đụng logic mount), dùng CSS
-   `order` của flexbox để đổi chỗ 2 nút này: 📊 Trạng thái thị trường ra
-   trước, ⛶ (fullscreen) ra sau/về phía góc phải nhất. Các phần tử khác
-   trong .topbar-right (nút Nền sáng, layoutGroup, 🔔 Cảnh báo...) không bị
-   gán order nên vẫn giữ nguyên đúng thứ tự DOM ban đầu (mặc định order: 0),
-   chỉ 2 nút này bị "nhấc" ra so sánh riêng với nhau. */
+/* ===================== THỨ TỰ CÁC NÚT TRONG TOPBAR-RIGHT ===================== */
 #topbar .topbar-right #marketStatusBtn {
   order: 1;
 }
@@ -314,16 +338,18 @@ body,
 }
 
 .price {
+  font-family: var(--font-mono);
   font-size: 14px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
 .change {
+  font-family: var(--font-mono);
   font-size: 11.5px;
   font-weight: 500;
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-variant-numeric: tabular-nums;
 }
 
@@ -332,6 +358,7 @@ body,
 
 /* Đếm ngược đóng nến - nhỏ, ngay cạnh giá/% thay đổi của mỗi ô */
 .candle-countdown {
+  font-family: var(--font-mono);
   font-size: 10.5px;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
@@ -344,7 +371,7 @@ body,
   gap: 4px;
   background: var(--bg-main);
   padding: 3px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   flex-wrap: wrap;
 }
 
@@ -355,7 +382,7 @@ body,
   padding: 5px 9px;
   font-size: 11.5px;
   font-weight: 500;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
@@ -363,7 +390,7 @@ body,
 
 .timeframe-btn.active {
   background: var(--bg-hover);
-  color: var(--text-primary);
+  color: var(--accent-blue);
 }
 
 .timeframe-quick-btns {
@@ -375,7 +402,7 @@ body,
   background: var(--bg-main);
   color: var(--text-primary);
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 4px 24px 4px 8px;
   font-size: 11px;
   font-weight: 500;
@@ -425,9 +452,7 @@ body,
   }
 }
 
-/* ===================== THANH ĐIỀU KHIỂN DÙNG CHUNG =====================
-   Chỉ 1 hàng chọn timeframe + 1 hàng công cụ vẽ cho TOÀN BỘ app, luôn áp
-   dụng cho ô đang được chọn (pane-focused) - không lặp lại ở từng ô nữa. */
+/* ===================== THANH ĐIỀU KHIỂN DÙNG CHUNG ===================== */
 #controlBar {
   display: flex;
   align-items: center;
@@ -443,7 +468,7 @@ body,
 #controlBar .control-label {
   font-size: 10.5px;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.6px;
   color: var(--text-secondary);
   flex-shrink: 0;
 }
@@ -451,15 +476,10 @@ body,
 #sharedDrawGroup {
   background: var(--bg-main);
   padding: 3px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
 }
 
-/* ===================== CHART AREA - LƯỚI ĐA Ô CO GIÃN =====================
-   grid-template-columns/rows và grid-column/grid-row của từng pane được set
-   TRỰC TIẾP bằng JS (layout.js) tuỳ layout (1/2/3/4) + hướng màn hình, để
-   người dùng có thể kéo giãn tỉ lệ dài/rộng riêng cho từng ô. CSS ở đây chỉ
-   định nghĩa khung sườn chung. */
-
+/* ===================== CHART AREA - LƯỚI ĐA Ô CO GIÃN ===================== */
 #chartArea {
   position: relative;
   flex: 1;
@@ -469,7 +489,6 @@ body,
   padding: 2px;
 }
 
-/* Đường chia giữa các ô - kéo được để đổi tỉ lệ (xem layout.js) */
 .grid-splitter {
   background: var(--border-color);
   position: relative;
@@ -480,7 +499,6 @@ body,
 .grid-splitter:hover,
 .grid-splitter:active { background: var(--accent-blue); }
 
-/* Vùng bắt kéo rộng hơn đường kẻ thật, cho ngón tay dễ trúng trên mobile */
 .grid-splitter-col::before {
   content: '';
   position: absolute;
@@ -509,11 +527,16 @@ body,
   display: none;
 }
 
-/* Viền xanh cho pane đang được focus */
+/* Pane đang focus: không viền quanh cả chart nữa - chỉ đổi viền của khung
+   symbol/giá (góc trên-trái pane) sang màu tín hiệu, để biết ngay ô nào
+   đang chọn mà không cần thêm phần tử nào khác trên chart. */
 .chart-pane.pane-focused {
-  border-color: var(--accent-blue);
-  box-shadow: inset 0 0 0 1px var(--accent-blue), 0 0 10px rgba(41, 98, 255, 0.22);
   z-index: 10;
+}
+
+.chart-pane.pane-focused .pane-symbol-row {
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 0.18px var(--accent-blue), 0 0 6px rgba(242, 163, 57, 0.35);
 }
 
 .pane-symbol {
@@ -524,7 +547,7 @@ body,
 }
 
 .pane-chart-container {
-  position: relative; /* neo cho draw-canvas overlay */
+  position: relative;
   flex: 1;
   min-height: 0;
   width: 100%;
@@ -537,7 +560,7 @@ body,
   left: 8px;
   font-size: 10.5px;
   padding: 3px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg-panel);
   border: 1px solid var(--border-color);
   color: var(--text-secondary);
@@ -556,7 +579,7 @@ body,
   background: var(--text-secondary);
 }
 
-.chart-pane .connection-status.connecting::before { background: #f7b500; }
+.chart-pane .connection-status.connecting::before { background: var(--accent-blue); }
 .chart-pane .connection-status.connected::before { background: var(--green); }
 .chart-pane .connection-status.disconnected::before { background: var(--red); }
 
@@ -580,7 +603,7 @@ body,
   width: fit-content;
   background: var(--overlay-bg);
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 4px 8px;
 }
 
@@ -603,7 +626,7 @@ body,
   align-items: center;
   background: var(--overlay-bg-strong);
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 3px 7px;
   font-size: 10.5px;
   font-weight: 500;
@@ -622,7 +645,7 @@ body,
   gap: 5px;
   background: var(--overlay-bg);
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 2px 6px;
   font-size: 10.5px;
   color: var(--text-primary);
@@ -660,20 +683,19 @@ body,
 .indicator-gear:hover { color: var(--text-primary); }
 
 .indicator-popover {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  margin-top: 4px;
+  position: fixed; /* thoát khỏi overflow:hidden của pane cha */
   background: var(--bg-panel);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 8px;
   width: 150px;
   box-shadow: var(--shadow-md);
-  z-index: 50;
+  z-index: 1000;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  max-height: min(420px, 80vh);
+  overflow-y: auto;
 }
 
 .indicator-popover.wide {
@@ -689,7 +711,7 @@ body,
   width: 100%;
   background: var(--bg-main);
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 4px 6px;
   color: var(--text-primary);
   font-size: 12px;
@@ -701,7 +723,7 @@ body,
   width: 100%;
   background: var(--bg-main);
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 4px 6px;
   color: var(--text-primary);
   font-size: 12px;
@@ -723,6 +745,11 @@ body,
 }
 
 .indicator-popover-actions {
+  position: sticky;
+  bottom: -8px;
+  margin: 4px -8px -8px;
+  padding: 6px 8px 8px;
+  background: var(--bg-panel);
   display: flex;
   justify-content: flex-end;
   gap: 6px;
@@ -730,7 +757,7 @@ body,
 
 .indicator-popover-actions button {
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 4px 8px;
   font-size: 11px;
   cursor: pointer;
@@ -745,10 +772,10 @@ body,
 .indicator-popover-actions .ip-apply {
   background: var(--accent-blue);
   color: var(--on-accent);
+  font-weight: 600;
 }
 .indicator-popover-actions .ip-apply:hover { opacity: 0.9; }
 
-/* Sub-indicator row styles in popover */
 .indicator-popover-row {
   display: flex;
   align-items: center;
@@ -770,12 +797,14 @@ body,
   width: 14px;
   height: 14px;
   cursor: pointer;
+  accent-color: var(--accent-blue);
 }
 .indicator-popover-row input[type="number"] {
   width: 55px;
   padding: 3px 4px;
   font-size: 11px;
   text-align: center;
+  font-family: var(--font-mono);
 }
 
 .draw-canvas {
@@ -792,7 +821,7 @@ body,
   border: none;
   background: transparent;
   color: var(--text-secondary);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 13px;
   display: flex;
@@ -805,12 +834,10 @@ body,
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: var(--radius-sm); }
+::-webkit-scrollbar-thumb:hover { background: var(--accent-blue); }
 
-/* ===================== NÚT TOPBAR DÙNG CHUNG =====================
-   marketstatus.js / alerts.js / theme.js đều gắn class này lên nút của
-   mình để có 1 kiểu nút thống nhất, tự đổi theo theme (xem theme.js). */
+/* ===================== NÚT TOPBAR DÙNG CHUNG ===================== */
 .topbar-btn {
   display: inline-flex;
   align-items: center;
@@ -818,7 +845,7 @@ body,
   background: var(--bg-elevated);
   color: var(--text-primary);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 6px 12px;
   font-size: 12.5px;
   font-weight: 500;
@@ -827,21 +854,16 @@ body,
   margin-left: 8px;
   white-space: nowrap;
 }
-.topbar-btn:hover { background: var(--bg-hover); border-color: var(--accent-blue); }
+.topbar-btn:hover { background: var(--bg-hover); border-color: var(--accent-blue); color: var(--accent-blue); }
 .topbar-btn:active { transform: translateY(1px); }
 
 /* Chấm "đang chạy real-time" nhấp nháy nhẹ - dùng cho trạng thái kết nối */
 @keyframes dq-live-pulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(38, 166, 154, 0.35); }
-  50% { opacity: 0.55; box-shadow: 0 0 0 4px rgba(38, 166, 154, 0); }
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(34, 201, 160, 0.35); }
+  50% { opacity: 0.55; box-shadow: 0 0 0 4px rgba(34, 201, 160, 0); }
 }
 .chart-pane .connection-status.connected::before {
   animation: dq-live-pulse 2s ease-in-out infinite;
-}
-
-/* Viền + bóng đổ tinh tế hơn cho ô đang focus - rõ ràng nhưng không chói */
-.chart-pane.pane-focused {
-  box-shadow: inset 0 0 0 1px var(--accent-blue);
 }
 
 #mobileSidebarToggle {
@@ -857,7 +879,7 @@ body,
   background: var(--bg-panel);
   border: 1px solid var(--border-color);
   color: var(--text-primary);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: 16px;
   cursor: pointer;
 }
@@ -923,8 +945,7 @@ body,
   .draw-tool-btn { width: 30px; height: 30px; font-size: 14px; }
 
   #marketStatusBtn { font-size: 12px; padding: 6px 10px; margin-left: 0; }
-  
-  /* Hide text labels on mobile header/topbar buttons to show icons only */
+
   .btn-text { display: none; }
 }
 
@@ -935,6 +956,7 @@ body,
 @media (max-width: 480px) {
   .change { font-size: 10.5px; padding: 1px 5px; }
 }
+
 #notifPermissionBanner {
   position: fixed;
   left: 12px;
@@ -943,7 +965,7 @@ body,
   z-index: 9999;
   background: var(--bg-panel);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
@@ -963,7 +985,7 @@ body,
 
 .notif-banner-actions button {
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 6px 12px;
   font-size: 12px;
   cursor: pointer;
@@ -972,6 +994,7 @@ body,
 #notifAllowBtn {
   background: var(--accent-blue);
   color: var(--on-accent);
+  font-weight: 600;
 }
 
 #notifDismissBtn {
@@ -980,11 +1003,9 @@ body,
 }
 
 /* ===================== PANEL NỔI DÙNG CHUNG (cảnh báo / trạng thái thị trường) =====================
-   Cả #alertsListPanel (alerts.js) và #marketStatusPanel (marketstatus.js)
-   đều mang class .ms-panel để dùng chung 1 style - tự đổi theo theme vì chỉ
-   dùng biến CSS, không còn hardcode hex riêng như trước (marketstatus.js đã
-   bỏ hàm injectStyles() cũ, vốn là lý do panel đó "kẹt" ở giao diện tối kể
-   cả khi bật nền sáng). */
+   Vệt viền cam mảnh trên đầu panel - "chữ ký" chung cho mọi panel nổi của
+   app, tách biệt rõ khỏi nội dung bên trong, đồng thời nhắc lại đúng màu
+   tín hiệu accent ở mọi nơi khác trong app. */
 .ms-panel {
   position: fixed;
   top: 60px;
@@ -993,7 +1014,8 @@ body,
   max-width: calc(100vw - 24px);
   background: var(--bg-main);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-top: 2px solid var(--accent-blue);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
   color: var(--text-primary);
   font-size: 13px;
@@ -1015,6 +1037,32 @@ body,
   margin-bottom: 10px;
   font-weight: 600;
   color: var(--text-primary);
+  letter-spacing: 0.2px;
+}
+
+.ms-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ms-reload {
+  cursor: pointer;
+  color: var(--text-secondary);
+  opacity: 0.9;
+  transition: transform 0.15s ease, opacity 0.15s ease, color 0.15s ease;
+}
+.ms-reload:hover {
+  opacity: 1;
+  color: var(--accent-blue);
+  transform: rotate(90deg);
+}
+
+.ms-updated-row {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-secondary);
+  padding: 0 0 8px;
 }
 
 .ms-close {
@@ -1023,6 +1071,7 @@ body,
   font-size: 16px;
   line-height: 1;
 }
+.ms-close:hover { color: var(--text-primary); }
 
 .ms-row { margin-bottom: 6px; line-height: 1.4; }
 .ms-muted { color: var(--text-secondary); font-size: 12px; }
@@ -1050,7 +1099,7 @@ body,
   background: transparent;
   border: 1px solid var(--border-color);
   color: var(--text-secondary);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 3px 8px;
   font-size: 11px;
   cursor: pointer;
@@ -1084,6 +1133,7 @@ body,
   #alertsListBtn { font-size: 12px; padding: 6px 10px; margin-left: 6px; }
   #notifPermissionBanner { font-size: 12px; padding: 10px 12px; }
 }
+
 /* ===================== NÚT PHÓNG TO TOÀN BỘ VÙNG CHART ===================== */
 .topbar-btn-icon-only {
   padding: 6px 8px;
@@ -1109,8 +1159,7 @@ body.app-fullscreen #chartArea {
 body.app-fullscreen {
   overflow: hidden;
 }
-/* Nút "✕" thoát fullscreen nổi - luôn hiện khi đang fullscreen, kể cả trên
-   mobile không có phím Esc và topbar (chứa nút ⛶) đã bị ẩn đi. */
+
 #fullscreenExitBtn {
   display: none;
   position: fixed;
@@ -1132,33 +1181,4 @@ body.app-fullscreen {
 
 body.app-fullscreen #fullscreenExitBtn {
   display: flex;
-}
-.indicator-popover {
-  position: fixed; /* thoát khỏi overflow:hidden của pane cha */
-  background: var(--bg-panel);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 8px;
-  width: 150px;
-  box-shadow: var(--shadow-md);
-  z-index: 1000;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-height: min(420px, 80vh);
-  overflow-y: auto;
-}
-
-.indicator-popover.wide {
-  width: 210px;
-}
-.indicator-popover-actions {
-  position: sticky;
-  bottom: -8px;
-  margin: 4px -8px -8px;
-  padding: 6px 8px 8px;
-  background: var(--bg-panel);
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
 }

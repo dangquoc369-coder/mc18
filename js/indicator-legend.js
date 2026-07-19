@@ -39,7 +39,12 @@ const IndicatorLegend = (function () {
   };
 
   function isCollapsed(paneId) {
-    return !!collapsedState[paneId];
+    // Mặc định LUÔN thu gọn khi mới mở chart (paneId chưa có trong
+    // collapsedState) - người dùng phải tự bấm "Chỉ báo ▸" mới xem/chọn
+    // được danh sách chỉ báo. Sau khi đã bấm 1 lần (mở hoặc đóng), trạng
+    // thái đó được nhớ trong collapsedState như cũ cho đến khi tải lại
+    // trang.
+    return collapsedState[paneId] === undefined ? true : !!collapsedState[paneId];
   }
 
   function render(paneId, instance) {

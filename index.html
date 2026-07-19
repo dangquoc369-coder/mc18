@@ -3,13 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>DangQuoc Tracker Pro</title>
+<title>TradingPro</title>
 
 <!-- ===== PWA / "Thêm vào màn hình chính" - ẩn thanh Safari ===== -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="DangQuoc Tracker">
+<meta name="apple-mobile-web-app-title" content="TradingPro">
 <meta name="theme-color" content="#131722">
 
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
@@ -34,6 +34,9 @@
   })();
 </script>
 
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -43,9 +46,22 @@
     <!-- ===== SIDEBAR (dùng chung cho cả 4 pane) ===== -->
     <aside id="sidebar">
       <div class="sidebar-header">
-        <span class="logo-dot"></span>
-        <span class="logo-text">DQ Tracker <b>Pro</b></span>
-      </div>
+  <span class="logo-mark" aria-hidden="true">
+  <svg viewBox="0 0 32 32" width="26" height="26">
+    <defs>
+      <linearGradient id="logoGrad" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" style="stop-color:var(--accent-blue)"/>
+        <stop offset="100%" style="stop-color:var(--accent-blue)" stop-opacity="0.72"/>
+      </linearGradient>
+    </defs>
+    <rect x="1" y="1" width="30" height="30" rx="8" fill="url(#logoGrad)"/>
+    <!-- Lên - hồi về - lên tiếp (breakout, pullback, breakout tiếp) -->
+    <path d="M6 22 L12 13 L16 17.5 L25 7" stroke="var(--on-accent)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <path d="M19 7 L25 7 L25 13" stroke="var(--on-accent)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  </svg>
+</span>
+  <span class="logo-text">Trading<b>Pro</b></span>
+</div>
 
       <div class="symbol-search">
         <input type="text" id="symbolSearchInput" placeholder="Tìm cặp giao dịch (áp dụng cho ô đang chọn)..." autocomplete="off">
