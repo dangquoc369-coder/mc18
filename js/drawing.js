@@ -847,6 +847,16 @@ const DrawingModule = (function () {
     }
 
     function onPointerUp(e) {
+      // FIX MOBILE: trên cảm ứng, không có "pointerleave" tức thời như
+      // chuột - ngón tay chỉ nhấc lên (pointerup), còn pointerleave được
+      // trình duyệt tự tổng hợp SAU ĐÓ với độ trễ không cố định, khiến
+      // crosshair (đường chấm + nhãn giá) bị "đứng hình" 1 lúc rồi mới
+      // biến mất. Xoá hoverPoint NGAY tại đây cho pointerType 'touch' -
+      // không đợi pointerleave nữa.
+      if (e.pointerType === 'touch') {
+        hoverPoint = null;
+      }
+
       if (currentTool === 'cursor') {
         if (isDraggingShape) {
           canvas.releasePointerCapture(e.pointerId);
@@ -865,7 +875,10 @@ const DrawingModule = (function () {
         return;
       }
 
-      if (currentTool === 'alert' || currentTool === 'text' || currentTool === 'eraser' || !dragStart) return;
+      if (currentTool === 'alert' || currentTool === 'text' || currentTool === 'eraser' || !dragStart) {
+        redraw();
+        return;
+      }
       const pt = pointFromEvent(e);
       let shapeCreated = false;
       if (
