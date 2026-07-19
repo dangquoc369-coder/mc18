@@ -260,6 +260,9 @@ const ChartModule = (function () {
           if (!pane) return;
           AlertsModule.addPriceAlert(pane.symbol, price);
         },
+        onToolChanged: () => {
+          EventBus.emit('pane:drawToolChanged', { paneId });
+        },
       });
 
       return chart;

@@ -39,6 +39,7 @@ const UI = (function () {
     bindPaneFocusedEvent();
     bindLayoutChangedEvent();
     bindOrientationChangedEvent();
+    bindDrawToolChanged();
 
     LayoutModule.initOrientationWatcher();
     LayoutModule.render();
@@ -369,6 +370,12 @@ const UI = (function () {
       el.className = 'connection-status ' + status;
       el.textContent =
         status === 'connected' ? 'Đã kết nối' : status === 'disconnected' ? 'Mất kết nối...' : 'Đang kết nối...';
+    });
+  }
+
+  function bindDrawToolChanged() {
+    EventBus.on('pane:drawToolChanged', ({ paneId }) => {
+      if (paneId === Store.getState().activePaneId) renderSharedDrawGroup();
     });
   }
 

@@ -13,7 +13,7 @@
 
 const DrawingModule = (function () {
   function create(paneId, chart, candleSeries, container, options = {}) {
-    const { onAlertRequested } = options;
+    const { onAlertRequested, onToolChanged } = options;
 
     let currentTool = 'cursor'; // cursor | hline | trendline | rectangle | fib | text | eraser | alert
     let drawings = [];
@@ -75,7 +75,19 @@ const DrawingModule = (function () {
         redraw();
       }
     }
-
+    /**
+     * ĐỢT FIX (chuyên nghiệp hơn): sau khi vẽ xong 1 hình / đặt xong 1 cảnh
+     * báo / ghi chú, TỰ ĐỘNG quay về "Con trỏ" - đúng hành vi TradingView
+     * (chỉ Tẩy mới ở lại chế độ liên tục vì bản chất là xoá nhiều hình liên
+     * tiếp). onToolChanged() báo cho ui.js vẽ lại nút đang active trong
+     * thanh công cụ, vì lần đổi tool này đến từ BÊN TRONG drawing.js chứ
+     * không phải do người dùng bấm nút (renderSharedDrawGroup() cũ chỉ tự
+     * gọi khi click nút).
+     */
+    function returnToCursorAfterDraw() {
+      setTool('cursor');
+      if (typeof onToolChanged === 'function') onToolChanged();
+    }
     function clearAll() {
       drawings = [];
       redraw();
@@ -93,7 +105,7 @@ const DrawingModule = (function () {
       ctx.arc(x, y, 4.5, 0, 2 * Math.PI);
       ctx.fillStyle = '#ffffff';
       ctx.fill();
-      ctx.strokeStyle = '#2962ff';
+      ctx.strokeStyle = '#f2a339';
       ctx.lineWidth = 1.5;
       ctx.stroke();
       ctx.restore();
@@ -113,21 +125,22 @@ const DrawingModule = (function () {
 
       ctx.save();
 
-      const baseColor = d.color || '#2962ff';
-      ctx.strokeStyle = isPreview ? (baseColor === '#2962ff' ? 'rgba(41, 98, 255, 0.55)' : baseColor + '88') : baseColor;
-      
+      const baseColor = d.color || '#f2a339';
+      const baseWidth = d.width || 1.5;
+      ctx.strokeStyle = isPreview ? (baseColor === '#f2a339' ? 'rgba(242, 163, 57, 0.55)' : baseColor + '88') : baseColor;
+
       if (isHovered || isSelected) {
-        ctx.lineWidth = 2.5;
+        ctx.lineWidth = baseWidth + 1;
         ctx.shadowColor = baseColor;
         ctx.shadowBlur = 4;
       } else {
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = baseWidth;
       }
 
       if (d.type === 'hline') {
         const y = priceToY(d.price);
         if (y === null || y === undefined) { ctx.restore(); return; }
-        ctx.setLineDash([4, 3]);
+        if (d.dashed !== false) ctx.setLineDash([4, 3]);
         ctx.beginPath();
         ctx.moveTo(0, y);
         ctx.lineTo(getRect().width, y);
@@ -136,7 +149,7 @@ const DrawingModule = (function () {
         ctx.fillStyle = baseColor;
         ctx.font = '10px sans-serif';
         ctx.fillText(formatPrice(d.price), 4, y - 4);
-        
+
         if (isSelected) {
           drawHandle(getRect().width / 2, y);
         }
@@ -144,11 +157,13 @@ const DrawingModule = (function () {
         const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
         const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
         if ([x1, y1, x2, y2].some((v) => v === null || v === undefined)) { ctx.restore(); return; }
+        if (d.dashed) ctx.setLineDash([6, 4]);
         ctx.beginPath();
         ctx.moveTo(x1, y1);
         ctx.lineTo(x2, y2);
         ctx.stroke();
-        
+        ctx.setLineDash([]);
+
         if (isSelected) {
           drawHandle(x1, y1);
           drawHandle(x2, y2);
@@ -159,8 +174,8 @@ const DrawingModule = (function () {
         if ([x1, y1, x2, y2].some((v) => v === null || v === undefined)) { ctx.restore(); return; }
         const rx = Math.min(x1, x2), ry = Math.min(y1, y2);
         const rw = Math.abs(x2 - x1), rh = Math.abs(y2 - y1);
-        
-        let fillStyle = 'rgba(41, 98, 255, 0.10)';
+
+        let fillStyle = 'rgba(242, 163, 57, 0.10)';
         if (baseColor.startsWith('#')) {
           const r = parseInt(baseColor.slice(1, 3), 16);
           const g = parseInt(baseColor.slice(3, 5), 16);
@@ -171,8 +186,10 @@ const DrawingModule = (function () {
         }
         ctx.fillStyle = fillStyle;
         ctx.fillRect(rx, ry, rw, rh);
+        if (d.dashed) ctx.setLineDash([6, 4]);
         ctx.strokeRect(rx, ry, rw, rh);
-        
+        ctx.setLineDash([]);
+
         if (isSelected) {
           drawHandle(x1, y1);
           drawHandle(x2, y2);
@@ -186,9 +203,9 @@ const DrawingModule = (function () {
         const priceEnd = d.p2.price;
         const diff = priceEnd - priceStart;
         const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0];
-        
+
         let colors = [];
-        let r = 41, g = 98, b = 255;
+        let r = 242, g = 163, b = 57;
         if (baseColor.startsWith('#')) {
           const pr = parseInt(baseColor.slice(1, 3), 16);
           const pg = parseInt(baseColor.slice(3, 5), 16);
@@ -202,7 +219,7 @@ const DrawingModule = (function () {
           colors.push(`rgba(${r}, ${g}, ${b}, ${alpha})`);
         }
 
-        ctx.strokeStyle = isPreview ? 'rgba(41, 98, 255, 0.4)' : 'rgba(120, 123, 134, 0.6)';
+        ctx.strokeStyle = isPreview ? 'rgba(242, 163, 57, 0.4)' : 'rgba(124, 132, 150, 0.6)';
         ctx.setLineDash([4, 4]);
         ctx.beginPath();
         ctx.moveTo(x1, y1);
@@ -215,26 +232,26 @@ const DrawingModule = (function () {
           const y = priceToY(currentPrice);
           if (y === null || y === undefined) return;
 
-          ctx.strokeStyle = isPreview ? 'rgba(41, 98, 255, 0.4)' : 'rgba(120, 123, 134, 0.8)';
+          ctx.strokeStyle = isPreview ? 'rgba(242, 163, 57, 0.4)' : 'rgba(124, 132, 150, 0.8)';
           ctx.beginPath();
           ctx.moveTo(Math.min(x1, x2), y);
           ctx.lineTo(Math.max(x1, x2), y);
           ctx.stroke();
 
-          ctx.fillStyle = isPreview ? 'rgba(41, 98, 255, 0.6)' : '#787b86';
+          ctx.fillStyle = isPreview ? 'rgba(242, 163, 57, 0.6)' : '#7c8496';
           ctx.font = '9px sans-serif';
           ctx.fillText(`Fib ${lvl.toFixed(3)} (${formatPrice(currentPrice)})`, Math.max(x1, x2) + 6, y + 3);
         });
 
         for (let i = 0; i < levels.length - 1; i++) {
           const yA = priceToY(priceStart + levels[i] * diff);
-          const yB = priceToY(priceStart + levels[i+1] * diff);
+          const yB = priceToY(priceStart + levels[i + 1] * diff);
           if (yA === null || yB === null) continue;
 
           ctx.fillStyle = colors[i % colors.length];
           ctx.fillRect(Math.min(x1, x2), Math.min(yA, yB), Math.abs(x2 - x1), Math.abs(yB - yA));
         }
-        
+
         if (isSelected) {
           drawHandle(x1, y1);
           drawHandle(x2, y2);
@@ -251,7 +268,7 @@ const DrawingModule = (function () {
         const boxW = textWidth + paddingH * 2;
         const boxH = 14 + paddingV * 2;
 
-        ctx.fillStyle = 'rgba(30, 34, 45, 0.85)';
+        ctx.fillStyle = 'rgba(16, 20, 28, 0.9)';
         ctx.strokeStyle = baseColor;
         ctx.lineWidth = (isHovered || isSelected) ? 2 : 1;
         ctx.fillRect(x, y - 10 - paddingV, boxW, boxH);
@@ -259,7 +276,7 @@ const DrawingModule = (function () {
 
         ctx.fillStyle = '#ffffff';
         ctx.fillText(d.text, x + paddingH, y + paddingV + 1);
-        
+
         if (isSelected) {
           drawHandle(x, y);
         }
@@ -296,9 +313,9 @@ const DrawingModule = (function () {
         const boxH = 16;
         const boxY = Math.min(Math.max(y - boxH / 2, 0), height - boxH);
 
-        ctx.fillStyle = '#2962ff';
+        ctx.fillStyle = '#f2a339';
         ctx.fillRect(width - boxW, boxY, boxW, boxH);
-        ctx.fillStyle = '#ffffff';
+        ctx.fillStyle = '#0a0e14';
         ctx.fillText(label, width - boxW + 4, boxY + 11);
       }
 
@@ -411,9 +428,9 @@ const DrawingModule = (function () {
         ty = y !== null ? y : 100;
       }
 
-      const toolbarHeight = 36;
-      const toolbarWidth = 190;
-      const top = Math.max(10, Math.min(ty - toolbarHeight - 12, rect.height - toolbarHeight - 10));
+      const toolbarWidth = 220;
+      const estHeight = 150; // ước lượng để tránh tràn mép - toolbar tự co nếu thấp hơn
+      const top = Math.max(10, Math.min(ty - estHeight - 12, rect.height - estHeight - 10));
       const left = Math.max(10, Math.min(tx - toolbarWidth / 2, rect.width - toolbarWidth - 10));
 
       toolbarEl = document.createElement('div');
@@ -421,17 +438,26 @@ const DrawingModule = (function () {
       toolbarEl.style.position = 'absolute';
       toolbarEl.style.top = top + 'px';
       toolbarEl.style.left = left + 'px';
-      toolbarEl.style.background = '#1e222d';
-      toolbarEl.style.border = '1px solid #363a45';
-      toolbarEl.style.borderRadius = '6px';
-      toolbarEl.style.padding = '4px 8px';
+      toolbarEl.style.width = toolbarWidth + 'px';
+      toolbarEl.style.background = 'var(--bg-elevated)';
+      toolbarEl.style.border = '1px solid var(--border-color)';
+      toolbarEl.style.borderRadius = 'var(--radius-md)';
+      toolbarEl.style.padding = '8px';
       toolbarEl.style.display = 'flex';
-      toolbarEl.style.alignItems = 'center';
-      toolbarEl.style.gap = '6px';
-      toolbarEl.style.boxShadow = '0 4px 12px rgba(0,0,0,0.5)';
+      toolbarEl.style.flexDirection = 'column';
+      toolbarEl.style.gap = '8px';
+      toolbarEl.style.boxShadow = 'var(--shadow-md)';
       toolbarEl.style.zIndex = '100';
+      toolbarEl.style.fontFamily = 'var(--font)';
+      toolbarEl.addEventListener('pointerdown', (e) => e.stopPropagation());
 
-      const colors = ['#2962ff', '#26a69a', '#ef5350', '#ff9800', '#f5c518', '#7e57c2', '#ffffff'];
+      // ---- Hàng màu ----
+      const colorRow = document.createElement('div');
+      colorRow.style.display = 'flex';
+      colorRow.style.alignItems = 'center';
+      colorRow.style.gap = '6px';
+
+      const colors = ['#f2a339', '#22c9a0', '#ff5a67', '#ff9800', '#d1a53d', '#7e57c2', '#ffffff'];
       colors.forEach((col) => {
         const dot = document.createElement('div');
         dot.style.width = '14px';
@@ -439,7 +465,8 @@ const DrawingModule = (function () {
         dot.style.borderRadius = '50%';
         dot.style.background = col;
         dot.style.cursor = 'pointer';
-        dot.style.border = (d.color || '#2962ff') === col ? '2px solid #ffffff' : '1px solid rgba(255,255,255,0.2)';
+        dot.style.flexShrink = '0';
+        dot.style.border = (d.color || '#f2a339') === col ? '2px solid var(--text-primary)' : '1px solid rgba(255,255,255,0.2)';
         dot.style.transition = 'transform 0.15s ease';
         dot.addEventListener('click', (e) => {
           e.stopPropagation();
@@ -449,27 +476,154 @@ const DrawingModule = (function () {
         });
         dot.addEventListener('mouseenter', () => dot.style.transform = 'scale(1.2)');
         dot.addEventListener('mouseleave', () => dot.style.transform = 'scale(1)');
-        toolbarEl.appendChild(dot);
+        colorRow.appendChild(dot);
       });
+      toolbarEl.appendChild(colorRow);
 
-      const div = document.createElement('div');
-      div.style.width = '1px';
-      div.style.height = '14px';
-      div.style.background = '#363a45';
-      toolbarEl.appendChild(div);
+      // ---- Hàng độ dày nét (không áp dụng cho ghi chú) ----
+      if (d.type !== 'text') {
+        const widthRow = document.createElement('div');
+        widthRow.style.display = 'flex';
+        widthRow.style.gap = '4px';
+        [{ label: 'Mảnh', val: 1 }, { label: 'Vừa', val: 1.5 }, { label: 'Đậm', val: 2.5 }].forEach((w) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.textContent = w.label;
+          const active = (d.width || 1.5) === w.val;
+          btn.style.flex = '1';
+          btn.style.padding = '3px 0';
+          btn.style.fontSize = '10.5px';
+          btn.style.border = '1px solid var(--border-color)';
+          btn.style.borderRadius = 'var(--radius-sm)';
+          btn.style.cursor = 'pointer';
+          btn.style.background = active ? 'var(--accent-blue-soft)' : 'transparent';
+          btn.style.color = active ? 'var(--accent-blue)' : 'var(--text-secondary)';
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            d.width = w.val;
+            redraw();
+            showToolbar(idx);
+          });
+          widthRow.appendChild(btn);
+        });
+        toolbarEl.appendChild(widthRow);
+      }
+
+      // ---- Hàng kiểu nét: liền/đứt (fib có quy ước riêng nên bỏ qua) ----
+      if (d.type === 'hline' || d.type === 'trendline' || d.type === 'rectangle') {
+        const styleRow = document.createElement('div');
+        styleRow.style.display = 'flex';
+        const isDashed = d.type === 'hline' ? d.dashed !== false : !!d.dashed;
+        const styleBtn = document.createElement('button');
+        styleBtn.type = 'button';
+        styleBtn.textContent = isDashed ? '┄ Nét đứt' : '─ Nét liền';
+        styleBtn.style.flex = '1';
+        styleBtn.style.padding = '3px 0';
+        styleBtn.style.fontSize = '10.5px';
+        styleBtn.style.border = '1px solid var(--border-color)';
+        styleBtn.style.borderRadius = 'var(--radius-sm)';
+        styleBtn.style.cursor = 'pointer';
+        styleBtn.style.background = 'transparent';
+        styleBtn.style.color = 'var(--text-primary)';
+        styleBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          d.dashed = d.type === 'hline' ? (d.dashed === false ? true : false) : !d.dashed;
+          redraw();
+          showToolbar(idx);
+        });
+        styleRow.appendChild(styleBtn);
+        toolbarEl.appendChild(styleRow);
+      }
+
+      // ---- Hàng sửa giá trực tiếp ----
+      function makePriceInput(labelText, value, onCommit) {
+        const wrap = document.createElement('div');
+        wrap.style.display = 'flex';
+        wrap.style.alignItems = 'center';
+        wrap.style.gap = '6px';
+
+        const label = document.createElement('span');
+        label.textContent = labelText;
+        label.style.fontSize = '10.5px';
+        label.style.color = 'var(--text-secondary)';
+        label.style.width = '42px';
+        label.style.flexShrink = '0';
+
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.value = value;
+        input.style.flex = '1';
+        input.style.minWidth = '0';
+        input.style.background = 'var(--bg-main)';
+        input.style.border = '1px solid var(--border-color)';
+        input.style.borderRadius = 'var(--radius-sm)';
+        input.style.color = 'var(--text-primary)';
+        input.style.fontFamily = 'var(--font-mono)';
+        input.style.fontSize = '11px';
+        input.style.padding = '3px 5px';
+        input.addEventListener('pointerdown', (e) => e.stopPropagation());
+        input.addEventListener('keydown', (e) => {
+          e.stopPropagation();
+          if (e.key === 'Enter') input.blur();
+        });
+        input.addEventListener('change', () => {
+          const v = parseFloat(input.value);
+          if (!Number.isNaN(v)) onCommit(v);
+        });
+
+        wrap.appendChild(label);
+        wrap.appendChild(input);
+        return wrap;
+      }
+
+      const priceCol = document.createElement('div');
+      priceCol.style.display = 'flex';
+      priceCol.style.flexDirection = 'column';
+      priceCol.style.gap = '4px';
+
+      if (d.type === 'hline') {
+        priceCol.appendChild(makePriceInput('Giá', d.price, (v) => { d.price = v; redraw(); }));
+      } else if (d.type === 'trendline' || d.type === 'rectangle' || d.type === 'fib') {
+        priceCol.appendChild(makePriceInput('Điểm 1', d.p1.price, (v) => { d.p1.price = v; redraw(); }));
+        priceCol.appendChild(makePriceInput('Điểm 2', d.p2.price, (v) => { d.p2.price = v; redraw(); }));
+      } else if (d.type === 'text') {
+        const wrap = document.createElement('div');
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = d.text;
+        input.style.width = '100%';
+        input.style.background = 'var(--bg-main)';
+        input.style.border = '1px solid var(--border-color)';
+        input.style.borderRadius = 'var(--radius-sm)';
+        input.style.color = 'var(--text-primary)';
+        input.style.fontSize = '11px';
+        input.style.padding = '3px 5px';
+        input.addEventListener('pointerdown', (e) => e.stopPropagation());
+        input.addEventListener('keydown', (e) => e.stopPropagation());
+        input.addEventListener('change', () => {
+          if (input.value.trim()) { d.text = input.value.trim(); redraw(); }
+        });
+        wrap.appendChild(input);
+        priceCol.appendChild(wrap);
+      }
+      toolbarEl.appendChild(priceCol);
+
+      // ---- Xoá hình ----
+      const actionRow = document.createElement('div');
+      actionRow.style.display = 'flex';
+      actionRow.style.justifyContent = 'flex-end';
 
       const delBtn = document.createElement('button');
+      delBtn.type = 'button';
       delBtn.title = 'Xoá hình';
-      delBtn.innerHTML = '🗑';
+      delBtn.innerHTML = '🗑 Xoá';
       delBtn.style.background = 'transparent';
-      delBtn.style.border = 'none';
-      delBtn.style.color = '#ef5350';
-      delBtn.style.fontSize = '12px';
+      delBtn.style.border = '1px solid var(--border-color)';
+      delBtn.style.borderRadius = 'var(--radius-sm)';
+      delBtn.style.color = 'var(--red)';
+      delBtn.style.fontSize = '11px';
       delBtn.style.cursor = 'pointer';
-      delBtn.style.padding = '0 4px';
-      delBtn.style.display = 'flex';
-      delBtn.style.alignItems = 'center';
-      delBtn.style.justifyContent = 'center';
+      delBtn.style.padding = '3px 8px';
       delBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         drawings.splice(idx, 1);
@@ -477,7 +631,8 @@ const DrawingModule = (function () {
         hideToolbar();
         redraw();
       });
-      toolbarEl.appendChild(delBtn);
+      actionRow.appendChild(delBtn);
+      toolbarEl.appendChild(actionRow);
 
       container.appendChild(toolbarEl);
     }
@@ -519,6 +674,7 @@ const DrawingModule = (function () {
       if (currentTool === 'alert') {
         if (pt.price === null || pt.price === undefined || Number.isNaN(pt.price)) return;
         if (onAlertRequested) onAlertRequested(pt.price);
+        returnToCursorAfterDraw();
         return;
       }
 
@@ -556,7 +712,7 @@ const DrawingModule = (function () {
           input.focus();
         }, 50);
 
-        let submitted = false;
+       let submitted = false;
         const submitText = () => {
           if (submitted) return;
           submitted = true;
@@ -566,6 +722,7 @@ const DrawingModule = (function () {
             redraw();
           }
           input.remove();
+          returnToCursorAfterDraw();
         };
 
         input.addEventListener('keydown', (ev) => {
@@ -574,6 +731,7 @@ const DrawingModule = (function () {
           if (ev.key === 'Escape') {
             submitted = true;
             input.remove();
+            returnToCursorAfterDraw();
           }
         });
         
@@ -589,16 +747,31 @@ const DrawingModule = (function () {
       if (pt.time === null || pt.time === undefined || pt.price === null || pt.price === undefined) return;
 
       if (currentTool === 'hline') {
-        drawings.push({ type: 'hline', price: pt.price });
+        drawings.push({ type: 'hline', price: pt.price, width: 1.5, dashed: true });
         redraw();
+        returnToCursorAfterDraw();
         return;
       }
 
       dragStart = pt;
       canvas.setPointerCapture(e.pointerId);
     }
+    let moveRafPending = false;
+    let latestMoveEvent = null;
 
     function onPointerMove(e) {
+    latestMoveEvent = e;
+
+    if (moveRafPending) return;
+
+    moveRafPending = true;
+
+    requestAnimationFrame(() => {
+        moveRafPending = false;
+        handlePointerMove(latestMoveEvent);
+    });
+}
+    function handlePointerMove(e) {
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
@@ -694,16 +867,19 @@ const DrawingModule = (function () {
 
       if (currentTool === 'alert' || currentTool === 'text' || currentTool === 'eraser' || !dragStart) return;
       const pt = pointFromEvent(e);
+      let shapeCreated = false;
       if (
         pt.time !== null && pt.time !== undefined &&
         pt.price !== null && pt.price !== undefined &&
         (currentTool === 'trendline' || currentTool === 'rectangle' || currentTool === 'fib')
       ) {
-        drawings.push({ type: currentTool, p1: dragStart, p2: pt });
+        drawings.push({ type: currentTool, p1: dragStart, p2: pt, width: 1.5, dashed: false });
+        shapeCreated = true;
       }
       dragStart = null;
       previewDrawing = null;
       redraw();
+      if (shapeCreated) returnToCursorAfterDraw();
     }
 
     function onContainerPointerMove(e) {
@@ -755,6 +931,31 @@ const DrawingModule = (function () {
     canvas.addEventListener('pointercancel', () => { dragStart = null; previewDrawing = null; hoverPoint = null; isDraggingShape = false; draggedDrawingIndex = null; draggedDrawingOriginal = null; dragStartPixel = null; redraw(); });
     canvas.addEventListener('pointerleave', () => { hoverPoint = null; redraw(); });
     container.addEventListener('pointermove', onContainerPointerMove);
+
+    /**
+     * FIX: đóng toolbar khi bấm vào chỗ TRỐNG trên chart.
+     * Khi không hover trúng hình nào, canvas.style.pointerEvents = 'none'
+     * (để không chặn pan/zoom/crosshair của chart bên dưới) - nghĩa là click
+     * vào vùng trống KHÔNG hề tới được canvas.addEventListener('pointerdown',
+     * onPointerDown) ở trên, nó lọt thẳng xuống chart. Bắt sự kiện này ở
+     * mức container (cha chung của canvas vẽ + chart) để phát hiện đúng
+     * trường hợp "click lọt qua canvas xuống chart" và tự đóng toolbar +
+     * bỏ chọn hình, y hệt hành vi TradingView.
+     */
+    container.addEventListener('pointerdown', (e) => {
+      if (currentTool !== 'cursor') return;
+      // Click này đã được canvas.addEventListener('pointerdown', onPointerDown)
+      // xử lý riêng rồi (trường hợp đang hover trúng 1 hình) - bỏ qua để
+      // tránh xử lý 2 lần.
+      if (e.target === canvas) return;
+      // Click bên trong toolbar đã tự stopPropagation() nên không lọt tới
+      // đây - còn lại chắc chắn là click lọt xuống chart ở vùng trống.
+      if (selectedDrawingIndex !== null || toolbarEl) {
+        selectedDrawingIndex = null;
+        hideToolbar();
+        redraw();
+      }
+    });
 
     chart.timeScale().subscribeVisibleLogicalRangeChange(() => redraw());
 
