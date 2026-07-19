@@ -9,9 +9,30 @@
  *   - Chữ / Ghi chú (Text annotation) - đặt ghi chú lên chart
  *   - Tẩy / Xoá từng hình (Eraser) - click vào hình để xoá
  *   - Xoá tất cả
+ *
+ * CẬP NHẬT (đợt fix "chuyên nghiệp hơn - mobile"):
+ *   1. FIX DELAY CROSSHAIR: setTool() giờ LUÔN gọi redraw() (kể cả khi quay
+ *      về "cursor") - trước đây chỉ redraw khi chuyển sang tool tương tác,
+ *      nên khung crosshair cuối cùng còn sót lại trên canvas cho tới khi có
+ *      sự kiện khác kích hoạt vẽ lại. Trên chuột không thấy vì luôn có
+ *      pointermove ngay sau đó tự xoá; trên cảm ứng thì không có sự kiện gì
+ *      nữa sau khi nhấc tay -> gây cảm giác "delay mãi mới tắt".
+ *   2. CROSSHAIR HỖ TRỢ VẼ TRÊN CẢM ỨNG: ngón tay che mất đúng điểm cần
+ *      xem nên không thể "rê xem trước" như chuột. Khi đang giữ tay để vẽ
+ *      (tool khác 'cursor'), điểm vẽ thật sự được ĐẨY LÊN cao hơn ngón tay
+ *      1 đoạn cố định (TOUCH_CROSSHAIR_OFFSET), kèm 1 đường + chấm nhỏ nối
+ *      xuống đúng vị trí ngón tay thật để không bị mất phương hướng - đúng
+ *      cơ chế TradingView mobile dùng. Áp dụng cho MỌI công cụ vẽ, kể cả
+ *      "Đường ngang"/"Cảnh báo giá"/"Ghi chú" (trước đây đặt NGAY khi chạm
+ *      xuống, không có bước xem trước nào cả) - giờ trên cảm ứng các công
+ *      cụ này chuyển sang "giữ tay + kéo để chỉnh, nhấc tay để đặt", y hệt
+ *      cách Đường xu hướng/Hình chữ nhật vốn đã hoạt động. Trên CHUỘT vẫn
+ *      giữ nguyên hành vi cũ (bấm 1 phát là đặt luôn).
  */
 
 const DrawingModule = (function () {
+  const TOUCH_CROSSHAIR_OFFSET = 40; // px - đẩy điểm vẽ lên trên khỏi ngón tay
+
   function create(paneId, chart, candleSeries, container, options = {}) {
     const { onAlertRequested, onToolChanged } = options;
 
@@ -19,7 +40,9 @@ const DrawingModule = (function () {
     let drawings = [];
     let dragStart = null;
     let previewDrawing = null;
-    let hoverPoint = null; // { x, y, price } - vị trí con trỏ hiện tại
+    let hoverPoint = null; // { x, y, price } - vị trí crosshair (đã đẩy lên nếu là cảm ứng)
+    let touchRawPoint = null; // { x, y } - vị trí NGÓN TAY thật (chưa đẩy), dùng vẽ đường nối
+    let pendingTouchPlacement = null; // 'hline' | 'alert' | 'text' - đang giữ tay để đặt, chưa commit
 
     let isDraggingShape = false;
     let draggedDrawingIndex = null;
@@ -64,6 +87,24 @@ const DrawingModule = (function () {
       return candleSeries.coordinateToPrice(y);
     }
 
+    /**
+     * Toạ độ màn hình (px trong canvas) của 1 sự kiện con trỏ. Trên CẢM ỨNG
+     * và khi đang ở 1 công cụ VẼ (không phải 'cursor'), y được đẩy lên trên
+     * TOUCH_CROSSHAIR_OFFSET px để điểm sẽ vẽ không bị ngón tay che mất -
+     * xem drawCrosshair() vẽ đường nối xuống đúng vị trí ngón tay thật.
+     * KHÔNG áp dụng offset này cho tool 'cursor' (chọn/kéo hình có sẵn) vì
+     * lúc đó cần chạm ĐÚNG vào hình, không phải điểm bị dịch lên.
+     */
+    function getScreenXY(e) {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      let y = e.clientY - rect.top;
+      if (e.pointerType === 'touch' && currentTool !== 'cursor') {
+        y = Math.max(0, y - TOUCH_CROSSHAIR_OFFSET);
+      }
+      return { x, y };
+    }
+
     function setTool(tool) {
       currentTool = tool;
       const isInteractive = tool !== 'cursor';
@@ -72,22 +113,28 @@ const DrawingModule = (function () {
       if (isInteractive) {
         selectedDrawingIndex = null;
         hideToolbar();
-        redraw();
       }
+      // FIX DELAY: luôn vẽ lại - kể cả khi quay về "Con trỏ" - để xoá NGAY
+      // crosshair còn sót lại từ khung vẽ trước đó. Trước đây chỉ redraw
+      // khi isInteractive=true nên lúc quay về cursor không có gì xoá crosshair
+      // cũ, phải chờ tới sự kiện tiếp theo mới biến mất (rõ nhất trên cảm ứng
+      // vì không có pointermove liên tục sau khi nhấc tay).
+      redraw();
     }
+
     /**
      * ĐỢT FIX (chuyên nghiệp hơn): sau khi vẽ xong 1 hình / đặt xong 1 cảnh
      * báo / ghi chú, TỰ ĐỘNG quay về "Con trỏ" - đúng hành vi TradingView
      * (chỉ Tẩy mới ở lại chế độ liên tục vì bản chất là xoá nhiều hình liên
      * tiếp). onToolChanged() báo cho ui.js vẽ lại nút đang active trong
      * thanh công cụ, vì lần đổi tool này đến từ BÊN TRONG drawing.js chứ
-     * không phải do người dùng bấm nút (renderSharedDrawGroup() cũ chỉ tự
-     * gọi khi click nút).
+     * không phải do người dùng bấm nút.
      */
     function returnToCursorAfterDraw() {
       setTool('cursor');
       if (typeof onToolChanged === 'function') onToolChanged();
     }
+
     function clearAll() {
       drawings = [];
       redraw();
@@ -305,6 +352,26 @@ const DrawingModule = (function () {
       ctx.stroke();
       ctx.setLineDash([]);
 
+      // ĐỢT FIX (mobile): crosshair phía trên đã được "nâng" lên khỏi ngón
+      // tay (xem getScreenXY) để không bị che - đường + chấm nhỏ này nối
+      // xuống đúng vị trí ngón tay thật, giúp không mất phương hướng vì sao
+      // điểm vẽ lại lệch so với ngón tay.
+      if (touchRawPoint) {
+        ctx.strokeStyle = 'rgba(242, 163, 57, 0.5)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 2]);
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(touchRawPoint.x, touchRawPoint.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.beginPath();
+        ctx.arc(touchRawPoint.x, touchRawPoint.y, 3, 0, 2 * Math.PI);
+        ctx.fillStyle = 'rgba(242, 163, 57, 0.7)';
+        ctx.fill();
+      }
+
       if (price !== null && price !== undefined && !Number.isNaN(price)) {
         const label = formatPrice(price);
         ctx.font = '10px sans-serif';
@@ -323,9 +390,7 @@ const DrawingModule = (function () {
     }
 
     function pointFromEvent(e) {
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
+      const { x, y } = getScreenXY(e);
       const time = xToTime(x);
       const price = yToPrice(y);
       return { time, price };
@@ -429,7 +494,7 @@ const DrawingModule = (function () {
       }
 
       const toolbarWidth = 220;
-      const estHeight = 150; // ước lượng để tránh tràn mép - toolbar tự co nếu thấp hơn
+      const estHeight = 150;
       const top = Math.max(10, Math.min(ty - estHeight - 12, rect.height - estHeight - 10));
       const left = Math.max(10, Math.min(tx - toolbarWidth / 2, rect.width - toolbarWidth - 10));
 
@@ -637,6 +702,64 @@ const DrawingModule = (function () {
       container.appendChild(toolbarEl);
     }
 
+    /**
+     * Mở ô nhập ghi chú tại toạ độ MÀN HÌNH đã cho (screenXY - đã đẩy lên
+     * khỏi ngón tay nếu là cảm ứng), gắn với toạ độ DỮ LIỆU pt (time/price)
+     * sẽ được lưu khi submit. Tách thành hàm riêng để dùng chung cho cả
+     * đường vẽ bằng chuột (đặt ngay lúc pointerdown) lẫn cảm ứng (đặt lúc
+     * nhấc tay - xem onPointerUp/pendingTouchPlacement).
+     */
+    function openTextInputAt(screenXY, pt) {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = 'Nhập ghi chú...';
+      input.style.position = 'absolute';
+      input.style.left = `${screenXY.x}px`;
+      input.style.top = `${screenXY.y}px`;
+      input.style.background = '#1e222d';
+      input.style.color = '#ffffff';
+      input.style.border = '1px solid #f2a339';
+      input.style.borderRadius = '4px';
+      input.style.padding = '4px 8px';
+      input.style.fontSize = '12px';
+      input.style.zIndex = '9999';
+
+      container.appendChild(input);
+
+      setTimeout(() => {
+        input.focus();
+      }, 50);
+
+      let submitted = false;
+      const submitText = () => {
+        if (submitted) return;
+        submitted = true;
+        const val = input.value.trim();
+        if (val) {
+          drawings.push({ type: 'text', text: val, p: pt });
+          redraw();
+        }
+        input.remove();
+        returnToCursorAfterDraw();
+      };
+
+      input.addEventListener('keydown', (ev) => {
+        ev.stopPropagation();
+        if (ev.key === 'Enter') submitText();
+        if (ev.key === 'Escape') {
+          submitted = true;
+          input.remove();
+          returnToCursorAfterDraw();
+        }
+      });
+
+      input.addEventListener('pointerdown', (ev) => ev.stopPropagation());
+      input.addEventListener('mousedown', (ev) => ev.stopPropagation());
+      input.addEventListener('click', (ev) => ev.stopPropagation());
+
+      input.addEventListener('blur', submitText);
+    }
+
     function onPointerDown(e) {
       const pt = pointFromEvent(e);
 
@@ -670,6 +793,16 @@ const DrawingModule = (function () {
         return;
       }
 
+      // ĐỢT FIX (mobile): "Đường ngang"/"Cảnh báo giá"/"Ghi chú" trên CẢM
+      // ỨNG không commit ngay lúc chạm xuống nữa - giữ tay + kéo để chỉnh
+      // đúng vị trí (crosshair đã được đẩy lên khỏi ngón tay), chỉ commit
+      // khi NHẤC TAY (xem onPointerUp). Trên CHUỘT vẫn giữ hành vi cũ.
+      if (e.pointerType === 'touch' && (currentTool === 'hline' || currentTool === 'alert' || currentTool === 'text')) {
+        pendingTouchPlacement = currentTool;
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+
       // Price alert tool
       if (currentTool === 'alert') {
         if (pt.price === null || pt.price === undefined || Number.isNaN(pt.price)) return;
@@ -681,66 +814,9 @@ const DrawingModule = (function () {
       // Text note tool
       if (currentTool === 'text') {
         if (pt.time === null || pt.time === undefined || pt.price === null || pt.price === undefined) return;
-        
-        // Prevent default browser behavior (which steals focus from our newly created input)
         e.preventDefault();
         e.stopPropagation();
-
-        const rect = canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-
-        // Custom Overlay Text Input inside container (highly visual + safe)
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.placeholder = 'Nhập ghi chú...';
-        input.style.position = 'absolute';
-        input.style.left = `${x}px`;
-        input.style.top = `${y}px`;
-        input.style.background = '#1e222d';
-        input.style.color = '#ffffff';
-        input.style.border = '1px solid #2962ff';
-        input.style.borderRadius = '4px';
-        input.style.padding = '4px 8px';
-        input.style.fontSize = '12px';
-        input.style.zIndex = '9999';
-
-        container.appendChild(input);
-        
-        // Delay focus slightly to ensure browser registers it and doesn't override it immediately
-        setTimeout(() => {
-          input.focus();
-        }, 50);
-
-       let submitted = false;
-        const submitText = () => {
-          if (submitted) return;
-          submitted = true;
-          const val = input.value.trim();
-          if (val) {
-            drawings.push({ type: 'text', text: val, p: pt });
-            redraw();
-          }
-          input.remove();
-          returnToCursorAfterDraw();
-        };
-
-        input.addEventListener('keydown', (ev) => {
-          ev.stopPropagation();
-          if (ev.key === 'Enter') submitText();
-          if (ev.key === 'Escape') {
-            submitted = true;
-            input.remove();
-            returnToCursorAfterDraw();
-          }
-        });
-        
-        // Prevent events inside the input from bubbling up to the canvas/container
-        input.addEventListener('pointerdown', (ev) => ev.stopPropagation());
-        input.addEventListener('mousedown', (ev) => ev.stopPropagation());
-        input.addEventListener('click', (ev) => ev.stopPropagation());
-        
-        input.addEventListener('blur', submitText);
+        openTextInputAt(getScreenXY(e), pt);
         return;
       }
 
@@ -756,27 +832,41 @@ const DrawingModule = (function () {
       dragStart = pt;
       canvas.setPointerCapture(e.pointerId);
     }
+
     let moveRafPending = false;
     let latestMoveEvent = null;
 
     function onPointerMove(e) {
-    latestMoveEvent = e;
-
-    if (moveRafPending) return;
-
-    moveRafPending = true;
-
-    requestAnimationFrame(() => {
+      latestMoveEvent = e;
+      if (moveRafPending) return;
+      moveRafPending = true;
+      requestAnimationFrame(() => {
         moveRafPending = false;
         handlePointerMove(latestMoveEvent);
-    });
-}
+      });
+    }
+
     function handlePointerMove(e) {
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
+      const { x, y } = getScreenXY(e);
       const pt = pointFromEvent(e);
       hoverPoint = { x, y, price: pt.price };
+
+      if (e.pointerType === 'touch' && currentTool !== 'cursor') {
+        const rect = canvas.getBoundingClientRect();
+        touchRawPoint = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      } else {
+        touchRawPoint = null;
+      }
+
+      // ĐỢT FIX (mobile): đang giữ tay để đặt hline/alert/text - cập nhật
+      // xem trước, chưa commit gì cả.
+      if (pendingTouchPlacement) {
+        if (pendingTouchPlacement === 'hline') {
+          previewDrawing = { type: 'hline', price: pt.price };
+        }
+        redraw();
+        return;
+      }
 
       if (currentTool === 'cursor') {
         if (isDraggingShape && draggedDrawingOriginal) {
@@ -848,13 +938,38 @@ const DrawingModule = (function () {
 
     function onPointerUp(e) {
       // FIX MOBILE: trên cảm ứng, không có "pointerleave" tức thời như
-      // chuột - ngón tay chỉ nhấc lên (pointerup), còn pointerleave được
-      // trình duyệt tự tổng hợp SAU ĐÓ với độ trễ không cố định, khiến
-      // crosshair (đường chấm + nhãn giá) bị "đứng hình" 1 lúc rồi mới
-      // biến mất. Xoá hoverPoint NGAY tại đây cho pointerType 'touch' -
-      // không đợi pointerleave nữa.
+      // chuột - ngón tay chỉ nhấc lên (pointerup) - xoá crosshair NGAY tại
+      // đây, không đợi pointerleave.
       if (e.pointerType === 'touch') {
         hoverPoint = null;
+        touchRawPoint = null;
+      }
+
+      // ĐỢT FIX (mobile): commit "Đường ngang"/"Cảnh báo giá"/"Ghi chú" đã
+      // giữ tay để chỉnh - xem onPointerDown.
+      if (pendingTouchPlacement) {
+        const tool = pendingTouchPlacement;
+        const pt = pointFromEvent(e);
+        pendingTouchPlacement = null;
+        previewDrawing = null;
+
+        if (tool === 'hline' && pt.price !== null && pt.price !== undefined && !Number.isNaN(pt.price)) {
+          drawings.push({ type: 'hline', price: pt.price, width: 1.5, dashed: true });
+          redraw();
+          returnToCursorAfterDraw();
+        } else if (tool === 'alert' && pt.price !== null && pt.price !== undefined && !Number.isNaN(pt.price)) {
+          if (onAlertRequested) onAlertRequested(pt.price);
+          redraw();
+          returnToCursorAfterDraw();
+        } else if (tool === 'text' && pt.time !== null && pt.time !== undefined && pt.price !== null && pt.price !== undefined) {
+          redraw();
+          openTextInputAt(getScreenXY(e), pt);
+          // returnToCursorAfterDraw() được gọi bên trong openTextInputAt()
+          // sau khi người dùng gõ xong (Enter/Escape/blur) - không gọi ở đây.
+        } else {
+          redraw();
+        }
+        return;
       }
 
       if (currentTool === 'cursor') {
@@ -941,28 +1056,27 @@ const DrawingModule = (function () {
     });
     canvas.addEventListener('pointermove', onPointerMove);
     canvas.addEventListener('pointerup', onPointerUp);
-    canvas.addEventListener('pointercancel', () => { dragStart = null; previewDrawing = null; hoverPoint = null; isDraggingShape = false; draggedDrawingIndex = null; draggedDrawingOriginal = null; dragStartPixel = null; redraw(); });
-    canvas.addEventListener('pointerleave', () => { hoverPoint = null; redraw(); });
+    canvas.addEventListener('pointercancel', () => {
+      dragStart = null;
+      previewDrawing = null;
+      hoverPoint = null;
+      touchRawPoint = null;
+      pendingTouchPlacement = null;
+      isDraggingShape = false;
+      draggedDrawingIndex = null;
+      draggedDrawingOriginal = null;
+      dragStartPixel = null;
+      redraw();
+    });
+    canvas.addEventListener('pointerleave', () => { hoverPoint = null; touchRawPoint = null; redraw(); });
     container.addEventListener('pointermove', onContainerPointerMove);
 
     /**
      * FIX: đóng toolbar khi bấm vào chỗ TRỐNG trên chart.
-     * Khi không hover trúng hình nào, canvas.style.pointerEvents = 'none'
-     * (để không chặn pan/zoom/crosshair của chart bên dưới) - nghĩa là click
-     * vào vùng trống KHÔNG hề tới được canvas.addEventListener('pointerdown',
-     * onPointerDown) ở trên, nó lọt thẳng xuống chart. Bắt sự kiện này ở
-     * mức container (cha chung của canvas vẽ + chart) để phát hiện đúng
-     * trường hợp "click lọt qua canvas xuống chart" và tự đóng toolbar +
-     * bỏ chọn hình, y hệt hành vi TradingView.
      */
     container.addEventListener('pointerdown', (e) => {
       if (currentTool !== 'cursor') return;
-      // Click này đã được canvas.addEventListener('pointerdown', onPointerDown)
-      // xử lý riêng rồi (trường hợp đang hover trúng 1 hình) - bỏ qua để
-      // tránh xử lý 2 lần.
       if (e.target === canvas) return;
-      // Click bên trong toolbar đã tự stopPropagation() nên không lọt tới
-      // đây - còn lại chắc chắn là click lọt xuống chart ở vùng trống.
       if (selectedDrawingIndex !== null || toolbarEl) {
         selectedDrawingIndex = null;
         hideToolbar();
