@@ -3,28 +3,89 @@
  * Render sidebar (danh sách symbol + tìm kiếm) - DÙNG CHUNG cho cả 4 pane,
  * nhưng khi chọn 1 symbol thì áp dụng cho PANE ĐANG FOCUS (activePaneId).
  *
- * CẬP NHẬT (đợt fix này): thêm công cụ 🔔 "Đặt cảnh báo giá" vào thanh công
- * cụ vẽ dùng chung (DRAW_TOOLS) - hoạt động y hệt các tool vẽ khác (cursor,
- * hline, trendline, rectangle), chỉ khác là khi chọn tool này rồi click lên
- * chart sẽ tạo 1 cảnh báo giá (xem drawing.js/chart.js/alerts.js) thay vì vẽ
- * hình. Không cần sửa gì thêm trong renderSharedDrawGroup() vì logic hiện
- * tại đã tổng quát cho mọi tool trong DRAW_TOOLS.
+ * ============================================================================
+ * CẬP NHẬT (đợt nâng cấp "bộ công cụ vẽ chuyên nghiệp" - THU GỌN TOOLBAR):
+ *
+ *   Trước đây mỗi công cụ vẽ là 1 nút riêng trong #sharedDrawGroup -> với
+ *   ~20 công cụ mới sẽ tràn dòng, đặc biệt trên mobile. Giờ thanh công cụ
+ *   chỉ còn CỐ ĐỊNH 5 nút, không phụ thuộc số lượng công cụ:
+ *
+ *     [↖ Con trỏ] [ icon-công-cụ-vẽ ▾ ] [🔔 Cảnh báo] [⌫ Tẩy] [🗑 Xoá hết]
+ *
+ *   Nút "combo" ở giữa LUÔN hiện icon của công cụ vẽ hình đang dùng/gần
+ *   nhất (mặc định Đường xu hướng) - bấm vào là chọn lại đúng công cụ đó
+ *   ngay lập tức (không cần mở bảng), giống hành vi "nhớ công cụ cuối" của
+ *   TradingView. Bấm mũi tên ▾ cạnh bên mới MỞ BẢNG (flyout) liệt kê toàn
+ *   bộ công cụ theo từng NHÓM (Đường kẻ / Fibonacci / Hình vẽ / Lệnh giao
+ *   dịch / Ghi chú) - bảng này định vị TUYỆT ĐỐI (position: fixed) ngay
+ *   dưới nút, tự dịch vào trong nếu gần sát mép màn hình, và tự đóng khi
+ *   chọn xong 1 công cụ hoặc bấm ra ngoài - xem hideFlyout()/toggleFlyout().
+ *
+ *   Cảnh báo giá (🔔) và Tẩy (⌫) vẫn giữ làm nút riêng vì là 2 công cụ dùng
+ *   RẤT thường xuyên, không đáng để giấu vào trong bảng.
+ * ============================================================================
  */
 
 const UI = (function () {
   let searchDebounceTimer = null;
 
-  const DRAW_TOOLS = [
-    { id: 'cursor', label: '↖', title: 'Con trỏ' },
-    { id: 'hline', label: '─', title: 'Đường ngang' },
-    { id: 'trendline', label: '╱', title: 'Đường xu hướng' },
-    { id: 'rectangle', label: '▭', title: 'Hình chữ nhật' },
-    { id: 'fib', label: '☰', title: 'Thoái lui Fibonacci' },
-    { id: 'text', label: 'Ｔ', title: 'Chữ / Ghi chú (click lên chart)' },
-    { id: 'eraser', label: '⌫', title: 'Tẩy / Xoá từng hình (click vào hình)' },
-    { id: 'alert', label: '🔔', title: 'Đặt cảnh báo giá (click lên chart)' },
-    { id: 'clear', label: '🗑', title: 'Xoá tất cả hình vẽ (ô đang chọn)' },
+  // Công cụ vẽ HÌNH (không tính cursor/alert/eraser/clear) - nhóm theo danh
+  // mục để hiển thị trong bảng chọn (flyout). id phải khớp CHÍNH XÁC với
+  // "currentTool" mà drawing.js hiểu.
+  const DRAW_TOOL_CATEGORIES = [
+    {
+      id: 'lines', label: 'Đường kẻ',
+      tools: [
+        { id: 'trendline', label: '╱', title: 'Đường xu hướng' },
+        { id: 'ray', label: '↗', title: 'Tia (Ray)' },
+        { id: 'extendedline', label: '↔', title: 'Đường mở rộng' },
+        { id: 'hline', label: '─', title: 'Đường ngang' },
+        { id: 'hray', label: '⟶', title: 'Tia ngang' },
+        { id: 'vline', label: '│', title: 'Đường dọc' },
+      ],
+    },
+    {
+      id: 'fib', label: 'Fibonacci',
+      tools: [
+        { id: 'fib', label: '𝄒', title: 'Thoái lui Fibonacci' },
+        { id: 'fibextension', label: 'F+', title: 'Mở rộng Fibonacci (Fib Extension)' },
+      ],
+    },
+    {
+      id: 'shapes', label: 'Hình vẽ & Kênh giá',
+      tools: [
+        { id: 'rectangle', label: '▭', title: 'Hình chữ nhật' },
+        { id: 'circle', label: '◯', title: 'Hình tròn / Ellipse' },
+        { id: 'triangle', label: '△', title: 'Tam giác' },
+        { id: 'channel', label: '≋', title: 'Kênh giá song song' },
+      ],
+    },
+    {
+      id: 'position', label: 'Lệnh giao dịch',
+      tools: [
+        { id: 'long', label: 'L↑', title: 'Lệnh Long (tự tính TP theo R:R)' },
+        { id: 'short', label: 'S↓', title: 'Lệnh Short (tự tính TP theo R:R)' },
+      ],
+    },
+    {
+      id: 'annotate', label: 'Ghi chú',
+      tools: [
+        { id: 'text', label: 'Ｔ', title: 'Chữ / Ghi chú' },
+        { id: 'arrow', label: '➔', title: 'Mũi tên' },
+      ],
+    },
   ];
+
+  let lastDrawShapeTool = 'trendline'; // nhớ công cụ vẽ hình gần nhất để hiện icon trên nút combo
+  let flyoutEl = null;
+
+  function findToolMeta(id) {
+    for (const cat of DRAW_TOOL_CATEGORIES) {
+      const t = cat.tools.find((t) => t.id === id);
+      if (t) return t;
+    }
+    return null;
+  }
 
   function init() {
     renderPopularSymbols();
@@ -113,8 +174,6 @@ const UI = (function () {
       }
     }
 
-    // Binance Local Matches - không dùng icon, chỉ ghi nguồn bằng chữ nhỏ
-    // (xem renderSearchResults) để tiết kiệm diện tích và rõ ràng hơn.
     const binanceMatches = state.allSymbols
       .filter((s) => s.includes(query))
       .slice(0, 8)
@@ -128,8 +187,6 @@ const UI = (function () {
         };
       });
 
-    // Yahoo Finance Matches - nguồn ghi thêm tên sàn (item.exchange) do
-    // Yahoo trả về, vd "Yahoo · NASDAQ", "Yahoo · CCY" (forex)...
     let yahooMatches = [];
     try {
       const results = await searchYahooSymbols(query);
@@ -177,10 +234,9 @@ const UI = (function () {
     const activePane = Store.getActivePane();
     groupEl.innerHTML = '';
 
-    // 1. Quick-access buttons for popular choices (hidden on small screens via CSS)
     const quickGroup = document.createElement('div');
     quickGroup.className = 'timeframe-quick-btns';
-    
+
     const popular = [
       { label: '15m', value: '15m' },
       { label: '1H', value: '1h' },
@@ -199,10 +255,9 @@ const UI = (function () {
     });
     groupEl.appendChild(quickGroup);
 
-    // 2. Beautiful compact dropdown select containing all options
     const select = document.createElement('select');
     select.className = 'timeframe-select';
-    
+
     TIMEFRAMES.forEach((tf) => {
       const opt = document.createElement('option');
       opt.value = tf.value;
@@ -218,35 +273,175 @@ const UI = (function () {
     groupEl.appendChild(select);
   }
 
-  /* ===================== HÀNG CÔNG CỤ VẼ DÙNG CHUNG ===================== */
+  /* ===================== HÀNG CÔNG CỤ VẼ DÙNG CHUNG (THU GỌN) ===================== */
+
+  function hideFlyout() {
+    if (flyoutEl) {
+      flyoutEl.remove();
+      flyoutEl = null;
+    }
+    document.removeEventListener('click', onDocClickCloseFlyout, true);
+  }
+
+  function onDocClickCloseFlyout(e) {
+    if (flyoutEl && !flyoutEl.contains(e.target)) hideFlyout();
+  }
+
+  function getActiveDrawingInstance() {
+    return window.PaneRegistry && window.PaneRegistry.get(Store.getState().activePaneId);
+  }
+
+  function selectDrawTool(id) {
+    const inst = getActiveDrawingInstance();
+    hideFlyout();
+    if (!inst) return;
+    if (id === 'clear') {
+      inst.getDrawing().clearAll();
+      return;
+    }
+    if (findToolMeta(id)) lastDrawShapeTool = id;
+    inst.getDrawing().setTool(id);
+    renderSharedDrawGroup();
+  }
+
+  function toggleFlyout(anchorBtn) {
+    if (flyoutEl) { hideFlyout(); return; }
+
+    flyoutEl = document.createElement('div');
+    flyoutEl.className = 'draw-flyout';
+
+    DRAW_TOOL_CATEGORIES.forEach((cat) => {
+      const catEl = document.createElement('div');
+      catEl.className = 'draw-flyout-category';
+
+      const title = document.createElement('div');
+      title.className = 'draw-flyout-category-title';
+      title.textContent = cat.label;
+      catEl.appendChild(title);
+
+      const grid = document.createElement('div');
+      grid.className = 'draw-flyout-grid';
+      cat.tools.forEach((t) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'draw-flyout-item' + (t.id === lastDrawShapeTool ? ' active' : '');
+        b.innerHTML = `<span class="dfi-icon">${t.label}</span><span class="dfi-label">${t.title}</span>`;
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          selectDrawTool(t.id);
+        });
+        grid.appendChild(b);
+      });
+      catEl.appendChild(grid);
+      flyoutEl.appendChild(catEl);
+    });
+
+    document.body.appendChild(flyoutEl);
+    positionFlyout(flyoutEl, anchorBtn);
+
+    // Đăng ký sau 1 tick để tránh chính cú click MỞ flyout lọt luôn vào
+    // listener đóng flyout (bubbling lên document ngay trong cùng 1 sự kiện).
+    setTimeout(() => {
+      document.addEventListener('click', onDocClickCloseFlyout, true);
+    }, 0);
+  }
+
+  function positionFlyout(el, anchorBtn) {
+    const rect = anchorBtn.getBoundingClientRect();
+    el.style.position = 'fixed';
+    el.style.visibility = 'hidden';
+    el.style.top = '0px';
+    el.style.left = '0px';
+
+    requestAnimationFrame(() => {
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const w = el.offsetWidth;
+      const h = el.offsetHeight;
+
+      let left = rect.left;
+      let top = rect.bottom + 6;
+
+      if (left + w > vw - 8) left = vw - w - 8;
+      if (left < 8) left = 8;
+      if (top + h > vh - 8) top = Math.max(8, rect.top - h - 6);
+
+      el.style.left = left + 'px';
+      el.style.top = top + 'px';
+      el.style.visibility = 'visible';
+    });
+  }
+
+  function makeToolbarBtn(label, title, active, onClick) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'draw-tool-btn' + (active ? ' active' : '');
+    btn.textContent = label;
+    btn.title = title;
+    btn.addEventListener('click', onClick);
+    return btn;
+  }
 
   function renderSharedDrawGroup() {
     const groupEl = document.getElementById('sharedDrawGroup');
     if (!groupEl) return;
     groupEl.innerHTML = '';
+    hideFlyout();
 
-    const activePaneId = Store.getState().activePaneId;
-    const instance = window.PaneRegistry && window.PaneRegistry.get(activePaneId);
-    const activeTool = instance ? instance.getDrawing().getTool() : 'cursor';
+    const inst = getActiveDrawingInstance();
+    const drawing = inst ? inst.getDrawing() : null;
+    const activeTool = drawing ? drawing.getTool() : 'cursor';
 
-    DRAW_TOOLS.forEach((t) => {
-      const btn = document.createElement('button');
-      btn.className = 'draw-tool-btn' + (t.id === activeTool && t.id !== 'clear' ? ' active' : '');
-      btn.textContent = t.label;
-      btn.title = t.title;
-      btn.addEventListener('click', () => {
-        const inst = window.PaneRegistry && window.PaneRegistry.get(Store.getState().activePaneId);
-        if (!inst) return;
-        const drawing = inst.getDrawing();
-        if (t.id === 'clear') {
-          drawing.clearAll();
-          return;
-        }
-        drawing.setTool(t.id);
-        renderSharedDrawGroup();
-      });
-      groupEl.appendChild(btn);
+    if (findToolMeta(activeTool)) lastDrawShapeTool = activeTool;
+
+    // 1. Con trỏ
+    groupEl.appendChild(makeToolbarBtn('↖', 'Con trỏ', activeTool === 'cursor', () => selectDrawTool('cursor')));
+
+    // 2. Combo: icon công cụ vẽ hình gần nhất + mũi tên mở bảng chọn
+    const meta = findToolMeta(lastDrawShapeTool) || { label: '╱', title: 'Đường xu hướng' };
+    const combo = document.createElement('div');
+    combo.className = 'draw-tool-combo';
+
+    const mainBtn = makeToolbarBtn(
+      meta.label,
+      meta.title + ' (bấm mũi tên bên phải để chọn công cụ khác)',
+      activeTool === lastDrawShapeTool,
+      () => selectDrawTool(lastDrawShapeTool)
+    );
+    mainBtn.classList.add('draw-tool-combo-main');
+
+    const caretBtn = document.createElement('button');
+    caretBtn.type = 'button';
+    caretBtn.className = 'draw-tool-btn draw-tool-combo-caret';
+    caretBtn.textContent = '▾';
+    caretBtn.title = 'Chọn công cụ vẽ khác';
+    caretBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleFlyout(caretBtn);
     });
+
+    combo.appendChild(mainBtn);
+    combo.appendChild(caretBtn);
+    groupEl.appendChild(combo);
+
+    // 3. Cảnh báo giá
+    groupEl.appendChild(makeToolbarBtn('🔔', 'Đặt cảnh báo giá (click lên chart)', activeTool === 'alert', () => selectDrawTool('alert')));
+
+    // 4. Tẩy
+    groupEl.appendChild(makeToolbarBtn('⌫', 'Tẩy / Xoá từng hình (click vào hình)', activeTool === 'eraser', () => selectDrawTool('eraser')));
+
+    // 5. Ẩn/hiện tất cả hình vẽ (giống icon 👁 "Hide all drawings" của
+    // TradingView) - không đổi tool, chỉ bật/tắt hiển thị.
+    const isHidden = drawing ? drawing.getAllHidden() : false;
+    const hideBtn = makeToolbarBtn(isHidden ? '🙈' : '👁', isHidden ? 'Đang ẩn tất cả hình vẽ - bấm để hiện lại' : 'Ẩn tạm thời tất cả hình vẽ (ô đang chọn)', isHidden, () => {
+      if (!drawing) return;
+      drawing.setAllHidden(!isHidden);
+      renderSharedDrawGroup();
+    });
+    groupEl.appendChild(hideBtn);
+
+    // 6. Xoá tất cả (hành động, không phải tool)
+    groupEl.appendChild(makeToolbarBtn('🗑', 'Xoá tất cả hình vẽ (ô đang chọn)', false, () => selectDrawTool('clear')));
   }
 
   /* ===================== LAYOUT (1/2/3/4 Ô) ===================== */

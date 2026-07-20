@@ -450,6 +450,10 @@ body,
     height: 24px;
     font-size: 11px;
   }
+  .draw-tool-combo-caret {
+    width: 16px !important;
+    font-size: 9px;
+  }
 }
 
 /* ===================== THANH ĐIỀU KHIỂN DÙNG CHUNG ===================== */
@@ -477,6 +481,10 @@ body,
   background: var(--bg-main);
   padding: 3px;
   border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
 }
 
 /* ===================== CHART AREA - LƯỚI ĐA Ô CO GIÃN ===================== */
@@ -828,9 +836,284 @@ body,
   align-items: center;
   justify-content: center;
   line-height: 1;
+  flex-shrink: 0;
 }
 .draw-tool-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
 .draw-tool-btn.active { background: var(--accent-blue); color: var(--on-accent); }
+
+/* =====================================================================
+ * CÔNG CỤ VẼ - COMBO "icon công cụ + mũi tên mở bảng chọn" (đợt nâng cấp
+ * bộ công cụ vẽ chuyên nghiệp). Thay vì liệt kê hàng chục nút riêng lẻ
+ * (tràn dòng, đặc biệt trên mobile), chỉ 1 cặp nút cố định:
+ *   [ icon công cụ đang/đã chọn ][ ▾ ]
+ * Bấm nút icon = chọn lại đúng công cụ đó. Bấm ▾ = mở bảng (flyout) liệt
+ * kê toàn bộ công cụ theo nhóm - xem ui.js toggleFlyout()/positionFlyout().
+ * ===================================================================== */
+.draw-tool-combo {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  flex-shrink: 0;
+}
+.draw-tool-combo-main {
+  width: 26px;
+}
+.draw-tool-combo-caret {
+  width: 14px;
+  font-size: 9px;
+  color: var(--text-secondary);
+  opacity: 0.8;
+}
+.draw-tool-combo-caret:hover { opacity: 1; color: var(--text-primary); }
+
+/* Bảng chọn công cụ (flyout) - position: fixed, tự định vị bằng JS ngay
+   dưới nút caret, tự dịch vào trong nếu gần sát mép màn hình. */
+.draw-flyout {
+  position: fixed;
+  z-index: 1000;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: 10px;
+  width: 232px;
+  max-height: min(70vh, 480px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-family: var(--font);
+  animation: dq-flyout-in 0.12s ease-out;
+}
+
+@keyframes dq-flyout-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.draw-flyout-category-title {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  padding-left: 2px;
+}
+
+.draw-flyout-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 5px;
+}
+
+.draw-flyout-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-primary);
+  font-size: 11px;
+  font-family: var(--font);
+}
+.draw-flyout-item:hover { border-color: var(--accent-blue); background: var(--bg-hover); }
+.draw-flyout-item.active { border-color: var(--accent-blue); background: var(--accent-blue-soft); color: var(--accent-blue); }
+
+.draw-flyout-item .dfi-icon {
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+  font-size: 13px;
+}
+.draw-flyout-item .dfi-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 600px) {
+  .draw-flyout {
+    width: min(88vw, 260px);
+  }
+  .draw-flyout-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .draw-flyout-item {
+    padding: 7px 6px;
+    font-size: 10.5px;
+  }
+}
+
+/* =====================================================================
+ * BẢNG THUỘC TÍNH HÌNH VẼ (drawing-toolbar) - phong cách TradingView
+ * (đợt nâng cấp "chuyên nghiệp hơn nữa"): header có tên hình + khoá vị
+ * trí + đặt làm mặc định + đóng; ô màu có cả mẫu dựng sẵn lẫn color-picker
+ * tuỳ ý; thanh trượt độ mờ; mẫu xem trước độ dày/kiểu nét dạng thanh thay
+ * vì chữ. Toàn bộ định vị (top/left) được TÁCH RIÊNG khỏi phần dựng DOM
+ * này (xem computeToolbarTopLeft/repositionToolbarOnly trong drawing.js)
+ * để khi KÉO DI CHUYỂN 1 hình, chỉ toạ độ đổi - không phải dựng lại toàn
+ * bộ bảng mỗi khung hình - giúp thao tác mượt hơn hẳn, đặc biệt trên máy
+ * yếu/điện thoại.
+ * ===================================================================== */
+.dt-toolbar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.dt-toolbar-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dt-toolbar-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.dt-icon-btn {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  line-height: 1;
+}
+.dt-icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.dt-icon-btn.active { background: var(--accent-blue-soft); color: var(--accent-blue); }
+
+.dt-toolbar-divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 0 -8px;
+}
+
+.dt-row-label {
+  font-size: 10.5px;
+  color: var(--text-secondary);
+  width: 42px;
+  flex-shrink: 0;
+}
+
+.dt-color-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.dt-color-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  transition: transform 0.12s ease;
+}
+.dt-color-dot:hover { transform: scale(1.15); }
+.dt-color-dot.active { border: 2px solid var(--text-primary); }
+
+.dt-custom-color {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: 2px;
+  overflow: hidden;
+}
+.dt-custom-color::-webkit-color-swatch-wrapper { padding: 2px; }
+.dt-custom-color::-webkit-color-swatch { border: none; border-radius: 50%; }
+
+.dt-opacity-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dt-opacity-value {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-secondary);
+  width: 32px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.dt-opacity-slider {
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  border-radius: 2px;
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--border-color);
+  cursor: pointer;
+}
+.dt-opacity-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent-blue);
+  cursor: pointer;
+}
+.dt-opacity-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent-blue);
+  cursor: pointer;
+}
+
+.dt-swatch-row {
+  display: flex;
+  gap: 4px;
+}
+.dt-swatch-btn {
+  flex: 1;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  padding: 0 6px;
+}
+.dt-swatch-btn:hover { border-color: var(--accent-blue); }
+.dt-swatch-btn.active { background: var(--accent-blue-soft); border-color: var(--accent-blue); }
+.dt-swatch-bar {
+  width: 100%;
+  background: var(--text-secondary);
+  border-radius: 2px;
+}
+.dt-swatch-btn.active .dt-swatch-bar { background: var(--accent-blue); }
+.dt-swatch-bar.dashed {
+  height: 2px !important;
+  background: repeating-linear-gradient(to right, var(--text-secondary) 0 5px, transparent 5px 9px);
+}
+.dt-swatch-btn.active .dt-swatch-bar.dashed {
+  background: repeating-linear-gradient(to right, var(--accent-blue) 0 5px, transparent 5px 9px);
+}
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }

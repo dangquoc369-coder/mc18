@@ -1,48 +1,90 @@
 /**
  * drawing.js
- * Bộ công cụ vẽ nâng cao kiểu TradingView cho MỖI pane, độc lập với nhau:
- *   - Con trỏ (mặc định, không vẽ gì)
- *   - Đường ngang (Horizontal Line)
- *   - Đường xu hướng (Trend Line)
- *   - Hình chữ nhật (Rectangle)
- *   - Thoái lui Fibonacci (Fibonacci Retracement) - vẽ dải màu
- *   - Chữ / Ghi chú (Text annotation) - đặt ghi chú lên chart
- *   - Tẩy / Xoá từng hình (Eraser) - click vào hình để xoá
- *   - Xoá tất cả
+ * Bộ công cụ vẽ nâng cao kiểu TradingView cho MỖI pane, độc lập với nhau.
  *
- * CẬP NHẬT (đợt fix "chuyên nghiệp hơn - mobile"):
- *   1. FIX DELAY CROSSHAIR: setTool() giờ LUÔN gọi redraw() (kể cả khi quay
- *      về "cursor") - trước đây chỉ redraw khi chuyển sang tool tương tác,
- *      nên khung crosshair cuối cùng còn sót lại trên canvas cho tới khi có
- *      sự kiện khác kích hoạt vẽ lại. Trên chuột không thấy vì luôn có
- *      pointermove ngay sau đó tự xoá; trên cảm ứng thì không có sự kiện gì
- *      nữa sau khi nhấc tay -> gây cảm giác "delay mãi mới tắt".
- *   2. CROSSHAIR HỖ TRỢ VẼ TRÊN CẢM ỨNG: ngón tay che mất đúng điểm cần
- *      xem nên không thể "rê xem trước" như chuột. Khi đang giữ tay để vẽ
- *      (tool khác 'cursor'), điểm vẽ thật sự được ĐẨY LÊN cao hơn ngón tay
- *      1 đoạn cố định (TOUCH_CROSSHAIR_OFFSET), kèm 1 đường + chấm nhỏ nối
- *      xuống đúng vị trí ngón tay thật để không bị mất phương hướng - đúng
- *      cơ chế TradingView mobile dùng. Áp dụng cho MỌI công cụ vẽ, kể cả
- *      "Đường ngang"/"Cảnh báo giá"/"Ghi chú" (trước đây đặt NGAY khi chạm
- *      xuống, không có bước xem trước nào cả) - giờ trên cảm ứng các công
- *      cụ này chuyển sang "giữ tay + kéo để chỉnh, nhấc tay để đặt", y hệt
- *      cách Đường xu hướng/Hình chữ nhật vốn đã hoạt động. Trên CHUỘT vẫn
- *      giữ nguyên hành vi cũ (bấm 1 phát là đặt luôn).
+ * ============================================================================
+ * CẬP NHẬT (đợt nâng cấp "bộ công cụ vẽ chuyên nghiệp"):
+ *
+ *   Bổ sung thêm nhiều công cụ vẽ mới bên cạnh các công cụ gốc (Con trỏ,
+ *   Đường ngang, Đường xu hướng, Hình chữ nhật, Fib Retracement, Chữ/Ghi chú,
+ *   Tẩy, Xoá tất cả):
+ *
+ *     Đường kẻ:    Tia (Ray), Đường mở rộng (Extended Line), Tia ngang
+ *                  (Horizontal Ray), Đường dọc (Vertical Line)
+ *     Kênh giá:    Kênh giá song song (Parallel Channel) - 3 điểm neo
+ *     Fibonacci:   Fib Extension - 3 điểm neo
+ *     Hình vẽ:     Hình tròn/Ellipse, Tam giác (3 điểm neo)
+ *     Lệnh:        Long Position, Short Position - tự tính Take Profit theo
+ *                  tỷ lệ R:R (mặc định 2), sửa được trong bảng công cụ
+ *     Ghi chú:     Mũi tên (Arrow) - có đầu mũi tên
+ *
+ *   KIẾN TRÚC NEO (ANCHOR) - để không phải viết lại toàn bộ pipeline cũ:
+ *     - Công cụ 1 điểm neo "đơn":     hline (giá), vline (thời gian),
+ *                                     hray (1 điểm {time,price})
+ *     - Công cụ 2 điểm neo (p1, p2):  trendline, ray, extendedline,
+ *                                     rectangle, circle, arrow, fib,
+ *                                     long, short
+ *     - Công cụ 3 điểm neo (p1,p2,p3): triangle, channel, fibextension
+ *   Nhờ vậy toàn bộ logic kéo-thả để DI CHUYỂN hình đã vẽ (khi ở tool
+ *   "Con trỏ") chỉ cần viết theo NHÓM neo ở trên, không phải viết riêng cho
+ *   từng loại hình - xem handlePointerMove() nhánh isDraggingShape.
+ *
+ *   LUỒNG ĐẶT HÌNH 3 ĐIỂM NEO (triangle/channel/fibextension):
+ *     Bước 1-2 giống hệt công cụ 2 điểm (giữ chuột/tay xuống - kéo - nhả ra
+ *     để đặt điểm 1 và điểm 2, y hệt vẽ Hình chữ nhật). Nhưng thay vì quay
+ *     lại "Con trỏ" ngay, sang trạng thái pendingThirdPoint: hình xem trước
+ *     bám theo con trỏ/ngón tay, và cú CHẠM/CLICK tiếp theo (không cần kéo)
+ *     sẽ chốt điểm neo thứ 3 rồi mới thực sự tạo hình và quay về Con trỏ.
+ *
+ *   Mọi cơ chế mobile gốc (offset crosshair khỏi ngón tay, "giữ tay để
+ *   chỉnh - nhấc tay để đặt" cho công cụ 1 điểm, tự quay về Con trỏ sau khi
+ *   vẽ xong...) được GIỮ NGUYÊN và áp dụng luôn cho các công cụ mới.
+ * ============================================================================
  */
 
 const DrawingModule = (function () {
   const TOUCH_CROSSHAIR_OFFSET = 40; // px - đẩy điểm vẽ lên trên khỏi ngón tay
+  const EXTEND_FACTOR = 60; // hệ số "kéo dài vô tận" cho Tia/Đường mở rộng - canvas tự cắt phần thừa ngoài khung nhìn, không cần tính toán clip chính xác
+
+  // Công cụ chỉ cần 1 điểm neo để đặt hình (không cần kéo)
+  const SINGLE_ANCHOR_TOOLS = ['hline', 'vline', 'hray'];
+  // Công cụ cần 2 điểm neo (kéo từ điểm 1 sang điểm 2, giống Hình chữ nhật gốc)
+  const TWO_ANCHOR_TOOLS = ['trendline', 'ray', 'extendedline', 'rectangle', 'circle', 'arrow', 'fib', 'long', 'short'];
+  // Công cụ cần 3 điểm neo (2 điểm đầu kéo-thả như trên, điểm 3 chốt bằng 1 cú chạm/click tiếp theo)
+  const THREE_ANCHOR_TOOLS = ['triangle', 'channel', 'fibextension'];
+  // Các loại hình cho phép bật/tắt nét đứt trong bảng công cụ
+  const DASHED_STYLE_TOOLS = ['hline', 'vline', 'hray', 'trendline', 'ray', 'extendedline', 'rectangle', 'circle', 'triangle', 'arrow', 'channel'];
+
+  // Tên hiển thị (tiếng Việt) cho tiêu đề bảng thuộc tính - CẬP NHẬT (đợt
+  // nâng cấp bảng thuộc tính "chuyên nghiệp hơn" kiểu TradingView).
+  const TOOL_DISPLAY_NAMES = {
+    hline: 'Đường ngang', vline: 'Đường dọc', hray: 'Tia ngang',
+    trendline: 'Đường xu hướng', ray: 'Tia (Ray)', extendedline: 'Đường mở rộng',
+    rectangle: 'Hình chữ nhật', circle: 'Hình tròn / Ellipse', triangle: 'Tam giác',
+    channel: 'Kênh giá song song', fib: 'Fibonacci Retracement', fibextension: 'Fibonacci Extension',
+    long: 'Lệnh Long', short: 'Lệnh Short', arrow: 'Mũi tên', text: 'Ghi chú',
+  };
+
+  const PRESET_COLORS = ['#f2a339', '#22c9a0', '#ff5a67', '#2962ff', '#d1a53d', '#7e57c2', '#ffffff'];
 
   function create(paneId, chart, candleSeries, container, options = {}) {
     const { onAlertRequested, onToolChanged } = options;
 
-    let currentTool = 'cursor'; // cursor | hline | trendline | rectangle | fib | text | eraser | alert
+    let currentTool = 'cursor'; // cursor | hline | vline | hray | trendline | ray | extendedline | rectangle | circle | triangle | channel | fib | fibextension | long | short | arrow | text | eraser | alert
     let drawings = [];
+    // Style mặc định áp cho MỌI hình vẽ mới tạo - người dùng có thể "Đặt làm
+    // mặc định" ngay trong bảng thuộc tính của 1 hình đã vẽ (xem nút ⭐).
+    let defaultStyle = { color: null, width: 1.5 };
+    // Ẩn/hiện TOÀN BỘ hình vẽ của pane này bằng 1 nút (giống icon 👁 "Hide
+    // all drawings" của TradingView) - khi bật, không vẽ VÀ không bắt sự
+    // kiện (cursor/eraser không tương tác được) cho tới khi bật lại.
+    let allDrawingsHidden = false;
     let dragStart = null;
     let previewDrawing = null;
     let hoverPoint = null; // { x, y, price } - vị trí crosshair (đã đẩy lên nếu là cảm ứng)
     let touchRawPoint = null; // { x, y } - vị trí NGÓN TAY thật (chưa đẩy), dùng vẽ đường nối
-    let pendingTouchPlacement = null; // 'hline' | 'alert' | 'text' - đang giữ tay để đặt, chưa commit
+    let pendingTouchPlacement = null; // 'hline' | 'vline' | 'hray' | 'alert' | 'text' - đang giữ tay để đặt, chưa commit
+    let pendingThirdPoint = null; // { type, p1, p2, ... } - đã đặt xong 2 điểm neo của công cụ 3 điểm, đang chờ chốt điểm neo thứ 3
 
     let isDraggingShape = false;
     let draggedDrawingIndex = null;
@@ -113,22 +155,28 @@ const DrawingModule = (function () {
       if (isInteractive) {
         selectedDrawingIndex = null;
         hideToolbar();
+        // Nếu đang bật "Ẩn tất cả" (👁) mà người dùng chọn 1 công cụ vẽ mới
+        // (khác Con trỏ/Tẩy), tự động hiện lại - tránh việc vừa vẽ xong hình
+        // lại "biến mất" ngay lập tức, gây khó hiểu.
+        if (allDrawingsHidden && tool !== 'eraser') allDrawingsHidden = false;
       }
+      // Đổi tool huỷ luôn mọi thao tác dở dang (đang kéo 2 điểm đầu, hoặc
+      // đang chờ chốt điểm neo thứ 3 của công cụ 3 điểm) để tránh trạng
+      // thái kẹt giữa chừng.
+      dragStart = null;
+      previewDrawing = null;
+      pendingThirdPoint = null;
+      pendingTouchPlacement = null;
       // FIX DELAY: luôn vẽ lại - kể cả khi quay về "Con trỏ" - để xoá NGAY
-      // crosshair còn sót lại từ khung vẽ trước đó. Trước đây chỉ redraw
-      // khi isInteractive=true nên lúc quay về cursor không có gì xoá crosshair
-      // cũ, phải chờ tới sự kiện tiếp theo mới biến mất (rõ nhất trên cảm ứng
-      // vì không có pointermove liên tục sau khi nhấc tay).
+      // crosshair còn sót lại từ khung vẽ trước đó.
       redraw();
     }
 
     /**
      * ĐỢT FIX (chuyên nghiệp hơn): sau khi vẽ xong 1 hình / đặt xong 1 cảnh
      * báo / ghi chú, TỰ ĐỘNG quay về "Con trỏ" - đúng hành vi TradingView
-     * (chỉ Tẩy mới ở lại chế độ liên tục vì bản chất là xoá nhiều hình liên
-     * tiếp). onToolChanged() báo cho ui.js vẽ lại nút đang active trong
-     * thanh công cụ, vì lần đổi tool này đến từ BÊN TRONG drawing.js chứ
-     * không phải do người dùng bấm nút.
+     * (chỉ Tẩy mới ở lại chế độ liên tục). onToolChanged() báo cho ui.js vẽ
+     * lại nút đang active trong thanh công cụ.
      */
     function returnToCursorAfterDraw() {
       setTool('cursor');
@@ -158,12 +206,46 @@ const DrawingModule = (function () {
       ctx.restore();
     }
 
+    /** Điểm mở rộng theo hướng (x1,y1)->(x2,y2) ra xa gấp EXTEND_FACTOR lần
+     * - canvas tự cắt phần vẽ ngoài khung nhìn nên không cần tính clip
+     * chính xác theo biên, chỉ cần "đủ xa" để luôn phủ hết khung nhìn. */
+    function extendPointBeyond(x1, y1, x2, y2, factor) {
+      return { x: x1 + (x2 - x1) * factor, y: y1 + (y2 - y1) * factor };
+    }
+
+    function drawArrowHead(toX, toY, fromX, fromY, color) {
+      const angle = Math.atan2(toY - fromY, toX - fromX);
+      const headLen = 11;
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(toX, toY);
+      ctx.lineTo(toX - headLen * Math.cos(angle - Math.PI / 6.5), toY - headLen * Math.sin(angle - Math.PI / 6.5));
+      ctx.lineTo(toX - headLen * Math.cos(angle + Math.PI / 6.5), toY - headLen * Math.sin(angle + Math.PI / 6.5));
+      ctx.closePath();
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.restore();
+    }
+
     function redraw() {
       const { width, height } = getRect();
       ctx.clearRect(0, 0, width, height);
-      drawings.forEach((d, idx) => drawShape(d, false, idx));
+      if (!allDrawingsHidden) {
+        drawings.forEach((d, idx) => drawShape(d, false, idx));
+      }
       if (previewDrawing) drawShape(previewDrawing, true);
       drawCrosshair();
+    }
+
+    function toRGBA(baseColor, alpha) {
+      let r = 242, g = 163, b = 57;
+      if (baseColor && baseColor.startsWith('#') && baseColor.length >= 7) {
+        const pr = parseInt(baseColor.slice(1, 3), 16);
+        const pg = parseInt(baseColor.slice(3, 5), 16);
+        const pb = parseInt(baseColor.slice(5, 7), 16);
+        if (!isNaN(pr) && !isNaN(pg) && !isNaN(pb)) { r = pr; g = pg; b = pb; }
+      }
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     }
 
     function drawShape(d, isPreview, idx) {
@@ -171,6 +253,7 @@ const DrawingModule = (function () {
       const isSelected = (idx !== undefined && idx === selectedDrawingIndex);
 
       ctx.save();
+      ctx.globalAlpha = d.opacity === undefined ? 1 : d.opacity;
 
       const baseColor = d.color || '#f2a339';
       const baseWidth = d.width || 1.5;
@@ -196,25 +279,71 @@ const DrawingModule = (function () {
         ctx.fillStyle = baseColor;
         ctx.font = '10px sans-serif';
         ctx.fillText(formatPrice(d.price), 4, y - 4);
+        if (isSelected) drawHandle(getRect().width / 2, y);
 
-        if (isSelected) {
-          drawHandle(getRect().width / 2, y);
-        }
-      } else if (d.type === 'trendline') {
+      } else if (d.type === 'vline') {
+        const x = timeToX(d.time);
+        if (x === null || x === undefined) { ctx.restore(); return; }
+        const { height } = getRect();
+        if (d.dashed !== false) ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        if (isSelected) drawHandle(x, height / 2);
+
+      } else if (d.type === 'hray') {
+        const x = timeToX(d.p.time);
+        const y = priceToY(d.p.price);
+        if ([x, y].some((v) => v === null || v === undefined)) { ctx.restore(); return; }
+        const { width } = getRect();
+        if (d.dashed !== false) ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = baseColor;
+        ctx.font = '10px sans-serif';
+        ctx.fillText(formatPrice(d.p.price), x + 4, y - 4);
+        if (isSelected) { drawHandle(x, y); }
+
+      } else if (d.type === 'trendline' || d.type === 'ray' || d.type === 'extendedline') {
         const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
         const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
         if ([x1, y1, x2, y2].some((v) => v === null || v === undefined)) { ctx.restore(); return; }
+
+        let startX = x1, startY = y1, endX = x2, endY = y2;
+        if (d.type === 'ray') {
+          const ext = extendPointBeyond(x1, y1, x2, y2, EXTEND_FACTOR);
+          endX = ext.x; endY = ext.y;
+        } else if (d.type === 'extendedline') {
+          const extA = extendPointBeyond(x2, y2, x1, y1, EXTEND_FACTOR);
+          const extB = extendPointBeyond(x1, y1, x2, y2, EXTEND_FACTOR);
+          startX = extA.x; startY = extA.y; endX = extB.x; endY = extB.y;
+        }
+
         if (d.dashed) ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(endX, endY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); }
+
+      } else if (d.type === 'arrow') {
+        const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
+        const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
+        if ([x1, y1, x2, y2].some((v) => v === null || v === undefined)) { ctx.restore(); return; }
         ctx.beginPath();
         ctx.moveTo(x1, y1);
         ctx.lineTo(x2, y2);
         ctx.stroke();
-        ctx.setLineDash([]);
+        drawArrowHead(x2, y2, x1, y1, ctx.strokeStyle);
+        if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); }
 
-        if (isSelected) {
-          drawHandle(x1, y1);
-          drawHandle(x2, y2);
-        }
       } else if (d.type === 'rectangle') {
         const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
         const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
@@ -222,25 +351,76 @@ const DrawingModule = (function () {
         const rx = Math.min(x1, x2), ry = Math.min(y1, y2);
         const rw = Math.abs(x2 - x1), rh = Math.abs(y2 - y1);
 
-        let fillStyle = 'rgba(242, 163, 57, 0.10)';
-        if (baseColor.startsWith('#')) {
-          const r = parseInt(baseColor.slice(1, 3), 16);
-          const g = parseInt(baseColor.slice(3, 5), 16);
-          const b = parseInt(baseColor.slice(5, 7), 16);
-          if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
-            fillStyle = `rgba(${r}, ${g}, ${b}, 0.12)`;
-          }
-        }
-        ctx.fillStyle = fillStyle;
+        ctx.fillStyle = toRGBA(baseColor, 0.12);
         ctx.fillRect(rx, ry, rw, rh);
         if (d.dashed) ctx.setLineDash([6, 4]);
         ctx.strokeRect(rx, ry, rw, rh);
         ctx.setLineDash([]);
+        if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); }
 
-        if (isSelected) {
-          drawHandle(x1, y1);
-          drawHandle(x2, y2);
-        }
+      } else if (d.type === 'circle') {
+        const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
+        const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
+        if ([x1, y1, x2, y2].some((v) => v === null || v === undefined)) { ctx.restore(); return; }
+        const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+        const rxRad = Math.abs(x2 - x1) / 2, ryRad = Math.abs(y2 - y1) / 2;
+
+        ctx.fillStyle = toRGBA(baseColor, 0.12);
+        if (d.dashed) ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rxRad, ryRad, 0, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.stroke();
+        ctx.setLineDash([]);
+        if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); }
+
+      } else if (d.type === 'triangle') {
+        const pts = [d.p1, d.p2, d.p3].map((p) => ({ x: timeToX(p.time), y: priceToY(p.price) }));
+        if (pts.some((p) => p.x === null || p.y === null || p.x === undefined || p.y === undefined)) { ctx.restore(); return; }
+
+        ctx.fillStyle = toRGBA(baseColor, 0.12);
+        if (d.dashed) ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        ctx.lineTo(pts[1].x, pts[1].y);
+        ctx.lineTo(pts[2].x, pts[2].y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.setLineDash([]);
+        if (isSelected) pts.forEach((p) => drawHandle(p.x, p.y));
+
+      } else if (d.type === 'channel') {
+        const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
+        const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
+        const x3 = timeToX(d.p3.time), y3 = priceToY(d.p3.price);
+        if ([x1, y1, x2, y2, x3, y3].some((v) => v === null || v === undefined)) { ctx.restore(); return; }
+
+        const lineYAt = (x) => (x2 === x1 ? y1 : y1 + ((x - x1) / (x2 - x1)) * (y2 - y1));
+        const offsetY = y3 - lineYAt(x3);
+
+        // Đường trục chính
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+        // Đường song song (qua điểm neo thứ 3)
+        ctx.beginPath();
+        ctx.moveTo(x1, y1 + offsetY);
+        ctx.lineTo(x2, y2 + offsetY);
+        ctx.stroke();
+        // Dải màu giữa 2 đường
+        ctx.fillStyle = toRGBA(baseColor, 0.1);
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.lineTo(x2, y2 + offsetY);
+        ctx.lineTo(x1, y1 + offsetY);
+        ctx.closePath();
+        ctx.fill();
+
+        if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); drawHandle(x3, y3); }
+
       } else if (d.type === 'fib') {
         const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
         const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
@@ -252,19 +432,7 @@ const DrawingModule = (function () {
         const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0];
 
         let colors = [];
-        let r = 242, g = 163, b = 57;
-        if (baseColor.startsWith('#')) {
-          const pr = parseInt(baseColor.slice(1, 3), 16);
-          const pg = parseInt(baseColor.slice(3, 5), 16);
-          const pb = parseInt(baseColor.slice(5, 7), 16);
-          if (!isNaN(pr) && !isNaN(pg) && !isNaN(pb)) {
-            r = pr; g = pg; b = pb;
-          }
-        }
-        for (let i = 0; i < levels.length; i++) {
-          const alpha = 0.05 + (i * 0.015);
-          colors.push(`rgba(${r}, ${g}, ${b}, ${alpha})`);
-        }
+        for (let i = 0; i < levels.length; i++) colors.push(toRGBA(baseColor, 0.05 + (i * 0.015)));
 
         ctx.strokeStyle = isPreview ? 'rgba(242, 163, 57, 0.4)' : 'rgba(124, 132, 150, 0.6)';
         ctx.setLineDash([4, 4]);
@@ -294,15 +462,92 @@ const DrawingModule = (function () {
           const yA = priceToY(priceStart + levels[i] * diff);
           const yB = priceToY(priceStart + levels[i + 1] * diff);
           if (yA === null || yB === null) continue;
-
           ctx.fillStyle = colors[i % colors.length];
           ctx.fillRect(Math.min(x1, x2), Math.min(yA, yB), Math.abs(x2 - x1), Math.abs(yB - yA));
         }
+        if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); }
 
-        if (isSelected) {
-          drawHandle(x1, y1);
-          drawHandle(x2, y2);
+      } else if (d.type === 'fibextension') {
+        // p1 = đầu con sóng, p2 = cuối con sóng (đo biên độ), p3 = điểm thoái
+        // lui - các mức mở rộng được tính TỪ p3, theo biên độ p1->p2.
+        const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
+        const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
+        const x3 = timeToX(d.p3.time), y3 = priceToY(d.p3.price);
+        if ([x1, y1, x2, y2, x3, y3].some((v) => v === null || v === undefined)) { ctx.restore(); return; }
+
+        const diff = d.p2.price - d.p1.price;
+        const levels = [0, 0.382, 0.618, 1, 1.272, 1.618, 2.0, 2.618];
+        const spanStart = Math.min(x1, x2, x3);
+        const spanEnd = Math.max(x1, x2, x3) + Math.abs(x2 - x1) * 0.6 + 30;
+
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = isPreview ? 'rgba(242, 163, 57, 0.4)' : 'rgba(124, 132, 150, 0.5)';
+        ctx.beginPath();
+        ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.lineTo(x3, y3);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        levels.forEach((lvl) => {
+          const price = d.p3.price + lvl * diff;
+          const y = priceToY(price);
+          if (y === null || y === undefined) return;
+          ctx.strokeStyle = isPreview ? 'rgba(242, 163, 57, 0.4)' : (lvl === 1 ? 'rgba(242, 163, 57, 0.9)' : 'rgba(124, 132, 150, 0.8)');
+          ctx.beginPath();
+          ctx.moveTo(spanStart, y);
+          ctx.lineTo(spanEnd, y);
+          ctx.stroke();
+          ctx.fillStyle = isPreview ? 'rgba(242, 163, 57, 0.6)' : '#7c8496';
+          ctx.font = '9px sans-serif';
+          ctx.fillText(`${lvl.toFixed(3)} (${formatPrice(price)})`, spanEnd + 4, y + 3);
+        });
+        if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); drawHandle(x3, y3); }
+
+      } else if (d.type === 'long' || d.type === 'short') {
+        const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price); // vào lệnh
+        const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price); // dừng lỗ
+        if ([x1, y1, x2, y2].some((v) => v === null || v === undefined)) { ctx.restore(); return; }
+
+        const rr = d.rr || 2;
+        const entryPrice = d.p1.price;
+        const stopPrice = d.p2.price;
+        const risk = d.type === 'long' ? (entryPrice - stopPrice) : (stopPrice - entryPrice);
+        const targetPrice = d.type === 'long' ? entryPrice + risk * rr : entryPrice - risk * rr;
+
+        const yEntry = y1;
+        const yStop = y2;
+        const yTarget = priceToY(targetPrice);
+
+        const rx = Math.min(x1, x2), rw = Math.abs(x2 - x1) || 60;
+
+        ctx.setLineDash([]);
+        if (yTarget !== null && yTarget !== undefined) {
+          ctx.fillStyle = 'rgba(34, 201, 160, 0.16)';
+          ctx.fillRect(rx, Math.min(yEntry, yTarget), rw, Math.abs(yTarget - yEntry));
         }
+        ctx.fillStyle = 'rgba(255, 90, 103, 0.16)';
+        ctx.fillRect(rx, Math.min(yEntry, yStop), rw, Math.abs(yStop - yEntry));
+
+        // Đường vào lệnh / dừng lỗ / chốt lời
+        ctx.strokeStyle = baseColor;
+        ctx.beginPath(); ctx.moveTo(rx, yEntry); ctx.lineTo(rx + rw, yEntry); ctx.stroke();
+        ctx.strokeStyle = '#ff5a67';
+        ctx.beginPath(); ctx.moveTo(rx, yStop); ctx.lineTo(rx + rw, yStop); ctx.stroke();
+        if (yTarget !== null && yTarget !== undefined) {
+          ctx.strokeStyle = '#22c9a0';
+          ctx.beginPath(); ctx.moveTo(rx, yTarget); ctx.lineTo(rx + rw, yTarget); ctx.stroke();
+        }
+
+        ctx.font = '10px sans-serif';
+        ctx.fillStyle = baseColor;
+        ctx.fillText(`${d.type === 'long' ? 'LONG' : 'SHORT'} · Vào ${formatPrice(entryPrice)}`, rx + 4, yEntry - 4);
+        ctx.fillStyle = '#ff5a67';
+        ctx.fillText(`SL ${formatPrice(stopPrice)}`, rx + 4, yStop + 12);
+        if (yTarget !== null && yTarget !== undefined) {
+          ctx.fillStyle = '#22c9a0';
+          ctx.fillText(`TP ${formatPrice(targetPrice)} (R:R 1:${rr})`, rx + 4, yTarget - 4);
+        }
+        if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); }
+
       } else if (d.type === 'text') {
         const x = timeToX(d.p.time);
         const y = priceToY(d.p.price);
@@ -323,10 +568,7 @@ const DrawingModule = (function () {
 
         ctx.fillStyle = '#ffffff';
         ctx.fillText(d.text, x + paddingH, y + paddingV + 1);
-
-        if (isSelected) {
-          drawHandle(x, y);
-        }
+        if (isSelected) drawHandle(x, y);
       }
       ctx.restore();
     }
@@ -352,10 +594,6 @@ const DrawingModule = (function () {
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // ĐỢT FIX (mobile): crosshair phía trên đã được "nâng" lên khỏi ngón
-      // tay (xem getScreenXY) để không bị che - đường + chấm nhỏ này nối
-      // xuống đúng vị trí ngón tay thật, giúp không mất phương hướng vì sao
-      // điểm vẽ lại lệch so với ngón tay.
       if (touchRawPoint) {
         ctx.strokeStyle = 'rgba(242, 163, 57, 0.5)';
         ctx.lineWidth = 1;
@@ -386,6 +624,14 @@ const DrawingModule = (function () {
         ctx.fillText(label, width - boxW + 4, boxY + 11);
       }
 
+      // Đang chờ chốt điểm neo thứ 3 (Tam giác/Kênh giá/Fib Extension) - gợi
+      // ý nhỏ để người dùng biết cần bấm thêm 1 lần nữa.
+      if (pendingThirdPoint) {
+        ctx.font = '10px sans-serif';
+        ctx.fillStyle = '#f2a339';
+        ctx.fillText('Chạm/bấm để chốt điểm neo thứ 3', Math.min(x + 10, width - 160), Math.max(y - 12, 12));
+      }
+
       ctx.restore();
     }
 
@@ -407,50 +653,67 @@ const DrawingModule = (function () {
       return Math.hypot(xp - projX, yp - projY);
     }
 
+    function boundsHit(x, y, xs, ys, margin) {
+      const rx = Math.min(...xs) - margin, ry = Math.min(...ys) - margin;
+      const rw = (Math.max(...xs) - Math.min(...xs)) + margin * 2;
+      const rh = (Math.max(...ys) - Math.min(...ys)) + margin * 2;
+      return x >= rx && x <= rx + rw && y >= ry && y <= ry + rh;
+    }
+
     function findDrawingAt(pt) {
+      if (allDrawingsHidden) return null;
       const x = timeToX(pt.time);
       const y = priceToY(pt.price);
       if (x === null || y === null) return null;
 
       for (let i = drawings.length - 1; i >= 0; i--) {
         const d = drawings[i];
+
         if (d.type === 'hline') {
           const dy = priceToY(d.price);
           if (dy !== null && Math.abs(dy - y) < 10) return { index: i };
-        } else if (d.type === 'trendline') {
+
+        } else if (d.type === 'vline') {
+          const dx_ = timeToX(d.time);
+          if (dx_ !== null && Math.abs(dx_ - x) < 10) return { index: i };
+
+        } else if (d.type === 'hray') {
+          const px = timeToX(d.p.time), py = priceToY(d.p.price);
+          if (px !== null && py !== null && Math.abs(py - y) < 10 && x >= px - 10) return { index: i };
+
+        } else if (d.type === 'trendline' || d.type === 'ray' || d.type === 'extendedline' || d.type === 'arrow') {
           const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
           const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
           if (x1 !== null && y1 !== null && x2 !== null && y2 !== null) {
-            if (distToSegment(x, y, x1, y1, x2, y2) < 10) return { index: i };
-          }
-        } else if (d.type === 'rectangle') {
-          const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
-          const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
-          if (x1 !== null && y1 !== null && x2 !== null && y2 !== null) {
-            const rx = Math.min(x1, x2), ry = Math.min(y1, y2);
-            const rw = Math.abs(x2 - x1), rh = Math.abs(y2 - y1);
-            if (x >= rx - 5 && x <= rx + rw + 5 && y >= ry - 5 && y <= ry + rh + 5) {
-              return { index: i };
+            let sx = x1, sy = y1, ex = x2, ey = y2;
+            if (d.type === 'ray') { const e_ = extendPointBeyond(x1, y1, x2, y2, EXTEND_FACTOR); ex = e_.x; ey = e_.y; }
+            if (d.type === 'extendedline') {
+              const a = extendPointBeyond(x2, y2, x1, y1, EXTEND_FACTOR);
+              const b = extendPointBeyond(x1, y1, x2, y2, EXTEND_FACTOR);
+              sx = a.x; sy = a.y; ex = b.x; ey = b.y;
             }
+            if (distToSegment(x, y, sx, sy, ex, ey) < 10) return { index: i };
           }
-        } else if (d.type === 'fib') {
+
+        } else if (d.type === 'rectangle' || d.type === 'circle' || d.type === 'fib' || d.type === 'long' || d.type === 'short') {
           const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
           const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
           if (x1 !== null && y1 !== null && x2 !== null && y2 !== null) {
-            const rx = Math.min(x1, x2), ry = Math.min(y1, y2);
-            const rw = Math.abs(x2 - x1), rh = Math.abs(y2 - y1);
-            if (x >= rx - 10 && x <= rx + rw + 10 && y >= ry - 10 && y <= ry + rh + 10) {
-              return { index: i };
-            }
+            if (boundsHit(x, y, [x1, x2], [y1, y2], 8)) return { index: i };
           }
+
+        } else if (d.type === 'triangle' || d.type === 'channel' || d.type === 'fibextension') {
+          const pts = [d.p1, d.p2, d.p3].map((p) => ({ x: timeToX(p.time), y: priceToY(p.price) }));
+          if (pts.every((p) => p.x !== null && p.y !== null)) {
+            if (boundsHit(x, y, pts.map((p) => p.x), pts.map((p) => p.y), 8)) return { index: i };
+          }
+
         } else if (d.type === 'text') {
           const tx = timeToX(d.p.time), ty = priceToY(d.p.price);
           if (tx !== null && ty !== null) {
             ctx.font = '12px sans-serif';
             const w = ctx.measureText(d.text).width;
-            if (x >= tx - 8 && x <= tx + w + 8 && y >= ty - 18 && y <= ty + 8) {
-              return { index: i };
-            }
+            if (x >= tx - 8 && x <= tx + w + 8 && y >= ty - 18 && y <= ty + 8) return { index: i };
           }
         }
       }
@@ -464,39 +727,71 @@ const DrawingModule = (function () {
       }
     }
 
+    /** Tính điểm neo trung tâm (tx,ty theo px) dùng để định vị bảng thuộc
+     * tính bên trên hình - tách riêng khỏi phần dựng DOM để có thể gọi lại
+     * RẺ (không rebuild toàn bộ nút/input) mỗi khi hình bị kéo di chuyển. */
+    function computeToolbarAnchor(d) {
+      const rect = container.getBoundingClientRect();
+      let tx = rect.width / 2;
+      let ty = 100;
+
+      if (d.type === 'hline') {
+        const y = priceToY(d.price);
+        tx = rect.width / 2; ty = y !== null ? y : 100;
+      } else if (d.type === 'vline') {
+        const x = timeToX(d.time);
+        tx = x !== null ? x : rect.width / 2; ty = 100;
+      } else if (d.type === 'hray') {
+        const x = timeToX(d.p.time), y = priceToY(d.p.price);
+        tx = x !== null ? x : rect.width / 2; ty = y !== null ? y : 100;
+      } else if (d.p3) {
+        const xs = [d.p1, d.p2, d.p3].map((p) => timeToX(p.time)).filter((v) => v !== null);
+        const ys = [d.p1, d.p2, d.p3].map((p) => priceToY(p.price)).filter((v) => v !== null);
+        if (xs.length) tx = xs.reduce((a, b) => a + b, 0) / xs.length;
+        if (ys.length) ty = Math.min(...ys);
+      } else if (d.p1 && d.p2) {
+        const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
+        const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
+        if (x1 !== null && x2 !== null && y1 !== null && y2 !== null) {
+          tx = (x1 + x2) / 2; ty = Math.min(y1, y2);
+        }
+      } else if (d.type === 'text') {
+        const x = timeToX(d.p.time), y = priceToY(d.p.price);
+        tx = x !== null ? x : rect.width / 2; ty = y !== null ? y : 100;
+      }
+      return { tx, ty, rect };
+    }
+
+    function computeToolbarTopLeft(d, estHeight) {
+      const { tx, ty, rect } = computeToolbarAnchor(d);
+      const toolbarWidth = 232;
+      const top = Math.max(10, Math.min(ty - estHeight - 12, rect.height - estHeight - 10));
+      const left = Math.max(10, Math.min(tx - toolbarWidth / 2, rect.width - toolbarWidth - 10));
+      return { top, left, toolbarWidth };
+    }
+
+    /** Gọi RẺ mỗi khung hình khi đang KÉO DI CHUYỂN 1 hình đã vẽ - chỉ cập
+     * nhật lại vị trí top/left của bảng thuộc tính đã tồn tại sẵn, KHÔNG
+     * dựng lại toàn bộ DOM bên trong (màu/độ dày/ô nhập...) như trước đây.
+     * Đây là điểm tối ưu hiệu năng quan trọng nhất của đợt nâng cấp này:
+     * trước đây showToolbar(idx) - vốn dựng lại ~15-20 phần tử DOM - bị gọi
+     * lại trên MỖI sự kiện pointermove khi kéo hình, gây giật/tốn CPU rõ
+     * rệt khi kéo nhiều lần liên tục hoặc trên máy yếu. */
+    function repositionToolbarOnly(idx) {
+      if (!toolbarEl) return;
+      const d = drawings[idx];
+      if (!d) return;
+      const { top, left } = computeToolbarTopLeft(d, toolbarEl.offsetHeight || 260);
+      toolbarEl.style.top = top + 'px';
+      toolbarEl.style.left = left + 'px';
+    }
+
     function showToolbar(idx) {
       hideToolbar();
       const d = drawings[idx];
       if (!d) return;
 
-      const rect = container.getBoundingClientRect();
-      let tx = 0;
-      let ty = 0;
-
-      if (d.type === 'hline') {
-        const y = priceToY(d.price);
-        tx = rect.width / 2;
-        ty = y !== null ? y : 100;
-      } else if (d.type === 'trendline' || d.type === 'rectangle' || d.type === 'fib') {
-        const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
-        const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
-        if (x1 !== null && x2 !== null && y1 !== null && y2 !== null) {
-          tx = (x1 + x2) / 2;
-          ty = Math.min(y1, y2);
-        } else {
-          tx = rect.width / 2;
-          ty = 100;
-        }
-      } else if (d.type === 'text') {
-        const x = timeToX(d.p.time), y = priceToY(d.p.price);
-        tx = x !== null ? x : rect.width / 2;
-        ty = y !== null ? y : 100;
-      }
-
-      const toolbarWidth = 220;
-      const estHeight = 150;
-      const top = Math.max(10, Math.min(ty - estHeight - 12, rect.height - estHeight - 10));
-      const left = Math.max(10, Math.min(tx - toolbarWidth / 2, rect.width - toolbarWidth - 10));
+      const { top, left, toolbarWidth } = computeToolbarTopLeft(d, 260);
 
       toolbarEl = document.createElement('div');
       toolbarEl.className = 'drawing-toolbar';
@@ -516,88 +811,168 @@ const DrawingModule = (function () {
       toolbarEl.style.fontFamily = 'var(--font)';
       toolbarEl.addEventListener('pointerdown', (e) => e.stopPropagation());
 
-      // ---- Hàng màu ----
-      const colorRow = document.createElement('div');
-      colorRow.style.display = 'flex';
-      colorRow.style.alignItems = 'center';
-      colorRow.style.gap = '6px';
+      // ---- Header: tên hình + khoá vị trí + đặt làm mặc định + đóng ----
+      const header = document.createElement('div');
+      header.className = 'dt-toolbar-header';
 
-      const colors = ['#f2a339', '#22c9a0', '#ff5a67', '#ff9800', '#d1a53d', '#7e57c2', '#ffffff'];
-      colors.forEach((col) => {
-        const dot = document.createElement('div');
-        dot.style.width = '14px';
-        dot.style.height = '14px';
-        dot.style.borderRadius = '50%';
+      const titleEl = document.createElement('span');
+      titleEl.className = 'dt-toolbar-title';
+      titleEl.textContent = TOOL_DISPLAY_NAMES[d.type] || d.type;
+      header.appendChild(titleEl);
+
+      const headerActions = document.createElement('div');
+      headerActions.className = 'dt-toolbar-header-actions';
+
+      if (d.type !== 'text') {
+        const lockBtn = document.createElement('button');
+        lockBtn.type = 'button';
+        lockBtn.className = 'dt-icon-btn' + (d.locked ? ' active' : '');
+        lockBtn.textContent = d.locked ? '🔒' : '🔓';
+        lockBtn.title = d.locked ? 'Đã khoá vị trí - bấm để mở khoá (cho phép kéo lại)' : 'Khoá vị trí - không cho kéo di chuyển nữa';
+        lockBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          d.locked = !d.locked;
+          showToolbar(idx);
+        });
+        headerActions.appendChild(lockBtn);
+      }
+
+      const defaultBtn = document.createElement('button');
+      defaultBtn.type = 'button';
+      defaultBtn.className = 'dt-icon-btn';
+      defaultBtn.textContent = '⭐';
+      defaultBtn.title = 'Đặt màu & độ dày hiện tại làm mặc định cho MỌI hình vẽ mới';
+      defaultBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        defaultStyle.color = d.color || defaultStyle.color;
+        defaultStyle.width = d.width || defaultStyle.width;
+        defaultBtn.textContent = '✓';
+        setTimeout(() => { defaultBtn.textContent = '⭐'; }, 700);
+      });
+      headerActions.appendChild(defaultBtn);
+
+      const closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.className = 'dt-icon-btn';
+      closeBtn.textContent = '✕';
+      closeBtn.title = 'Đóng bảng thuộc tính';
+      closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        selectedDrawingIndex = null;
+        hideToolbar();
+        redraw();
+      });
+      headerActions.appendChild(closeBtn);
+
+      header.appendChild(headerActions);
+      toolbarEl.appendChild(header);
+      toolbarEl.appendChild(Object.assign(document.createElement('div'), { className: 'dt-toolbar-divider' }));
+
+      // ---- Hàng màu: mẫu có sẵn + ô chọn màu tuỳ ý ----
+      const colorRow = document.createElement('div');
+      colorRow.className = 'dt-color-row';
+
+      PRESET_COLORS.forEach((col) => {
+        const dot = document.createElement('button');
+        dot.type = 'button';
+        dot.className = 'dt-color-dot' + ((d.color || '#f2a339') === col ? ' active' : '');
         dot.style.background = col;
-        dot.style.cursor = 'pointer';
-        dot.style.flexShrink = '0';
-        dot.style.border = (d.color || '#f2a339') === col ? '2px solid var(--text-primary)' : '1px solid rgba(255,255,255,0.2)';
-        dot.style.transition = 'transform 0.15s ease';
         dot.addEventListener('click', (e) => {
           e.stopPropagation();
           d.color = col;
           redraw();
           showToolbar(idx);
         });
-        dot.addEventListener('mouseenter', () => dot.style.transform = 'scale(1.2)');
-        dot.addEventListener('mouseleave', () => dot.style.transform = 'scale(1)');
         colorRow.appendChild(dot);
       });
+
+      const customColor = document.createElement('input');
+      customColor.type = 'color';
+      customColor.className = 'dt-custom-color';
+      customColor.title = 'Chọn màu tuỳ ý';
+      customColor.value = /^#[0-9a-fA-F]{6}$/.test(d.color || '') ? d.color : '#f2a339';
+      customColor.addEventListener('pointerdown', (e) => e.stopPropagation());
+      customColor.addEventListener('input', () => {
+        d.color = customColor.value;
+        redraw();
+      });
+      customColor.addEventListener('change', () => showToolbar(idx));
+      colorRow.appendChild(customColor);
+
       toolbarEl.appendChild(colorRow);
 
-      // ---- Hàng độ dày nét (không áp dụng cho ghi chú) ----
+      // ---- Hàng độ mờ (opacity) ----
+      const opacityRow = document.createElement('div');
+      opacityRow.className = 'dt-opacity-row';
+      const opLabel = document.createElement('span');
+      opLabel.className = 'dt-row-label';
+      opLabel.textContent = 'Độ mờ';
+      const opValue = document.createElement('span');
+      opValue.className = 'dt-opacity-value';
+      const currentOpacityPct = Math.round((d.opacity === undefined ? 1 : d.opacity) * 100);
+      opValue.textContent = currentOpacityPct + '%';
+      const opInput = document.createElement('input');
+      opInput.type = 'range';
+      opInput.min = '10';
+      opInput.max = '100';
+      opInput.value = String(currentOpacityPct);
+      opInput.className = 'dt-opacity-slider';
+      opInput.addEventListener('pointerdown', (e) => e.stopPropagation());
+      opInput.addEventListener('input', () => {
+        d.opacity = parseInt(opInput.value, 10) / 100;
+        opValue.textContent = opInput.value + '%';
+        redraw();
+      });
+      opacityRow.appendChild(opLabel);
+      opacityRow.appendChild(opInput);
+      opacityRow.appendChild(opValue);
+      toolbarEl.appendChild(opacityRow);
+
+      // ---- Hàng độ dày nét: mẫu xem trước dạng thanh (không áp dụng cho ghi chú) ----
       if (d.type !== 'text') {
         const widthRow = document.createElement('div');
-        widthRow.style.display = 'flex';
-        widthRow.style.gap = '4px';
-        [{ label: 'Mảnh', val: 1 }, { label: 'Vừa', val: 1.5 }, { label: 'Đậm', val: 2.5 }].forEach((w) => {
+        widthRow.className = 'dt-swatch-row';
+        [1, 1.5, 2.5].forEach((wVal) => {
+          const active = (d.width || 1.5) === wVal;
           const btn = document.createElement('button');
           btn.type = 'button';
-          btn.textContent = w.label;
-          const active = (d.width || 1.5) === w.val;
-          btn.style.flex = '1';
-          btn.style.padding = '3px 0';
-          btn.style.fontSize = '10.5px';
-          btn.style.border = '1px solid var(--border-color)';
-          btn.style.borderRadius = 'var(--radius-sm)';
-          btn.style.cursor = 'pointer';
-          btn.style.background = active ? 'var(--accent-blue-soft)' : 'transparent';
-          btn.style.color = active ? 'var(--accent-blue)' : 'var(--text-secondary)';
+          btn.className = 'dt-swatch-btn' + (active ? ' active' : '');
+          btn.title = wVal === 1 ? 'Nét mảnh' : wVal === 1.5 ? 'Nét vừa' : 'Nét đậm';
+          const bar = document.createElement('span');
+          bar.className = 'dt-swatch-bar';
+          bar.style.height = (wVal + 0.5) + 'px';
+          btn.appendChild(bar);
           btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            d.width = w.val;
+            d.width = wVal;
             redraw();
             showToolbar(idx);
           });
           widthRow.appendChild(btn);
         });
-        toolbarEl.appendChild(widthRow);
-      }
 
-      // ---- Hàng kiểu nét: liền/đứt (fib có quy ước riêng nên bỏ qua) ----
-      if (d.type === 'hline' || d.type === 'trendline' || d.type === 'rectangle') {
-        const styleRow = document.createElement('div');
-        styleRow.style.display = 'flex';
-        const isDashed = d.type === 'hline' ? d.dashed !== false : !!d.dashed;
-        const styleBtn = document.createElement('button');
-        styleBtn.type = 'button';
-        styleBtn.textContent = isDashed ? '┄ Nét đứt' : '─ Nét liền';
-        styleBtn.style.flex = '1';
-        styleBtn.style.padding = '3px 0';
-        styleBtn.style.fontSize = '10.5px';
-        styleBtn.style.border = '1px solid var(--border-color)';
-        styleBtn.style.borderRadius = 'var(--radius-sm)';
-        styleBtn.style.cursor = 'pointer';
-        styleBtn.style.background = 'transparent';
-        styleBtn.style.color = 'var(--text-primary)';
-        styleBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          d.dashed = d.type === 'hline' ? (d.dashed === false ? true : false) : !d.dashed;
-          redraw();
-          showToolbar(idx);
-        });
-        styleRow.appendChild(styleBtn);
-        toolbarEl.appendChild(styleRow);
+        // ---- Kiểu nét (liền/đứt) ghép chung hàng, dạng mẫu xem trước ----
+        if (DASHED_STYLE_TOOLS.includes(d.type)) {
+          const isDashed = (d.type === 'hline' || d.type === 'vline' || d.type === 'hray') ? d.dashed !== false : !!d.dashed;
+          [{ dashed: false, title: 'Nét liền' }, { dashed: true, title: 'Nét đứt' }].forEach((opt) => {
+            const active = isDashed === opt.dashed;
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'dt-swatch-btn' + (active ? ' active' : '');
+            btn.title = opt.title;
+            const bar = document.createElement('span');
+            bar.className = 'dt-swatch-bar' + (opt.dashed ? ' dashed' : '');
+            btn.appendChild(bar);
+            btn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              d.dashed = opt.dashed;
+              redraw();
+              showToolbar(idx);
+            });
+            widthRow.appendChild(btn);
+          });
+        }
+        toolbarEl.appendChild(widthRow);
       }
 
       // ---- Hàng sửa giá trực tiếp ----
@@ -611,7 +986,7 @@ const DrawingModule = (function () {
         label.textContent = labelText;
         label.style.fontSize = '10.5px';
         label.style.color = 'var(--text-secondary)';
-        label.style.width = '42px';
+        label.style.width = '52px';
         label.style.flexShrink = '0';
 
         const input = document.createElement('input');
@@ -648,7 +1023,20 @@ const DrawingModule = (function () {
 
       if (d.type === 'hline') {
         priceCol.appendChild(makePriceInput('Giá', d.price, (v) => { d.price = v; redraw(); }));
-      } else if (d.type === 'trendline' || d.type === 'rectangle' || d.type === 'fib') {
+      } else if (d.type === 'hray') {
+        priceCol.appendChild(makePriceInput('Giá', d.p.price, (v) => { d.p.price = v; redraw(); }));
+      } else if (d.type === 'vline') {
+        // Đường dọc chỉ neo theo THỜI GIAN - không có ô sửa số, kéo bằng
+        // chuột/tay (tool Con trỏ) để di chuyển.
+      } else if (d.p3) {
+        priceCol.appendChild(makePriceInput('Điểm 1', d.p1.price, (v) => { d.p1.price = v; redraw(); }));
+        priceCol.appendChild(makePriceInput('Điểm 2', d.p2.price, (v) => { d.p2.price = v; redraw(); }));
+        priceCol.appendChild(makePriceInput('Điểm 3', d.p3.price, (v) => { d.p3.price = v; redraw(); }));
+      } else if (d.type === 'long' || d.type === 'short') {
+        priceCol.appendChild(makePriceInput('Vào lệnh', d.p1.price, (v) => { d.p1.price = v; redraw(); }));
+        priceCol.appendChild(makePriceInput('Dừng lỗ', d.p2.price, (v) => { d.p2.price = v; redraw(); }));
+        priceCol.appendChild(makePriceInput('Tỷ lệ R:R', d.rr || 2, (v) => { d.rr = v; redraw(); }));
+      } else if (d.p1 && d.p2) {
         priceCol.appendChild(makePriceInput('Điểm 1', d.p1.price, (v) => { d.p1.price = v; redraw(); }));
         priceCol.appendChild(makePriceInput('Điểm 2', d.p2.price, (v) => { d.p2.price = v; redraw(); }));
       } else if (d.type === 'text') {
@@ -702,13 +1090,6 @@ const DrawingModule = (function () {
       container.appendChild(toolbarEl);
     }
 
-    /**
-     * Mở ô nhập ghi chú tại toạ độ MÀN HÌNH đã cho (screenXY - đã đẩy lên
-     * khỏi ngón tay nếu là cảm ứng), gắn với toạ độ DỮ LIỆU pt (time/price)
-     * sẽ được lưu khi submit. Tách thành hàm riêng để dùng chung cho cả
-     * đường vẽ bằng chuột (đặt ngay lúc pointerdown) lẫn cảm ứng (đặt lúc
-     * nhấc tay - xem onPointerUp/pendingTouchPlacement).
-     */
     function openTextInputAt(screenXY, pt) {
       const input = document.createElement('input');
       input.type = 'text';
@@ -726,9 +1107,7 @@ const DrawingModule = (function () {
 
       container.appendChild(input);
 
-      setTimeout(() => {
-        input.focus();
-      }, 50);
+      setTimeout(() => { input.focus(); }, 50);
 
       let submitted = false;
       const submitText = () => {
@@ -761,18 +1140,36 @@ const DrawingModule = (function () {
     }
 
     function onPointerDown(e) {
+      // Đang chờ chốt điểm neo thứ 3 (Tam giác/Kênh giá/Fib Extension) -
+      // cú chạm/click này CHỐT LUÔN điểm neo thứ 3 rồi tạo hình hoàn chỉnh.
+      if (pendingThirdPoint) {
+        const pt = pointFromEvent(e);
+        if (pt.time !== null && pt.time !== undefined && pt.price !== null && pt.price !== undefined) {
+          drawings.push({ ...pendingThirdPoint, p3: pt });
+          pendingThirdPoint = null;
+          previewDrawing = null;
+          redraw();
+          returnToCursorAfterDraw();
+        }
+        return;
+      }
+
       const pt = pointFromEvent(e);
 
       if (currentTool === 'cursor') {
         const match = findDrawingAt(pt);
         if (match !== null) {
           selectedDrawingIndex = match.index;
-          isDraggingShape = true;
-          draggedDrawingIndex = match.index;
-          draggedDrawingOriginal = JSON.parse(JSON.stringify(drawings[match.index]));
-          dragStartPixel = { x: e.clientX, y: e.clientY };
-          canvas.setPointerCapture(e.pointerId);
           showToolbar(match.index);
+          // Hình đã khoá (🔒 trong bảng thuộc tính): vẫn chọn được để xem/sửa
+          // màu/xoá, nhưng KHÔNG cho kéo di chuyển.
+          if (!drawings[match.index].locked) {
+            isDraggingShape = true;
+            draggedDrawingIndex = match.index;
+            draggedDrawingOriginal = JSON.parse(JSON.stringify(drawings[match.index]));
+            dragStartPixel = { x: e.clientX, y: e.clientY };
+            canvas.setPointerCapture(e.pointerId);
+          }
           e.stopPropagation();
           e.preventDefault();
         } else {
@@ -786,18 +1183,19 @@ const DrawingModule = (function () {
       // Eraser tool
       if (currentTool === 'eraser') {
         const match = findDrawingAt(pt);
-        if (match !== null) {
+        if (match !== null && !drawings[match.index].locked) {
           drawings.splice(match.index, 1);
           redraw();
         }
         return;
       }
 
-      // ĐỢT FIX (mobile): "Đường ngang"/"Cảnh báo giá"/"Ghi chú" trên CẢM
-      // ỨNG không commit ngay lúc chạm xuống nữa - giữ tay + kéo để chỉnh
-      // đúng vị trí (crosshair đã được đẩy lên khỏi ngón tay), chỉ commit
-      // khi NHẤC TAY (xem onPointerUp). Trên CHUỘT vẫn giữ hành vi cũ.
-      if (e.pointerType === 'touch' && (currentTool === 'hline' || currentTool === 'alert' || currentTool === 'text')) {
+      // ĐỢT FIX (mobile): công cụ 1 điểm neo ("Đường ngang"/"Đường dọc"/"Tia
+      // ngang"/"Cảnh báo giá"/"Ghi chú") trên CẢM ỨNG không commit ngay lúc
+      // chạm xuống - giữ tay + kéo để chỉnh đúng vị trí, chỉ commit khi
+      // NHẤC TAY (xem onPointerUp). Trên CHUỘT vẫn giữ hành vi cũ (bấm 1
+      // phát là đặt luôn).
+      if (e.pointerType === 'touch' && (SINGLE_ANCHOR_TOOLS.includes(currentTool) || currentTool === 'alert' || currentTool === 'text')) {
         pendingTouchPlacement = currentTool;
         canvas.setPointerCapture(e.pointerId);
         return;
@@ -820,15 +1218,33 @@ const DrawingModule = (function () {
         return;
       }
 
-      if (pt.time === null || pt.time === undefined || pt.price === null || pt.price === undefined) return;
-
+      // Công cụ 1 điểm neo trên CHUỘT: đặt ngay lúc bấm xuống
       if (currentTool === 'hline') {
-        drawings.push({ type: 'hline', price: pt.price, width: 1.5, dashed: true });
+        if (pt.price === null || pt.price === undefined) return;
+        drawings.push({ type: 'hline', price: pt.price, color: defaultStyle.color, width: defaultStyle.width, dashed: true });
+        redraw();
+        returnToCursorAfterDraw();
+        return;
+      }
+      if (currentTool === 'vline') {
+        if (pt.time === null || pt.time === undefined) return;
+        drawings.push({ type: 'vline', time: pt.time, color: defaultStyle.color, width: defaultStyle.width, dashed: true });
+        redraw();
+        returnToCursorAfterDraw();
+        return;
+      }
+      if (currentTool === 'hray') {
+        if (pt.time === null || pt.time === undefined || pt.price === null || pt.price === undefined) return;
+        drawings.push({ type: 'hray', p: { time: pt.time, price: pt.price }, color: defaultStyle.color, width: defaultStyle.width, dashed: true });
         redraw();
         returnToCursorAfterDraw();
         return;
       }
 
+      if (pt.time === null || pt.time === undefined || pt.price === null || pt.price === undefined) return;
+
+      // Mọi công cụ 2 điểm neo (kể cả bước đầu của công cụ 3 điểm neo) bắt
+      // đầu bằng thao tác kéo dragStart -> pt, y hệt cơ chế gốc.
       dragStart = pt;
       canvas.setPointerCapture(e.pointerId);
     }
@@ -858,11 +1274,21 @@ const DrawingModule = (function () {
         touchRawPoint = null;
       }
 
-      // ĐỢT FIX (mobile): đang giữ tay để đặt hline/alert/text - cập nhật
-      // xem trước, chưa commit gì cả.
+      // Đang chờ chốt điểm neo thứ 3 - preview bám theo con trỏ/ngón tay
+      if (pendingThirdPoint) {
+        previewDrawing = { ...pendingThirdPoint, p3: pt };
+        redraw();
+        return;
+      }
+
+      // Đang giữ tay để đặt công cụ 1 điểm neo - cập nhật xem trước, chưa commit
       if (pendingTouchPlacement) {
         if (pendingTouchPlacement === 'hline') {
           previewDrawing = { type: 'hline', price: pt.price };
+        } else if (pendingTouchPlacement === 'vline') {
+          previewDrawing = { type: 'vline', time: pt.time };
+        } else if (pendingTouchPlacement === 'hray') {
+          previewDrawing = { type: 'hray', p: { time: pt.time, price: pt.price } };
         }
         redraw();
         return;
@@ -879,13 +1305,46 @@ const DrawingModule = (function () {
             if (d.type === 'hline') {
               const yOrig = priceToY(orig.price);
               if (yOrig !== null && yOrig !== undefined) {
-                const yNew = yOrig + dy;
-                const newPrice = yToPrice(yNew);
-                if (newPrice !== null && !Number.isNaN(newPrice)) {
-                  d.price = newPrice;
+                const newPrice = yToPrice(yOrig + dy);
+                if (newPrice !== null && !Number.isNaN(newPrice)) d.price = newPrice;
+              }
+            } else if (d.type === 'vline') {
+              const xOrig = timeToX(orig.time);
+              if (xOrig !== null && xOrig !== undefined) {
+                const newTime = xToTime(xOrig + dx);
+                if (newTime !== null) d.time = newTime;
+              }
+            } else if (d.type === 'hray') {
+              const xOrig = timeToX(orig.p.time), yOrig = priceToY(orig.p.price);
+              if (xOrig !== null && yOrig !== null) {
+                const t = xToTime(xOrig + dx), p = yToPrice(yOrig + dy);
+                if (t !== null && p !== null) d.p = { time: t, price: p };
+              }
+            } else if (d.type === 'text') {
+              const xOrig = timeToX(orig.p.time), yOrig = priceToY(orig.p.price);
+              if (xOrig !== null && yOrig !== null) {
+                const newX = xOrig + dx, newY = yOrig + dy;
+                const t = xToTime(newX), p = yToPrice(newY);
+                if (t !== null && p !== null) d.p = { time: t, price: p };
+              }
+            } else if (d.p3) {
+              // Công cụ 3 điểm neo: dịch chuyển cả 3
+              const x1o = timeToX(orig.p1.time), y1o = priceToY(orig.p1.price);
+              const x2o = timeToX(orig.p2.time), y2o = priceToY(orig.p2.price);
+              const x3o = timeToX(orig.p3.time), y3o = priceToY(orig.p3.price);
+              if ([x1o, y1o, x2o, y2o, x3o, y3o].every((v) => v !== null && v !== undefined)) {
+                const t1 = xToTime(x1o + dx), pr1 = yToPrice(y1o + dy);
+                const t2 = xToTime(x2o + dx), pr2 = yToPrice(y2o + dy);
+                const t3 = xToTime(x3o + dx), pr3 = yToPrice(y3o + dy);
+                if ([t1, pr1, t2, pr2, t3, pr3].every((v) => v !== null && v !== undefined)) {
+                  d.p1 = { time: t1, price: pr1 };
+                  d.p2 = { time: t2, price: pr2 };
+                  d.p3 = { time: t3, price: pr3 };
                 }
               }
-            } else if (d.type === 'trendline' || d.type === 'rectangle' || d.type === 'fib') {
+            } else if (d.p1 && d.p2) {
+              // Công cụ 2 điểm neo (trendline/ray/extendedline/rectangle/
+              // circle/arrow/fib/long/short)
               const x1Orig = timeToX(orig.p1.time), y1Orig = priceToY(orig.p1.price);
               const x2Orig = timeToX(orig.p2.time), y2Orig = priceToY(orig.p2.price);
               if (x1Orig !== null && y1Orig !== null && x2Orig !== null && y2Orig !== null) {
@@ -898,17 +1357,8 @@ const DrawingModule = (function () {
                   d.p2 = { time: t2, price: p2 };
                 }
               }
-            } else if (d.type === 'text') {
-              const xOrig = timeToX(orig.p.time), yOrig = priceToY(orig.p.price);
-              if (xOrig !== null && yOrig !== null) {
-                const newX = xOrig + dx, newY = yOrig + dy;
-                const t = xToTime(newX), p = yToPrice(newY);
-                if (t !== null && p !== null) {
-                  d.p = { time: t, price: p };
-                }
-              }
             }
-            showToolbar(draggedDrawingIndex);
+            repositionToolbarOnly(draggedDrawingIndex);
           }
         } else {
           const match = findDrawingAt(pt);
@@ -926,7 +1376,8 @@ const DrawingModule = (function () {
         return;
       }
 
-      if (dragStart && currentTool !== 'alert' && currentTool !== 'text' && currentTool !== 'eraser') {
+      if (dragStart && currentTool !== 'alert' && currentTool !== 'text' && currentTool !== 'eraser' &&
+          !SINGLE_ANCHOR_TOOLS.includes(currentTool)) {
         if (pt.time === null || pt.time === undefined || pt.price === null || pt.price === undefined) {
           redraw();
           return;
@@ -937,16 +1388,14 @@ const DrawingModule = (function () {
     }
 
     function onPointerUp(e) {
-      // FIX MOBILE: trên cảm ứng, không có "pointerleave" tức thời như
-      // chuột - ngón tay chỉ nhấc lên (pointerup) - xoá crosshair NGAY tại
-      // đây, không đợi pointerleave.
+      // FIX MOBILE: trên cảm ứng, ngón tay chỉ nhấc lên (pointerup) - xoá
+      // crosshair NGAY tại đây, không đợi pointerleave.
       if (e.pointerType === 'touch') {
         hoverPoint = null;
         touchRawPoint = null;
       }
 
-      // ĐỢT FIX (mobile): commit "Đường ngang"/"Cảnh báo giá"/"Ghi chú" đã
-      // giữ tay để chỉnh - xem onPointerDown.
+      // Commit công cụ 1 điểm neo đã giữ tay để chỉnh trên cảm ứng
       if (pendingTouchPlacement) {
         const tool = pendingTouchPlacement;
         const pt = pointFromEvent(e);
@@ -954,7 +1403,15 @@ const DrawingModule = (function () {
         previewDrawing = null;
 
         if (tool === 'hline' && pt.price !== null && pt.price !== undefined && !Number.isNaN(pt.price)) {
-          drawings.push({ type: 'hline', price: pt.price, width: 1.5, dashed: true });
+          drawings.push({ type: 'hline', price: pt.price, color: defaultStyle.color, width: defaultStyle.width, dashed: true });
+          redraw();
+          returnToCursorAfterDraw();
+        } else if (tool === 'vline' && pt.time !== null && pt.time !== undefined) {
+          drawings.push({ type: 'vline', time: pt.time, color: defaultStyle.color, width: defaultStyle.width, dashed: true });
+          redraw();
+          returnToCursorAfterDraw();
+        } else if (tool === 'hray' && pt.time !== null && pt.time !== undefined && pt.price !== null && pt.price !== undefined) {
+          drawings.push({ type: 'hray', p: { time: pt.time, price: pt.price }, color: defaultStyle.color, width: defaultStyle.width, dashed: true });
           redraw();
           returnToCursorAfterDraw();
         } else if (tool === 'alert' && pt.price !== null && pt.price !== undefined && !Number.isNaN(pt.price)) {
@@ -965,7 +1422,6 @@ const DrawingModule = (function () {
           redraw();
           openTextInputAt(getScreenXY(e), pt);
           // returnToCursorAfterDraw() được gọi bên trong openTextInputAt()
-          // sau khi người dùng gõ xong (Enter/Escape/blur) - không gọi ở đây.
         } else {
           redraw();
         }
@@ -994,20 +1450,29 @@ const DrawingModule = (function () {
         redraw();
         return;
       }
+
       const pt = pointFromEvent(e);
       let shapeCreated = false;
-      if (
-        pt.time !== null && pt.time !== undefined &&
-        pt.price !== null && pt.price !== undefined &&
-        (currentTool === 'trendline' || currentTool === 'rectangle' || currentTool === 'fib')
-      ) {
-        drawings.push({ type: currentTool, p1: dragStart, p2: pt, width: 1.5, dashed: false });
-        shapeCreated = true;
+      let needThirdPoint = false;
+
+      if (pt.time !== null && pt.time !== undefined && pt.price !== null && pt.price !== undefined) {
+        if (TWO_ANCHOR_TOOLS.includes(currentTool)) {
+          const extra = {};
+          if (currentTool === 'long' || currentTool === 'short') extra.rr = 2;
+          drawings.push({ type: currentTool, p1: dragStart, p2: pt, color: defaultStyle.color, width: defaultStyle.width, dashed: false, ...extra });
+          shapeCreated = true;
+        } else if (THREE_ANCHOR_TOOLS.includes(currentTool)) {
+          pendingThirdPoint = { type: currentTool, p1: dragStart, p2: pt, color: defaultStyle.color, width: defaultStyle.width, dashed: false };
+          needThirdPoint = true;
+        }
       }
+
       dragStart = null;
       previewDrawing = null;
       redraw();
       if (shapeCreated) returnToCursorAfterDraw();
+      // Nếu needThirdPoint: vẫn giữ nguyên tool hiện tại, chờ cú chạm/click
+      // tiếp theo ở onPointerDown để chốt điểm neo thứ 3.
     }
 
     function onContainerPointerMove(e) {
@@ -1062,6 +1527,7 @@ const DrawingModule = (function () {
       hoverPoint = null;
       touchRawPoint = null;
       pendingTouchPlacement = null;
+      pendingThirdPoint = null;
       isDraggingShape = false;
       draggedDrawingIndex = null;
       draggedDrawingOriginal = null;
@@ -1071,9 +1537,7 @@ const DrawingModule = (function () {
     canvas.addEventListener('pointerleave', () => { hoverPoint = null; touchRawPoint = null; redraw(); });
     container.addEventListener('pointermove', onContainerPointerMove);
 
-    /**
-     * FIX: đóng toolbar khi bấm vào chỗ TRỐNG trên chart.
-     */
+    /** FIX: đóng toolbar khi bấm vào chỗ TRỐNG trên chart. */
     container.addEventListener('pointerdown', (e) => {
       if (currentTool !== 'cursor') return;
       if (e.target === canvas) return;
@@ -1094,7 +1558,27 @@ const DrawingModule = (function () {
     resizeObs.observe(container);
     resizeCanvas();
 
-    return { setTool, clearAll, redraw, getTool: () => currentTool };
+    function setAllHidden(v) {
+      allDrawingsHidden = !!v;
+      if (allDrawingsHidden) {
+        selectedDrawingIndex = null;
+        hideToolbar();
+      }
+      redraw();
+    }
+    function getAllHidden() {
+      return allDrawingsHidden;
+    }
+
+    return {
+      setTool,
+      clearAll,
+      redraw,
+      getTool: () => currentTool,
+      isAwaitingThirdPoint: () => !!pendingThirdPoint,
+      setAllHidden,
+      getAllHidden,
+    };
   }
 
   function formatPrice(v) {

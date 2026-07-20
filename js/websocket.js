@@ -1,6 +1,46 @@
 /**
  * websocket.js
  * Quản lý kết nối WebSocket realtime tới Binance HOẶC Polling tới Yahoo Finance cho từng pane độc lập.
+ *
+ * ============================================================================
+ * CẬP NHẬT (đợt fix "Trend Scalp/trạng thái thị trường bị đứng hình"):
+ *
+ *   TRIỆU CHỨNG: trạng thái thị trường (đặc biệt Trend Scalp - dùng nến M5)
+ *   nhiều lúc không cập nhật trong thời gian dài; bấm nút 🔄 reload ở panel
+ *   Trạng thái thị trường KHÔNG có tác dụng; chỉ có ĐỔI SYMBOL mới thấy cập
+ *   nhật lại.
+ *
+ *   NGUYÊN NHÂN: nút reload ở marketstatus.js chỉ tính lại
+ *   (TrendReferenceModule.compute()) từ dữ liệu ĐANG CÓ SẴN trong bộ nhớ -
+ *   nó không đụng gì tới WebSocket cả. Nếu 1 socket bị "zombie" (kết nối
+ *   TCP/WS về mặt kỹ thuật vẫn "mở" nhưng không còn nhận được message nào
+ *   nữa - cực kỳ hay gặp trên điện thoại khi khoá màn hình/chuyển app nền,
+ *   đổi giữa wifi và 4G, mạng chập chờn...) thì sự kiện `onclose` của trình
+ *   duyệt CÓ THỂ KHÔNG BAO GIỜ được bắn ra -> logic tự kết nối lại (vốn chỉ
+ *   chạy trong onclose) không bao giờ được kích hoạt -> dữ liệu đứng im
+ *   VĨNH VIỄN cho tới khi có 1 hành động ép đóng+mở lại toàn bộ socket, mà
+ *   trong app này chỉ có việc ĐỔI SYMBOL mới làm vậy (xem
+ *   closeAllTrendRefKlineSockets()/connectSockets() trong app.js).
+ *
+ *   GIẢI PHÁP - "watchdog" phát hiện socket im lặng bất thường:
+ *     - Mỗi luồng (kline/ticker/htf/sl/mỗi khung trend tham khảo) đều được
+ *       ghi lại mốc thời gian NHẬN MESSAGE GẦN NHẤT (lastMessageAt) và thông
+ *       tin cần thiết để tự kết nối lại (meta: symbol/interval/provider).
+ *     - runStaleWatchdog() chạy định kỳ (mỗi 20s) quét toàn bộ pane đang mở:
+ *       nếu 1 luồng KHÔNG nhận được bất kỳ message nào trong quá
+ *       STALE_THRESHOLD_MS (60s), coi là "zombie" và CHỦ ĐỘNG gọi lại đúng
+ *       hàm connect tương ứng - không cần đợi onclose.
+ *       (Binance đẩy update cho nến đang hình thành gần như liên tục, không
+ *       phải chỉ lúc đóng nến, nên 60s không có message nào là dấu hiệu rõ
+ *       ràng của kết nối có vấn đề, không phải chuyện bình thường.)
+ *     - Thêm lắng nghe 'visibilitychange': khi tab được MỞ LẠI (từ nền lên
+ *       foreground), setInterval của trình duyệt trước đó có thể đã bị tạm
+ *       dừng khá lâu - kiểm tra NGAY lúc này thay vì đợi tới vòng watchdog
+ *       định kỳ tiếp theo, xử lý đúng kịch bản phổ biến nhất trên di động.
+ *     - Yahoo (dùng polling, không phải WebSocket) được BỎ QUA trong
+ *       watchdog vì cơ chế polling (setInterval gọi fetchKlines) đã tự lặp
+ *       lại độc lập, không có khái niệm "socket zombie" tương tự.
+ * ============================================================================
  */
 
 function getWsUrlForProvider(provider, streamName) {
@@ -32,6 +72,13 @@ function getOrCreateEntry(paneId) {
       yahooHtfTimer: null,
       yahooSlTimer: null,
       yahooTrendRefTimers: {},       // role -> timer
+
+      // ĐỢT FIX (watchdog chống "socket zombie"): meta lưu đủ thông tin để
+      // tự gọi lại đúng hàm connect tương ứng khi phát hiện luồng im lặng
+      // bất thường; lastMessageAt lưu mốc thời gian NHẬN MESSAGE gần nhất
+      // của từng luồng - xem runStaleWatchdog() ở cuối file.
+      meta: { kline: null, ticker: null, htf: null, sl: null, trendref: {} },
+      lastMessageAt: { kline: null, ticker: null, htf: null, sl: null, trendref: {} },
     });
   }
   return connections.get(paneId);
@@ -42,6 +89,8 @@ function connectKlineStream(paneId, symbol, interval) {
   closeKlineSocket(paneId);
 
   const provider = getProviderFor(symbol);
+  entry.meta.kline = { symbol, interval, provider };
+
   if (provider === 'yahoo') {
     connectYahooKlineStream(paneId, symbol, interval);
     return;
@@ -52,12 +101,16 @@ function connectKlineStream(paneId, symbol, interval) {
   const wsUrl = getWsUrlForProvider(provider, streamName);
   const socket = new WebSocket(wsUrl);
   entry.klineSocket = socket;
+  // Mốc khởi tạo NGAY khi vừa mở socket - tránh watchdog hiểu nhầm là "im
+  // lặng" trong lúc socket còn đang bắt tay, chưa kịp có message đầu tiên.
+  entry.lastMessageAt.kline = Date.now();
 
   socket.onopen = () => {
     EventBus.emit('ws:status', { paneId, status: 'connected' });
   };
 
   socket.onmessage = (event) => {
+    entry.lastMessageAt.kline = Date.now();
     const msg = JSON.parse(event.data);
     const k = msg.k;
     const candle = {
@@ -92,6 +145,8 @@ function connectHigherTFKlineStream(paneId, symbol, interval) {
   closeHigherTFKlineSocket(paneId);
 
   const provider = getProviderFor(symbol);
+  entry.meta.htf = { symbol, interval, provider };
+
   if (provider === 'yahoo') {
     connectYahooHigherTF(paneId, symbol, interval);
     return;
@@ -102,8 +157,10 @@ function connectHigherTFKlineStream(paneId, symbol, interval) {
   const wsUrl = getWsUrlForProvider(provider, streamName);
   const socket = new WebSocket(wsUrl);
   entry.htfKlineSocket = socket;
+  entry.lastMessageAt.htf = Date.now();
 
   socket.onmessage = (event) => {
+    entry.lastMessageAt.htf = Date.now();
     const msg = JSON.parse(event.data);
     const k = msg.k;
     const candle = {
@@ -133,6 +190,8 @@ function connectSLKlineStream(paneId, symbol, interval) {
   closeSLKlineSocket(paneId);
 
   const provider = getProviderFor(symbol);
+  entry.meta.sl = { symbol, interval, provider };
+
   if (provider === 'yahoo') {
     connectYahooSLTF(paneId, symbol, interval);
     return;
@@ -143,8 +202,10 @@ function connectSLKlineStream(paneId, symbol, interval) {
   const wsUrl = getWsUrlForProvider(provider, streamName);
   const socket = new WebSocket(wsUrl);
   entry.slKlineSocket = socket;
+  entry.lastMessageAt.sl = Date.now();
 
   socket.onmessage = (event) => {
+    entry.lastMessageAt.sl = Date.now();
     const msg = JSON.parse(event.data);
     const k = msg.k;
     const candle = {
@@ -174,6 +235,8 @@ function connectTrendRefKlineStream(paneId, role, symbol, interval) {
   closeTrendRefKlineSocket(paneId, role);
 
   const provider = getProviderFor(symbol);
+  entry.meta.trendref[role] = { symbol, interval, provider };
+
   if (provider === 'yahoo') {
     connectYahooTrendRef(paneId, role, symbol, interval);
     return;
@@ -184,8 +247,10 @@ function connectTrendRefKlineStream(paneId, role, symbol, interval) {
   const wsUrl = getWsUrlForProvider(provider, streamName);
   const socket = new WebSocket(wsUrl);
   entry.trendRefSockets[role] = socket;
+  entry.lastMessageAt.trendref[role] = Date.now();
 
   socket.onmessage = (event) => {
+    entry.lastMessageAt.trendref[role] = Date.now();
     const msg = JSON.parse(event.data);
     const k = msg.k;
     const candle = {
@@ -215,6 +280,8 @@ function connectTickerStream(paneId, symbol) {
   closeTickerSocket(paneId);
 
   const provider = getProviderFor(symbol);
+  entry.meta.ticker = { symbol, provider };
+
   if (provider === 'yahoo') {
     // Yahoo uses the primary kline polling loop to emit ticker events, so we do nothing here.
     return;
@@ -225,8 +292,10 @@ function connectTickerStream(paneId, symbol) {
   const wsUrl = getWsUrlForProvider(provider, streamName);
   const socket = new WebSocket(wsUrl);
   entry.tickerSocket = socket;
+  entry.lastMessageAt.ticker = Date.now();
 
   socket.onmessage = (event) => {
+    entry.lastMessageAt.ticker = Date.now();
     const msg = JSON.parse(event.data);
     EventBus.emit('price:update', {
       paneId,
@@ -337,6 +406,8 @@ function closeTrendRefKlineSocket(paneId, role) {
   clearTimeout(entry.trendRefReconnectTimers[role]);
   clearInterval(entry.yahooTrendRefTimers[role]);
   delete entry.yahooTrendRefTimers[role];
+  delete entry.meta.trendref[role];
+  delete entry.lastMessageAt.trendref[role];
 
   const sock = entry.trendRefSockets[role];
   if (sock) {
@@ -361,6 +432,8 @@ function closeKlineSocket(paneId) {
   clearTimeout(entry.klineReconnectTimer);
   clearInterval(entry.yahooPollTimer);
   entry.yahooPollTimer = null;
+  entry.meta.kline = null;
+  entry.lastMessageAt.kline = null;
 
   if (entry.klineSocket) {
     entry.intentionalClose = true;
@@ -377,6 +450,8 @@ function closeHigherTFKlineSocket(paneId) {
   clearTimeout(entry.htfReconnectTimer);
   clearInterval(entry.yahooHtfTimer);
   entry.yahooHtfTimer = null;
+  entry.meta.htf = null;
+  entry.lastMessageAt.htf = null;
 
   if (entry.htfKlineSocket) {
     entry.intentionalClose = true;
@@ -393,6 +468,8 @@ function closeSLKlineSocket(paneId) {
   clearTimeout(entry.slReconnectTimer);
   clearInterval(entry.yahooSlTimer);
   entry.yahooSlTimer = null;
+  entry.meta.sl = null;
+  entry.lastMessageAt.sl = null;
 
   if (entry.slKlineSocket) {
     entry.intentionalClose = true;
@@ -407,6 +484,9 @@ function closeTickerSocket(paneId) {
   const entry = connections.get(paneId);
   if (!entry) return;
   clearTimeout(entry.tickerReconnectTimer);
+  entry.meta.ticker = null;
+  entry.lastMessageAt.ticker = null;
+
   if (entry.tickerSocket) {
     entry.intentionalClose = true;
     entry.tickerSocket.onclose = null;
@@ -432,4 +512,81 @@ function closeAllSockets() {
 function connectSockets(paneId, symbol, timeframe) {
   connectKlineStream(paneId, symbol, timeframe);
   connectTickerStream(paneId, symbol);
+}
+
+/* =====================================================================
+ * WATCHDOG CHỐNG "SOCKET ZOMBIE" (đợt fix "Trend Scalp bị đứng hình")
+ * Xem giải thích đầy đủ ở đầu file. Tóm tắt: mỗi 20 giây, quét toàn bộ
+ * luồng của mọi pane đang mở; luồng nào quá 60 giây không nhận được bất kỳ
+ * message nào thì bị coi là "zombie" và được CHỦ ĐỘNG kết nối lại - không
+ * cần đợi (và không phụ thuộc vào) sự kiện onclose của trình duyệt.
+ * ===================================================================== */
+
+const STALE_THRESHOLD_MS = 60 * 1000; // 60s không có message nào -> coi là bất thường
+const WATCHDOG_INTERVAL_MS = 20 * 1000;
+
+function forceReconnectStaleStream(paneId, key) {
+  const entry = connections.get(paneId);
+  if (!entry) return;
+
+  if (key === 'kline' && entry.meta.kline) {
+    const m = entry.meta.kline;
+    connectKlineStream(paneId, m.symbol, m.interval);
+  } else if (key === 'ticker' && entry.meta.ticker) {
+    const m = entry.meta.ticker;
+    connectTickerStream(paneId, m.symbol);
+  } else if (key === 'htf' && entry.meta.htf) {
+    const m = entry.meta.htf;
+    connectHigherTFKlineStream(paneId, m.symbol, m.interval);
+  } else if (key === 'sl' && entry.meta.sl) {
+    const m = entry.meta.sl;
+    connectSLKlineStream(paneId, m.symbol, m.interval);
+  } else if (key.indexOf('trendref:') === 0) {
+    const role = key.slice('trendref:'.length);
+    const m = entry.meta.trendref[role];
+    if (m) connectTrendRefKlineStream(paneId, role, m.symbol, m.interval);
+  }
+}
+
+/** Kiểm tra 1 luồng - bỏ qua nếu chưa từng kết nối (meta null), chưa từng
+ * nhận message nào (lastAt null - có thể vẫn đang bắt tay ban đầu), hoặc là
+ * luồng Yahoo (dùng polling riêng, không áp dụng khái niệm "zombie" này). */
+function checkStreamStaleness(paneId, key, meta, lastAt, now) {
+  if (!meta || meta.provider === 'yahoo') return;
+  if (!lastAt) return;
+  if (now - lastAt > STALE_THRESHOLD_MS) {
+    console.warn(
+      `[ws-watchdog] Pane "${paneId}" - luồng "${key}" im lặng ${Math.round((now - lastAt) / 1000)}s ` +
+      `(ngưỡng ${STALE_THRESHOLD_MS / 1000}s) - tự động kết nối lại.`
+    );
+    forceReconnectStaleStream(paneId, key);
+  }
+}
+
+function runStaleWatchdog() {
+  const now = Date.now();
+  connections.forEach((entry, paneId) => {
+    checkStreamStaleness(paneId, 'kline', entry.meta.kline, entry.lastMessageAt.kline, now);
+    checkStreamStaleness(paneId, 'ticker', entry.meta.ticker, entry.lastMessageAt.ticker, now);
+    checkStreamStaleness(paneId, 'htf', entry.meta.htf, entry.lastMessageAt.htf, now);
+    checkStreamStaleness(paneId, 'sl', entry.meta.sl, entry.lastMessageAt.sl, now);
+    Object.keys(entry.meta.trendref).forEach((role) => {
+      checkStreamStaleness(paneId, `trendref:${role}`, entry.meta.trendref[role], entry.lastMessageAt.trendref[role], now);
+    });
+  });
+}
+
+setInterval(runStaleWatchdog, WATCHDOG_INTERVAL_MS);
+
+// Trình duyệt (đặc biệt trên di động) thường TẠM DỪNG setInterval khi tab bị
+// đưa xuống nền để tiết kiệm pin - đây chính là kịch bản phổ biến nhất khiến
+// dữ liệu "đứng hình" cho tới khi người dùng tự tay đổi symbol. Kiểm tra lại
+// NGAY khi tab được mở lại (visible), không đợi tới vòng watchdog định kỳ
+// tiếp theo (vốn cũng có thể vừa bị treo suốt thời gian tab ở nền).
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      runStaleWatchdog();
+    }
+  });
 }
