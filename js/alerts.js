@@ -101,6 +101,25 @@ const AlertsModule = (function () {
       renderPanel();
     }
   }
+  /** Gộp cảnh báo tải về từ server vào danh sách local - dùng khi đăng
+   * nhập trên máy mới (push-sync.js gọi trước khi đồng bộ ngược lên), để
+   * KHÔNG bị ghi đè/xoá mất cảnh báo cũ chỉ vì máy mới chưa có gì trong
+   * localStorage. Bỏ qua id đã tồn tại (tránh trùng nếu gọi nhiều lần). */
+  function mergeFromServer(remoteAlerts) {
+    if (!Array.isArray(remoteAlerts) || remoteAlerts.length === 0) return;
+    const existingIds = new Set(alerts.map((a) => a.id));
+    let added = false;
+    remoteAlerts.forEach((r) => {
+      if (!r || !r.id || !r.symbol || typeof r.price !== 'number' || existingIds.has(r.id)) return;
+      alerts.push({ id: r.id, symbol: r.symbol, price: r.price, triggered: false, createdAt: Date.now() });
+      added = true;
+    });
+    if (added) {
+      persist();
+      EventBus.emit('alerts:changed', {});
+      renderPanel();
+    }
+  }
 
   function buildButton() {
     const btn = document.createElement('button');
@@ -232,5 +251,5 @@ const AlertsModule = (function () {
 
   init();
 
-  return { addPriceAlert, removeAlert, getAlertsForSymbol, getAllAlerts, checkPrice };
+  return { addPriceAlert, removeAlert, getAlertsForSymbol, getAllAlerts, checkPrice, mergeFromServer };
 })();

@@ -335,6 +335,30 @@ const ChartModule = (function () {
       }
     }
 
+    /** Lưu lại toàn bộ trạng thái bật/tắt + period của mọi chỉ báo trong
+     * pane này - gọi mỗi khi người dùng bật/tắt hoặc đổi period 1 chỉ báo. */
+    function persistIndicatorPrefs() {
+      if (typeof IndicatorPrefsModule === 'undefined') return;
+      const prefs = {};
+      Object.keys(indicatorConfig).forEach((k) => {
+        prefs[k] = { enabled: indicatorConfig[k].enabled, period: indicatorConfig[k].period };
+      });
+      IndicatorPrefsModule.setPanePrefs(paneId, prefs);
+    }
+
+    /** Khôi phục lại chỉ báo đã lưu của pane này - gọi 1 lần sau khi nến
+     * đầu tiên đã tải xong (xem loadInitialData). Đặt period TRƯỚC khi bật
+     * để lần render đầu tiên đã đúng luôn, không phải render lại 2 lần. */
+    function restoreIndicatorPrefs() {
+      if (typeof IndicatorPrefsModule === 'undefined') return;
+      const saved = IndicatorPrefsModule.getPanePrefs(paneId);
+      if (!saved) return;
+      Object.keys(saved).forEach((k) => {
+        if (!indicatorConfig[k]) return;
+        if (saved[k].period) indicatorConfig[k].period = saved[k].period;
+        if (saved[k].enabled) setIndicatorVisible(k, true);
+      });
+    }
     function seriesForKey(key) {
       return {
         ema21: ema21Series,

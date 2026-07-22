@@ -523,7 +523,15 @@ function connectSockets(paneId, symbol, timeframe) {
  * ===================================================================== */
 
 const STALE_THRESHOLD_MS = 60 * 1000; // 60s không có message nào -> coi là bất thường
-const WATCHDOG_INTERVAL_MS = 20 * 1000;
+// ĐỢT FIX: trendref (M5/H2 cho Trend Scalp) cần realtime hơn các luồng
+// khác - Binance đẩy update gần như liên tục nên 25s im lặng đã là bất
+// thường rõ ràng, không cần đợi tới 60s như luồng kline/htf/sl chính.
+const STALE_THRESHOLD_MS_TRENDREF = 25 * 1000;
+const WATCHDOG_INTERVAL_MS = 10 * 1000; // giảm từ 20s -> 10s để bắt kịp ngưỡng 25s ở trên
+
+function getStaleThreshold(key) {
+  return key.indexOf('trendref:') === 0 ? STALE_THRESHOLD_MS_TRENDREF : STALE_THRESHOLD_MS;
+}
 
 function forceReconnectStaleStream(paneId, key) {
   const entry = connections.get(paneId);
@@ -548,19 +556,29 @@ function forceReconnectStaleStream(paneId, key) {
   }
 }
 
-/** Kiểm tra 1 luồng - bỏ qua nếu chưa từng kết nối (meta null), chưa từng
- * nhận message nào (lastAt null - có thể vẫn đang bắt tay ban đầu), hoặc là
- * luồng Yahoo (dùng polling riêng, không áp dụng khái niệm "zombie" này). */
 function checkStreamStaleness(paneId, key, meta, lastAt, now) {
   if (!meta || meta.provider === 'yahoo') return;
   if (!lastAt) return;
-  if (now - lastAt > STALE_THRESHOLD_MS) {
+  const threshold = getStaleThreshold(key);
+  if (now - lastAt > threshold) {
     console.warn(
       `[ws-watchdog] Pane "${paneId}" - luồng "${key}" im lặng ${Math.round((now - lastAt) / 1000)}s ` +
-      `(ngưỡng ${STALE_THRESHOLD_MS / 1000}s) - tự động kết nối lại.`
+      `(ngưỡng ${threshold / 1000}s) - tự động kết nối lại.`
     );
     forceReconnectStaleStream(paneId, key);
   }
+}
+
+/** Ép kết nối lại NGAY các luồng trend tham khảo (m5/h2...) của 1 pane -
+ *  dùng cho nút 🔄 reload thủ công ở marketstatus.js. Khác với watchdog,
+ *  hàm này KHÔNG cần đợi vượt ngưỡng im lặng - người dùng nghi ngờ dữ liệu
+ *  đứng là được phép "đá" lại ngay, không phải đổi symbol như trước đây. */
+function forceReconnectPaneTrendRef(paneId) {
+  const entry = connections.get(paneId);
+  if (!entry) return;
+  Object.keys(entry.meta.trendref).forEach((role) => {
+    forceReconnectStaleStream(paneId, `trendref:${role}`);
+  });
 }
 
 function runStaleWatchdog() {

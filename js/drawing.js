@@ -825,10 +825,10 @@ const DrawingModule = (function () {
 
       if (d.type !== 'text') {
         const lockBtn = document.createElement('button');
-        lockBtn.type = 'button';
-        lockBtn.className = 'dt-icon-btn' + (d.locked ? ' active' : '');
-        lockBtn.textContent = d.locked ? '🔒' : '🔓';
-        lockBtn.title = d.locked ? 'Đã khoá vị trí - bấm để mở khoá (cho phép kéo lại)' : 'Khoá vị trí - không cho kéo di chuyển nữa';
+lockBtn.type = 'button';
+lockBtn.className = 'dt-icon-btn' + (d.locked ? ' active' : '');
+setIcon(lockBtn, d.locked ? 'lock' : 'unlock');
+lockBtn.title = d.locked ? 'Đã khoá vị trí - bấm để mở khoá (cho phép kéo lại)' : 'Khoá vị trí - không cho kéo di chuyển nữa';
         lockBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           d.locked = !d.locked;
@@ -838,24 +838,24 @@ const DrawingModule = (function () {
       }
 
       const defaultBtn = document.createElement('button');
-      defaultBtn.type = 'button';
-      defaultBtn.className = 'dt-icon-btn';
-      defaultBtn.textContent = '⭐';
-      defaultBtn.title = 'Đặt màu & độ dày hiện tại làm mặc định cho MỌI hình vẽ mới';
-      defaultBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        defaultStyle.color = d.color || defaultStyle.color;
-        defaultStyle.width = d.width || defaultStyle.width;
-        defaultBtn.textContent = '✓';
-        setTimeout(() => { defaultBtn.textContent = '⭐'; }, 700);
-      });
+defaultBtn.type = 'button';
+defaultBtn.className = 'dt-icon-btn';
+setIcon(defaultBtn, 'star');
+defaultBtn.title = 'Đặt màu & độ dày hiện tại làm mặc định cho MỌI hình vẽ mới';
+defaultBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  defaultStyle.color = d.color || defaultStyle.color;
+  defaultStyle.width = d.width || defaultStyle.width;
+  setIcon(defaultBtn, 'check');
+  setTimeout(() => setIcon(defaultBtn, 'star'), 700);
+});
       headerActions.appendChild(defaultBtn);
 
       const closeBtn = document.createElement('button');
-      closeBtn.type = 'button';
-      closeBtn.className = 'dt-icon-btn';
-      closeBtn.textContent = '✕';
-      closeBtn.title = 'Đóng bảng thuộc tính';
+closeBtn.type = 'button';
+closeBtn.className = 'dt-icon-btn';
+setIcon(closeBtn, 'close');
+closeBtn.title = 'Đóng bảng thuộc tính';
       closeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         selectedDrawingIndex = null;
@@ -1067,16 +1067,19 @@ const DrawingModule = (function () {
       actionRow.style.justifyContent = 'flex-end';
 
       const delBtn = document.createElement('button');
-      delBtn.type = 'button';
-      delBtn.title = 'Xoá hình';
-      delBtn.innerHTML = '🗑 Xoá';
-      delBtn.style.background = 'transparent';
-      delBtn.style.border = '1px solid var(--border-color)';
-      delBtn.style.borderRadius = 'var(--radius-sm)';
-      delBtn.style.color = 'var(--red)';
-      delBtn.style.fontSize = '11px';
-      delBtn.style.cursor = 'pointer';
-      delBtn.style.padding = '3px 8px';
+delBtn.type = 'button';
+delBtn.title = 'Xoá hình';
+delBtn.style.display = 'inline-flex';
+delBtn.style.alignItems = 'center';
+delBtn.style.gap = '4px';
+delBtn.innerHTML = Icons.trash.replace('<svg ', '<svg class="icon-svg" ') + '<span>Xoá</span>';
+delBtn.style.background = 'transparent';
+delBtn.style.border = '1px solid var(--border-color)';
+delBtn.style.borderRadius = 'var(--radius-sm)';
+delBtn.style.color = 'var(--red)';
+delBtn.style.fontSize = '11px';
+delBtn.style.cursor = 'pointer';
+delBtn.style.padding = '3px 8px';
       delBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         drawings.splice(idx, 1);

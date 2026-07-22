@@ -170,6 +170,14 @@ export default {
     // Chỉ ghi vào ALERTS_CONFIG_KEY - KHÔNG đụng vào ALERTS_STATE_KEY (side/
     // triggered), tránh race condition với cron gây báo lặp (xem đợt fix
     // trước).
+    if (url.pathname === '/api/alerts' && request.method === 'GET') {
+  const deviceId = url.searchParams.get('deviceId');
+  if (!deviceId) {
+    return withCors(new Response('Thiếu deviceId', { status: 400 }));
+  }
+  const allConfig = await readJSON(env.TRACKER_KV, ALERTS_CONFIG_KEY, {});
+  return withCors(Response.json({ ok: true, alerts: allConfig[deviceId] || [] }));
+}
     if (url.pathname === '/api/alerts' && request.method === 'POST') {
       let body;
       try {

@@ -125,7 +125,29 @@
     `;
     document.body.appendChild(panel);
     panel.querySelector('.ms-close').addEventListener('click', () => panel.classList.remove('open'));
-    panel.querySelector('.ms-reload').addEventListener('click', () => showStatus(panel));
+    panel.querySelector('.ms-reload').addEventListener('click', () => {
+  const reloadIcon = panel.querySelector('.ms-reload');
+  const activePane = Store.getActivePane();
+
+  // ĐỢT FIX: reload giờ ĐÁ LẠI đúng socket trend tham khảo (M5/H2) của pane
+  // đang xem, thay vì chỉ tính lại từ dữ liệu cũ - xử lý đúng lúc socket bị
+  // "zombie" mà watchdog (chạy mỗi 10s) chưa kịp bắt.
+  if (typeof forceReconnectPaneTrendRef === 'function') {
+    forceReconnectPaneTrendRef(activePane.id);
+  }
+
+  if (reloadIcon) {
+    reloadIcon.classList.add('ms-reload-spinning');
+    setTimeout(() => reloadIcon.classList.remove('ms-reload-spinning'), 800);
+  }
+
+  showStatus(panel);
+  // Socket vừa reconnect cần 1 nhịp mới có message đầu tiên về - tính lại
+  // thêm lần nữa sau ~1.5s để phản ánh ngay, khỏi bắt bấm reload lần 2.
+  setTimeout(() => {
+    if (panel.classList.contains('open')) showStatus(panel);
+  }, 1500);
+});
     return panel;
   }
 

@@ -372,15 +372,20 @@ const UI = (function () {
     });
   }
 
-  function makeToolbarBtn(label, title, active, onClick) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'draw-tool-btn' + (active ? ' active' : '');
-    btn.textContent = label;
-    btn.title = title;
-    btn.addEventListener('click', onClick);
-    return btn;
+  // Thay hàm makeToolbarBtn cũ bằng bản hỗ trợ cả icon SVG lẫn text (glyph vẽ hình vẫn giữ text như cũ)
+function makeToolbarBtn(labelOrIcon, title, active, onClick, isIcon) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'draw-tool-btn' + (active ? ' active' : '');
+  if (isIcon && Icons[labelOrIcon]) {
+    setIcon(btn, labelOrIcon);
+  } else {
+    btn.textContent = labelOrIcon;
   }
+  btn.title = title;
+  btn.addEventListener('click', onClick);
+  return btn;
+}
 
   function renderSharedDrawGroup() {
     const groupEl = document.getElementById('sharedDrawGroup');
@@ -394,8 +399,8 @@ const UI = (function () {
 
     if (findToolMeta(activeTool)) lastDrawShapeTool = activeTool;
 
-    // 1. Con trỏ
-    groupEl.appendChild(makeToolbarBtn('↖', 'Con trỏ', activeTool === 'cursor', () => selectDrawTool('cursor')));
+    // 1. Con trỏ - dùng icon SVG
+groupEl.appendChild(makeToolbarBtn('cursor', 'Con trỏ', activeTool === 'cursor', () => selectDrawTool('cursor'), true));
 
     // 2. Combo: icon công cụ vẽ hình gần nhất + mũi tên mở bảng chọn
     const meta = findToolMeta(lastDrawShapeTool) || { label: '╱', title: 'Đường xu hướng' };
@@ -425,23 +430,22 @@ const UI = (function () {
     groupEl.appendChild(combo);
 
     // 3. Cảnh báo giá
-    groupEl.appendChild(makeToolbarBtn('🔔', 'Đặt cảnh báo giá (click lên chart)', activeTool === 'alert', () => selectDrawTool('alert')));
+groupEl.appendChild(makeToolbarBtn('bell', 'Đặt cảnh báo giá (click lên chart)', activeTool === 'alert', () => selectDrawTool('alert'), true));
 
     // 4. Tẩy
-    groupEl.appendChild(makeToolbarBtn('⌫', 'Tẩy / Xoá từng hình (click vào hình)', activeTool === 'eraser', () => selectDrawTool('eraser')));
+groupEl.appendChild(makeToolbarBtn('eraser', 'Tẩy / Xoá từng hình (click vào hình)', activeTool === 'eraser', () => selectDrawTool('eraser'), true));
 
-    // 5. Ẩn/hiện tất cả hình vẽ (giống icon 👁 "Hide all drawings" của
-    // TradingView) - không đổi tool, chỉ bật/tắt hiển thị.
-    const isHidden = drawing ? drawing.getAllHidden() : false;
-    const hideBtn = makeToolbarBtn(isHidden ? '🙈' : '👁', isHidden ? 'Đang ẩn tất cả hình vẽ - bấm để hiện lại' : 'Ẩn tạm thời tất cả hình vẽ (ô đang chọn)', isHidden, () => {
-      if (!drawing) return;
-      drawing.setAllHidden(!isHidden);
-      renderSharedDrawGroup();
-    });
-    groupEl.appendChild(hideBtn);
+// 5. Ẩn/hiện tất cả
+const isHidden = drawing ? drawing.getAllHidden() : false;
+const hideBtn = makeToolbarBtn(
+  isHidden ? 'eyeOff' : 'eye',
+  isHidden ? 'Đang ẩn tất cả hình vẽ - bấm để hiện lại' : 'Ẩn tạm thời tất cả hình vẽ (ô đang chọn)',
+  isHidden, () => { if (!drawing) return; drawing.setAllHidden(!isHidden); renderSharedDrawGroup(); }, true
+);
+groupEl.appendChild(hideBtn);
 
-    // 6. Xoá tất cả (hành động, không phải tool)
-    groupEl.appendChild(makeToolbarBtn('🗑', 'Xoá tất cả hình vẽ (ô đang chọn)', false, () => selectDrawTool('clear')));
+// 6. Xoá tất cả
+groupEl.appendChild(makeToolbarBtn('trash', 'Xoá tất cả hình vẽ (ô đang chọn)', false, () => selectDrawTool('clear'), true));
   }
 
   /* ===================== LAYOUT (1/2/3/4 Ô) ===================== */

@@ -67,6 +67,26 @@ const PushSync = (function () {
     const rawData = atob(base64);
     return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
   }
+  
+  /** Tải cảnh báo đã lưu trên server về, gộp vào local TRƯỚC KHI syncAlerts()
+   * chạy lần đầu - bắt buộc phải làm bước này trước, nếu không syncAlerts()
+   * sẽ gửi mảng rỗng (local chưa có gì trên máy mới) lên server và server
+   * sẽ XOÁ LUÔN cấu hình cũ (xem index.js: merged.length === 0 -> delete). */
+  async function pullAlertsFromServer() {
+    if (!isConfigured()) return;
+    const deviceId = getDeviceId();
+    if (!deviceId) return;
+    try {
+      const res = await fetch(`${WORKER_URL}/api/alerts?deviceId=${encodeURIComponent(deviceId)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && Array.isArray(data.alerts)) {
+        AlertsModule.mergeFromServer(data.alerts);
+      }
+    } catch (err) {
+      console.error('Lỗi khi tải cảnh báo từ Worker:', err);
+    }
+  }
 
   async function ensureSubscription() {
     if (!isConfigured()) return null;
@@ -193,7 +213,8 @@ const PushSync = (function () {
     // nhập (chưa có deviceId), 2 hàm này tự bỏ qua - login.js sẽ hiện màn
     // đăng nhập; sau khi đăng nhập xong trang sẽ reload và luồng này chạy
     // lại từ đầu với deviceId hợp lệ.
-    setTimeout(() => {
+    setTimeout(async () => {
+      await pullAlertsFromServer(); // BẮT BUỘC chạy trước - xem giải thích ở hàm trên
       syncAlerts();
       syncSignals();
     }, 2000);
