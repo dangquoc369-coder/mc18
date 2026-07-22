@@ -18,6 +18,20 @@
  * hiện khi kích thước container đổi (do đổi grid-template-columns/rows) và
  * tự resize chart tương ứng - nên khi kéo, chart co giãn mượt theo thời gian
  * thực.
+ *
+ * FIX (đợt fix này - "pane tràn ra khỏi màn hình, phải chuyển 4 ô rồi về 1
+ * ô mới hết"): mọi track fr trước đây viết trần (`1fr`, `${a}fr`...) - theo
+ * đặc tả CSS Grid, track fr mặc định có min-width/min-height = auto, nghĩa
+ * là nếu nội dung bên trong (canvas do lightweight-charts set width/height
+ * cứng bằng px) có lúc lớn hơn track, track sẽ TỰ PHÌNH TO để chứa đủ nội
+ * dung, kéo theo #chartArea tràn ra ngoài viewport - dù mỗi
+ * .pane-chart-container đã có overflow:hidden (vì lúc này chính container
+ * CHA đã phình to, không phải nội dung tràn khỏi container con). Chuyển
+ * qua layout 4 ô rồi về 1 ô "vô tình" fix được vì app.js (onLayoutChanged)
+ * chạy vòng lặp resize ép container về đúng kích thước nhỏ hơn.
+ * Sửa tận gốc: mọi track đổi từ `Nfr` sang `minmax(0, Nfr)` - ép track
+ * không bao giờ phình lớn hơn phần chia theo tỉ lệ, bất kể nội dung bên
+ * trong có kích thước gì.
  */
 
 const LayoutModule = (function () {
@@ -56,15 +70,15 @@ const LayoutModule = (function () {
    */
   function computeStructure(layout, orientation, ratios) {
     if (layout === '1') {
-      return { columns: '1fr', rows: '1fr', placements: {}, splitters: [] };
+      return { columns: 'minmax(0, 1fr)', rows: 'minmax(0, 1fr)', placements: {}, splitters: [] };
     }
 
     if (layout === '2') {
       const a = clamp(ratios.a ?? 0.5, 0.15, 0.85);
       if (orientation === 'portrait') {
         return {
-          columns: '1fr',
-          rows: `${a}fr ${SPLITTER_SIZE}px ${1 - a}fr`,
+          columns: 'minmax(0, 1fr)',
+          rows: `minmax(0, ${a}fr) ${SPLITTER_SIZE}px minmax(0, ${1 - a}fr)`,
           placements: {
             'pane-1': { col: '1 / 2', row: '1 / 2' },
             'pane-2': { col: '1 / 2', row: '3 / 4' },
@@ -73,8 +87,8 @@ const LayoutModule = (function () {
         };
       }
       return {
-        columns: `${a}fr ${SPLITTER_SIZE}px ${1 - a}fr`,
-        rows: '1fr',
+        columns: `minmax(0, ${a}fr) ${SPLITTER_SIZE}px minmax(0, ${1 - a}fr)`,
+        rows: 'minmax(0, 1fr)',
         placements: {
           'pane-1': { col: '1 / 2', row: '1 / 2' },
           'pane-2': { col: '3 / 4', row: '1 / 2' },
@@ -91,8 +105,8 @@ const LayoutModule = (function () {
         const f2 = r2 - r1;
         const f3 = 1 - r2;
         return {
-          columns: '1fr',
-          rows: `${f1}fr ${SPLITTER_SIZE}px ${f2}fr ${SPLITTER_SIZE}px ${f3}fr`,
+          columns: 'minmax(0, 1fr)',
+          rows: `minmax(0, ${f1}fr) ${SPLITTER_SIZE}px minmax(0, ${f2}fr) ${SPLITTER_SIZE}px minmax(0, ${f3}fr)`,
           placements: {
             'pane-1': { col: '1 / 2', row: '1 / 2' },
             'pane-2': { col: '1 / 2', row: '3 / 4' },
@@ -108,8 +122,8 @@ const LayoutModule = (function () {
       const col = clamp(ratios.col ?? 0.42, 0.2, 0.7);
       const row = clamp(ratios.row ?? 0.5, 0.15, 0.85);
       return {
-        columns: `${col}fr ${SPLITTER_SIZE}px ${1 - col}fr`,
-        rows: `${row}fr ${SPLITTER_SIZE}px ${1 - row}fr`,
+        columns: `minmax(0, ${col}fr) ${SPLITTER_SIZE}px minmax(0, ${1 - col}fr)`,
+        rows: `minmax(0, ${row}fr) ${SPLITTER_SIZE}px minmax(0, ${1 - row}fr)`,
         placements: {
           'pane-1': { col: '1 / 2', row: '1 / 4' },
           'pane-2': { col: '3 / 4', row: '1 / 2' },
@@ -126,8 +140,8 @@ const LayoutModule = (function () {
     const col = clamp(ratios.col ?? 0.5, 0.15, 0.85);
     const row = clamp(ratios.row ?? 0.5, 0.15, 0.85);
     return {
-      columns: `${col}fr ${SPLITTER_SIZE}px ${1 - col}fr`,
-      rows: `${row}fr ${SPLITTER_SIZE}px ${1 - row}fr`,
+      columns: `minmax(0, ${col}fr) ${SPLITTER_SIZE}px minmax(0, ${1 - col}fr)`,
+      rows: `minmax(0, ${row}fr) ${SPLITTER_SIZE}px minmax(0, ${1 - row}fr)`,
       placements: {
         'pane-1': { col: '1 / 2', row: '1 / 2' },
         'pane-2': { col: '3 / 4', row: '1 / 2' },
