@@ -129,6 +129,21 @@ const DrawingModule = (function () {
       return candleSeries.coordinateToPrice(y);
     }
 
+    /** Màu chữ mặc định theo theme hiện tại (khi người dùng CHƯA tự chọn
+     * màu riêng cho ghi chú đó) - giống TradingView: chữ ăn theo màu chữ
+     * chính của theme, không cố định 1 màu. */
+    function getThemeTextColor() {
+      const theme = (typeof ThemeModule !== 'undefined' && ThemeModule.getTheme()) || 'dark';
+      return theme === 'light' ? '#12151c' : '#e6e9f0';
+    }
+
+    /** Màu "viền mảnh cùng nền" (halo) vẽ NGAY DƯỚI chữ để chữ luôn đọc rõ
+     * dù đè lên nến sáng/tối - kỹ thuật giống nhãn bản đồ, THAY THẾ hoàn
+     * toàn cho hộp nền cũ. */
+    function getThemeHaloColor() {
+      const theme = (typeof ThemeModule !== 'undefined' && ThemeModule.getTheme()) || 'dark';
+      return theme === 'light' ? '#ffffff' : '#0c0d14';
+    }
     /**
      * Toạ độ màn hình (px trong canvas) của 1 sự kiện con trỏ. Trên CẢM ỨNG
      * và khi đang ở 1 công cụ VẼ (không phải 'cursor'), y được đẩy lên trên
@@ -553,21 +568,34 @@ const DrawingModule = (function () {
         const y = priceToY(d.p.price);
         if (x === null || y === null) { ctx.restore(); return; }
 
-        ctx.font = '12px sans-serif';
-        const paddingH = 8;
-        const paddingV = 5;
-        const textWidth = ctx.measureText(d.text).width;
-        const boxW = textWidth + paddingH * 2;
-        const boxH = 14 + paddingV * 2;
+        const fontSize = 13;
+        ctx.font = `500 ${fontSize}px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+        ctx.textBaseline = 'alphabetic';
 
-        ctx.fillStyle = 'rgba(16, 20, 28, 0.9)';
-        ctx.strokeStyle = baseColor;
-        ctx.lineWidth = (isHovered || isSelected) ? 2 : 1;
-        ctx.fillRect(x, y - 10 - paddingV, boxW, boxH);
-        ctx.strokeRect(x, y - 10 - paddingV, boxW, boxH);
+        const fillColor = d.color || getThemeTextColor();
+        const haloColor = getThemeHaloColor();
 
-        ctx.fillStyle = '#ffffff';
-        ctx.fillText(d.text, x + paddingH, y + paddingV + 1);
+        // Viền mảnh cùng màu nền (halo) vẽ TRƯỚC - thay cho hộp nền cũ,
+        // giúp chữ luôn đọc rõ dù đè lên nến/lưới bất kỳ màu gì.
+        ctx.lineJoin = 'round';
+        ctx.miterLimit = 2;
+        ctx.strokeStyle = haloColor;
+        ctx.lineWidth = 3;
+        ctx.strokeText(d.text, x, y);
+
+        ctx.fillStyle = fillColor;
+        ctx.fillText(d.text, x, y);
+
+        // Chỉ khi ĐANG CHỌN/HOVER mới hiện khung chấm chấm mảnh quanh chữ
+        // để biết đang thao tác đúng ghi chú nào - không hiện thường trực.
+        if (isSelected || isHovered) {
+          const textWidth = ctx.measureText(d.text).width;
+          ctx.strokeStyle = baseColor;
+          ctx.lineWidth = 1;
+          ctx.setLineDash([3, 3]);
+          ctx.strokeRect(x - 4, y - fontSize - 2, textWidth + 8, fontSize + 8);
+          ctx.setLineDash([]);
+        }
         if (isSelected) drawHandle(x, y);
       }
       ctx.restore();
@@ -711,9 +739,10 @@ const DrawingModule = (function () {
         } else if (d.type === 'text') {
           const tx = timeToX(d.p.time), ty = priceToY(d.p.price);
           if (tx !== null && ty !== null) {
-            ctx.font = '12px sans-serif';
+            ctx.font = '500 13px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
             const w = ctx.measureText(d.text).width;
-            if (x >= tx - 8 && x <= tx + w + 8 && y >= ty - 18 && y <= ty + 8) return { index: i };
+            const margin = 6;
+            if (x >= tx - margin && x <= tx + w + margin && y >= ty - 13 - margin && y <= ty + margin) return { index: i };
           }
         }
       }

@@ -523,6 +523,7 @@ const ChartModule = (function () {
 
       scheduleRecompute(true);
       updatePaneStretchFactors();
+      persistIndicatorPrefs();
     }
 
     function setIndicatorPeriod(key, period) {
@@ -530,6 +531,7 @@ const ChartModule = (function () {
       if (!cfg || !period || period <= 0) return;
       cfg.period = period;
       renderIndicators(currentCandles);
+      persistIndicatorPrefs();
     }
 
     function getIndicatorConfig() {
@@ -629,6 +631,7 @@ const ChartModule = (function () {
       renderIndicators(currentCandles);
       runBreakout();
       renderAlertLines();
+      restoreIndicatorPrefs();
     }
 
     function clearData() {
