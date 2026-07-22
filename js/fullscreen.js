@@ -59,21 +59,46 @@ const FullscreenModule = (function () {
   }
 
   async function enterNativeFullscreenIfSupported() {
-    if (!isNativeFullscreenSupported()) return;
-    try {
-      const target = document.getElementById('app') || document.documentElement;
-      await target.requestFullscreen();
-    } catch (err) {
-      // Trình duyệt từ chối hoặc không hỗ trợ đầy đủ - bỏ qua, đã có CSS
-      // fallback (position: fixed trên #chartArea) đảm nhiệm việc phóng to.
-    }
+  if (!isNativeFullscreenSupported()) return;
+  try {
+    const target = document.getElementById('app') || document.documentElement;
+    await target.requestFullscreen();
+    // Trình duyệt có thể mất thêm thời gian ổn định viewport SAU khi promise
+    // resolve (đặc biệt trên tablet Android khi ẩn thanh điều hướng hệ
+    // thống) - đợi thêm 1 khung hình rồi bắn lại layout:changed để app.js
+    // chạy lại vòng lặp resize ép buộc với kích thước viewport ĐÃ ổn định.
+    requestAnimationFrame(() => {
+      EventBus.emit('layout:changed', {
+        layout: Store.getState().layout,
+        visiblePaneIds: Store.getVisiblePaneIds(),
+        orientation: Store.getState().orientation,
+      });
+    });
+  } catch (err) {
+    // Trình duyệt từ chối hoặc không hỗ trợ đầy đủ - bỏ qua.
   }
+}
 
   function exitNativeFullscreenIfActive() {
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {});
-    }
+  if (document.fullscreenElement) {
+    document.exitFullscreen()
+      .then(() => {
+        // Tương tự enter(): đợi document.exitFullscreen() THẬT SỰ hoàn tất
+        // (không phải chỉ gọi hàm) rồi mới bắn lại layout:changed lần nữa -
+        // đây là lúc viewport đã chắc chắn ổn định, tránh app.js resize
+        // theo kích thước trung gian trong lúc trình duyệt còn đang ẩn/hiện
+        // thanh địa chỉ/thanh điều hướng (chủ yếu gặp trên tablet).
+        requestAnimationFrame(() => {
+          EventBus.emit('layout:changed', {
+            layout: Store.getState().layout,
+            visiblePaneIds: Store.getVisiblePaneIds(),
+            orientation: Store.getState().orientation,
+          });
+        });
+      })
+      .catch(() => {});
   }
+}
 
   function enter() {
     if (isFullscreen) return;
