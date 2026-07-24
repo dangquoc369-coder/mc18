@@ -95,30 +95,41 @@
   }
 
   function onLayoutChanged({ visiblePaneIds }) {
-    let attempts = 0;
+  let attempts = 0;
+  const lastSizes = {};
 
-    function tryResize() {
-      attempts++;
-      let allReady = true;
+  function tryResize() {
+    attempts++;
+    let allStable = true;
 
-      visiblePaneIds.forEach((paneId) => {
-        const instance = paneInstances[paneId];
-        if (!instance) return;
-        instance.resize();
+    visiblePaneIds.forEach((paneId) => {
+      const instance = paneInstances[paneId];
+      if (!instance) return;
 
-        const container = document.getElementById(`${paneId}-container`);
-        if (!container || container.clientWidth === 0 || container.clientHeight === 0) {
-          allReady = false;
+      const container = document.getElementById(`${paneId}-container`);
+      const w = container ? container.clientWidth : 0;
+      const h = container ? container.clientHeight : 0;
+
+      if (w === 0 || h === 0) {
+        allStable = false;
+      } else {
+        const prev = lastSizes[paneId];
+        if (!prev || prev.w !== w || prev.h !== h) {
+          allStable = false;
         }
-      });
-
-      if (!allReady && attempts < 10) {
-        requestAnimationFrame(tryResize);
+        lastSizes[paneId] = { w, h };
       }
-    }
 
-    requestAnimationFrame(() => requestAnimationFrame(tryResize));
+      instance.resize();
+    });
+
+    if (!allStable && attempts < 40) {
+      requestAnimationFrame(tryResize);
+    }
   }
+
+  requestAnimationFrame(() => requestAnimationFrame(tryResize));
+}
 
   async function setupPane(paneId) {
     const container = document.getElementById(`${paneId}-container`);

@@ -225,49 +225,59 @@ const TrendReferenceModule = (function () {
      * không đủ, xu hướng cũ (up/down/sideway trước đó) sẽ được giữ nguyên.
      */
     function computeSwingLeg(leg) {
-      const signalClosed = getClosed(leg.signalRole);
-      const zoneRaw = getZoneRaw(leg.zoneRole);
-      if (signalClosed.length < 1 || !zoneRaw || zoneRaw.length < ZONE_LOOKBACK) return null;
+  const signalClosed = getClosed(leg.signalRole);
+  const zoneRaw = getZoneRaw(leg.zoneRole);
+  if (signalClosed.length < 1 || !zoneRaw || zoneRaw.length < ZONE_LOOKBACK) return null;
 
-      const zoneSeries = buildClosedSeries(zoneRaw);
-      const align = makeAligner(zoneSeries);
+  const zoneSeries = buildClosedSeries(zoneRaw);
+  const align = makeAligner(zoneSeries);
 
-      const insideArray = new Array(signalClosed.length).fill(false);
-      let direction = null;
+  let direction = null;
 
-      for (let i = 0; i < signalClosed.length; i++) {
-        const bar = signalClosed[i];
-        const count = align(bar.time);
-        const zone = computeZone(zoneSeries, count);
-        if (!zone) continue;
+  for (let i = 0; i < signalClosed.length; i++) {
+    const bar = signalClosed[i];
+    const count = align(bar.time);
+    const zone = computeZone(zoneSeries, count);
+    if (!zone) continue;
 
-        const isInsideZone = bar.close >= zone.minLow && bar.close <= zone.maxHigh;
-        insideArray[i] = isInsideZone;
-
-        if (bar.close > zone.maxHigh) {
-          direction = 'up';
-        } else if (bar.close < zone.minLow) {
-          direction = 'down';
-        } else {
-          // Nằm trong vùng zone: kiểm tra SIDEWAY_CONSECUTIVE_CANDLES nến
-          // liên tiếp đóng trong zone.
-          let consecutiveInside = true;
-          for (let k = 0; k < SIDEWAY_CONSECUTIVE_CANDLES; k++) {
-            if (i - k < 0 || !insideArray[i - k]) {
-              consecutiveInside = false;
-              break;
-            }
+    if (bar.close > zone.maxHigh) {
+      direction = 'up';
+    } else if (bar.close < zone.minLow) {
+      direction = 'down';
+    } else {
+      // Nằm trong vùng zone áp dụng cho CHÍNH nến i này - kiểm tra
+      // SIDEWAY_CONSECUTIVE_CANDLES nến GẦN NHẤT (kể cả nến i) có đều nằm
+      // trong CÙNG vùng này không.
+      //
+      // FIX: trước đây so bar[i-k] với vùng riêng của NÓ tại thời điểm i-k
+      // (insideArray[i-k], tính từ zone lúc bar đó đóng). Khi H6/H12/D2 vừa
+      // đóng 1 nến mới ở GIỮA chuỗi 15 nến đang xét, vùng đổi giữa chừng ->
+      // 1 nến ở nửa đầu có thể bị coi là "breakout" so với vùng CŨ dù giá đó
+      // vẫn nằm gọn trong vùng MỚI đang hiển thị trên chart -> chuỗi liên
+      // tiếp bị "gãy" vô hình, không bao giờ đủ 15 nến dù nhìn bằng mắt vào
+      // vùng hiện tại vẫn thấy đủ. Giờ test cả 15 nến với ĐÚNG 1 vùng (vùng
+      // của nến i, tức vùng mới nhất tính đến thời điểm i) để khớp với cách
+      // người dùng nhìn trực quan trên chart.
+      if (i - SIDEWAY_CONSECUTIVE_CANDLES + 1 >= 0) {
+        let allInsideThisZone = true;
+        for (let k = 0; k < SIDEWAY_CONSECUTIVE_CANDLES; k++) {
+          const b = signalClosed[i - k];
+          if (b.close < zone.minLow || b.close > zone.maxHigh) {
+            allInsideThisZone = false;
+            break;
           }
-          if (consecutiveInside) {
-            direction = 'sideway';
-          }
-          // Nếu không đủ số nến liên tiếp yêu cầu, direction giữ nguyên xu
-          // hướng trước đó.
+        }
+        if (allInsideThisZone) {
+          direction = 'sideway';
         }
       }
-
-      return direction;
+      // Không đủ nến lịch sử HOẶC không đủ 15 nến liên tiếp nằm trong vùng
+      // -> giữ nguyên xu hướng trước đó (direction không đổi).
     }
+  }
+
+  return direction;
+}
 
     /**
      * Trend Scalp: lặp qua TOÀN BỘ lịch sử nến signal (M5) đã đóng, mỗi lần

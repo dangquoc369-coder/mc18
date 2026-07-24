@@ -162,32 +162,26 @@ const ChartModule = (function () {
     }
 
     function initChart(container) {
-      containerRef = container;
+  containerRef = container;
 
-      const rect = container.getBoundingClientRect();
-      const initialWidth = container.clientWidth || rect.width || 400;
-      const initialHeight = container.clientHeight || rect.height || 300;
+  const initialTheme = (typeof ThemeModule !== 'undefined' && ThemeModule.getTheme()) || 'dark';
+  const initialColors = CHART_THEME[initialTheme] || CHART_THEME.dark;
 
-      const initialTheme = (typeof ThemeModule !== 'undefined' && ThemeModule.getTheme()) || 'dark';
-      const initialColors = CHART_THEME[initialTheme] || CHART_THEME.dark;
-
-      chart = LightweightCharts.createChart(container, {
-        autoSize: false,
-        width: initialWidth,
-        height: initialHeight,
-        layout: {
-          background: { type: 'solid', color: initialColors.background },
-          textColor: initialColors.text,
-          panes: { separatorColor: initialColors.border },
-        },
-        grid: {
-          vertLines: { color: initialColors.grid },
-          horzLines: { color: initialColors.grid },
-        },
-        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-        rightPriceScale: { borderColor: initialColors.border },
-        timeScale: { borderColor: initialColors.border, timeVisible: true, secondsVisible: false },
-      });
+  chart = LightweightCharts.createChart(container, {
+    autoSize: true, // để thư viện tự resize theo container - xem comment ở setupResize()
+    layout: {
+      background: { type: 'solid', color: initialColors.background },
+      textColor: initialColors.text,
+      panes: { separatorColor: initialColors.border },
+    },
+    grid: {
+      vertLines: { color: initialColors.grid },
+      horzLines: { color: initialColors.grid },
+    },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    rightPriceScale: { borderColor: initialColors.border },
+    timeScale: { borderColor: initialColors.border, timeVisible: true, secondsVisible: false },
+  });
 
       candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
         upColor: '#26a69a',

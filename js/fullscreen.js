@@ -34,6 +34,29 @@
  *     tạo 1 lần lúc khởi động, luôn nằm ngoài #topbar nên KHÔNG bị ẩn theo -
  *     chỉ hiện ra (qua CSS `body.app-fullscreen #fullscreenExitBtn`) đúng
  *     lúc đang fullscreen, ở góc trên-phải, đủ lớn để bấm bằng ngón tay.
+ *
+ *   - ĐỢT FIX NÀY (LỖI SIZE SAI Ở LAYOUT 1/2/3 Ô SAU KHI THOÁT FULLSCREEN):
+ *     Trước đây enter()/exit() gỡ/thêm class 'app-fullscreen' và bắn
+ *     'layout:changed' NGAY LẬP TỨC, đồng thời chỉ "bắn lệnh"
+ *     requestFullscreen()/exitFullscreen() mà KHÔNG đợi nó thật sự hoàn
+ *     tất. Nhưng 2 API này đều là bất đồng bộ và có animation phóng to/thu
+ *     nhỏ THẬT của trình duyệt trên phần tử #app (khác với #chartArea, nơi
+ *     class CSS 'app-fullscreen' tác động) - nghĩa là có một khoảng thời
+ *     gian ngắn #app vẫn còn ở kích thước fullscreen cũ trong khi
+ *     #chartArea đã bị gỡ position:fixed và rơi vào dòng chảy layout của
+ *     #app. ResizeObserver trong chart.js đo trúng đúng kích thước "phồng
+ *     tạm" này và gọi chart.resize() với size sai - vì chart tạo với
+ *     autoSize:false nên size sai này bị "chốt cứng", không có gì tự sửa
+ *     lại. Layout 4 ô tình cờ thoát được vì lưới 2x2 có nhiều lần đổi
+ *     kích thước chồng lấp trong lúc animation diễn ra nên tự "dọn" lại
+ *     đúng ở lần đo cuối; layout 1/2/3 ô chỉ có 1 lần đổi kích thước nên
+ *     dễ bị chốt sai vĩnh viễn.
+ *     Sửa: enter()/exit() giờ là async, dùng await lên chính Promise của
+ *     requestFullscreen()/exitFullscreen() (khi trình duyệt hỗ trợ), rồi
+ *     đợi thêm vài khung hình (waitAFewFrames) trước khi gỡ/thêm class CSS
+ *     và bắn lại 'layout:changed' - đảm bảo #app đã thật sự ổn định kích
+ *     thước trước khi đo. Có thêm 1 lần bắn lại sau 300ms để vét luôn
+ *     những thiết bị/trình duyệt có animation chậm hơn dự kiến.
  */
 
 const FullscreenModule = (function () {
@@ -58,52 +81,88 @@ const FullscreenModule = (function () {
     }
   }
 
-  async function enterNativeFullscreenIfSupported() {
-    if (!isNativeFullscreenSupported()) return;
-    try {
-      const target = document.getElementById('app') || document.documentElement;
-      await target.requestFullscreen();
-    } catch (err) {
-      // Trình duyệt từ chối hoặc không hỗ trợ đầy đủ - bỏ qua, đã có CSS
-      // fallback (position: fixed trên #chartArea) đảm nhiệm việc phóng to.
-    }
+  /** Đợi thêm n khung hình animation (mặc định 3) - dùng sau khi Promise của
+   * requestFullscreen()/exitFullscreen() đã resolve, vì 1 số trình duyệt vẫn
+   * cần thêm vài frame nữa để áp dụng xong kích thước cửa sổ/khối fullscreen
+   * thật, animation co/giãn chưa chắc đã vẽ xong ngay khung hình kế tiếp. */
+  function waitAFewFrames(n = 3) {
+    return new Promise((resolve) => {
+      let count = 0;
+      function tick() {
+        count++;
+        if (count >= n) resolve();
+        else requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    });
   }
 
-  function exitNativeFullscreenIfActive() {
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {});
-    }
+  function emitLayoutChanged() {
+    EventBus.emit('layout:changed', {
+      layout: Store.getState().layout,
+      visiblePaneIds: Store.getVisiblePaneIds(),
+      orientation: Store.getState().orientation,
+    });
   }
 
-  function enter() {
+  async function enter() {
     if (isFullscreen) return;
     isFullscreen = true;
-    document.body.classList.add('app-fullscreen');
     updateButton();
-    enterNativeFullscreenIfSupported();
 
-    // #chartArea vừa đổi kích thước (chiếm toàn màn hình) - báo cho
-    // layout.js vẽ lại splitter/placements cho đúng khung hình mới. Việc
-    // resize canvas thật sự của từng chart đã do ResizeObserver lo tự động.
-    EventBus.emit('layout:changed', {
-      layout: Store.getState().layout,
-      visiblePaneIds: Store.getVisiblePaneIds(),
-      orientation: Store.getState().orientation,
-    });
+    // Bật CSS fallback ngay lập tức (hiệu ứng tức thì, và là giải pháp DUY
+    // NHẤT hoạt động trên iOS Safari - nơi requestFullscreen() trên phần tử
+    // thường không được hỗ trợ).
+    document.body.classList.add('app-fullscreen');
+    emitLayoutChanged();
+
+    // requestFullscreen() cũng bất đồng bộ + có animation phóng to thật của
+    // hệ điều hành/trình duyệt trên #app - đợi nó xong hẳn rồi đo/emit lại
+    // 1 lần nữa, tránh trường hợp #app còn đang ở kích thước cũ (nhỏ hơn)
+    // trong khi #chartArea đã pin theo #app.
+    if (isNativeFullscreenSupported()) {
+      try {
+        const target = document.getElementById('app') || document.documentElement;
+        await target.requestFullscreen();
+        await waitAFewFrames();
+      } catch (err) {
+        // Trình duyệt từ chối hoặc không hỗ trợ đầy đủ - bỏ qua, CSS
+        // fallback ở trên đã đủ để tính năng hoạt động.
+      }
+    }
+
+    emitLayoutChanged();
+    // Vét thêm 1 lần phòng khi animation phóng to chậm hơn dự kiến.
+    setTimeout(emitLayoutChanged, 300);
   }
 
-  function exit() {
+  async function exit() {
     if (!isFullscreen) return;
     isFullscreen = false;
-    document.body.classList.remove('app-fullscreen');
     updateButton();
-    exitNativeFullscreenIfActive();
 
-    EventBus.emit('layout:changed', {
-      layout: Store.getState().layout,
-      visiblePaneIds: Store.getVisiblePaneIds(),
-      orientation: Store.getState().orientation,
-    });
+    // QUAN TRỌNG: phải đợi native fullscreen thoát THẬT SỰ XONG (Promise
+    // resolve + vài khung hình để hệ điều hành/trình duyệt co #app về đúng
+    // kích thước cũ) RỒI MỚI gỡ class 'app-fullscreen' và tính lại layout.
+    // Gỡ CSS ngay lập tức (như trước đây) khiến #chartArea rơi vào dòng
+    // chảy layout của #app trong lúc #app vẫn còn đang ở kích thước
+    // fullscreen thật (to hơn) - ResizeObserver đo nhầm kích thước tạm này
+    // và chart.resize() chốt cứng luôn ở đó vì autoSize:false.
+    if (document.fullscreenElement) {
+      try {
+        await document.exitFullscreen();
+      } catch (err) {
+        // bỏ qua - vẫn tiếp tục gỡ CSS fallback bình thường bên dưới
+      }
+      await waitAFewFrames();
+    }
+
+    document.body.classList.remove('app-fullscreen');
+    emitLayoutChanged();
+
+    // Vét thêm 1 lần sau 300ms phòng khi thiết bị/trình duyệt nào đó có
+    // animation co cửa sổ chậm hơn vài frame kể trên.
+    setTimeout(emitLayoutChanged, 300);
   }
 
   function toggle() {
@@ -157,6 +216,8 @@ const FullscreenModule = (function () {
 
     // Nếu người dùng thoát fullscreen hệ thống bằng cách khác (vd nút back
     // trên Android khi đã vào native fullscreen) -> đồng bộ lại trạng thái.
+    // exit() tự kiểm tra document.fullscreenElement nên gọi lại vẫn an toàn
+    // dù native fullscreen đã tự thoát trước đó.
     document.addEventListener('fullscreenchange', () => {
       if (!document.fullscreenElement && isFullscreen) exit();
     });
