@@ -11,25 +11,45 @@
  *   - H1  : vùng = High/Low của 2 nến H6  đã đóng gần nhất -> test bằng nến M15 đã đóng gần nhất.
  *   - H4  : vùng = High/Low của 2 nến H12 đã đóng gần nhất -> test bằng nến M30 đã đóng gần nhất.
  *   - D1  : vùng = High/Low của 2 nến D2  đã đóng gần nhất -> test bằng nến H2  đã đóng gần nhất.
- *   Nến test nằm TRONG vùng -> "sideway". Nến test breakout khỏi vùng -> "up"/"down".
- *   Đây là phép test tại 1 thời điểm (nến gần nhất), KHÔNG có bộ nhớ trạng thái.
+ *   Nến test breakout khỏi vùng -> đổi "up"/"down" NGAY. Nến test nằm TRONG
+ *   vùng -> cộng dồn số nến liên tiếp, đủ ngưỡng thì chuyển "sideway", chưa
+ *   đủ thì GIỮ NGUYÊN xu hướng trước đó.
  *
- *   (CẬP NHẬT ĐỢT NÀY: đổi cặp khung của cả 3 chân Swing sang M15&H6 /
- *   M30&H12 / H2&D2 - trước đây là M15&H4 / H1&D1 / H2&D3. Xem chi tiết cách
- *   ghép nến D2 - vì Binance KHÔNG có sẵn interval 2 ngày - ở hàm buildD2Raw()
- *   bên dưới.)
- *
- *   Số nến signal liên tiếp cần thiết để chuyển sang "sideway" vẫn dùng
- *   chung hằng số SIDEWAY_CONSECUTIVE_CANDLES ở dưới, áp dụng cho cả 3 chân
- *   Swing (H1, H4, D1) vì cả 3 đều gọi chung hàm computeSwingLeg().
+ * ĐỢT FIX NÀY (STATE MACHINE CỘNG DỒN - khớp đúng file MQL5 gốc
+ * TrendSwing_Scalp_EA_MultiSymbol.mq5, hàm UpdateTrendState()/
+ * InitTrendStateFromHistory()):
+ *   - TRƯỚC ĐÂY: mỗi lần compute() được gọi, computeSwingLeg() TÍNH LẠI
+ *     TOÀN BỘ lịch sử từ đầu bằng cách so mỗi nến signal với vùng zone TẠI
+ *     ĐÚNG THỜI ĐIỂM nó đóng, rồi kiểm tra "K nến gần nhất có cùng nằm
+ *     trong TRONG vùng tại thời điểm CỦA CHÍNH NÓ hay không". Cách này về
+ *     bản chất tương đương 1 state machine cộng dồn (đúng), nhưng có 1 bản
+ *     sửa TẠM THỜI trước đó (đã revert) làm sai lệch nó bằng cách ép tất cả
+ *     K nến phải test lại với 1 vùng zone MỚI NHẤT DUY NHẤT - SAI so với
+ *     MQL5 (MQL5 không bao giờ "tính lại lịch sử với vùng mới").
+ *   - BÂY GIỜ: chuyển hẳn sang state cộng dồn THẬT SỰ, lưu trong biến
+ *     `swingState` của mỗi instance, tồn tại xuyên suốt qua các lần gọi
+ *     compute(). Mỗi nến signal chỉ được xử lý ĐÚNG 1 LẦN (giống OnTick()
+ *     chỉ gọi UpdateTrendState() khi phát hiện có nến entry MỚI đóng):
+ *       + breakout khỏi vùng -> đổi trend NGAY, reset insideCount = 0.
+ *       + nằm trong vùng -> insideCount++; đủ SIDEWAY_CONSECUTIVE_CANDLES
+ *         thì chuyển 'sideway'; chưa đủ thì GIỮ NGUYÊN trend cũ.
+ *       + insideCount KHÔNG bị reset chỉ vì vùng zone (H6/H12/D2) vừa đóng
+ *         nến mới ở giữa chừng - đúng như MQL5, chỉ reset khi có breakout
+ *         thật sự xảy ra.
+ *   - setCandles() (gọi lúc load lần đầu / đổi symbol) -> build lại toàn bộ
+ *     baseline từ đầu, tương đương InitTrendStateFromHistory() quét ngược
+ *     lịch sử lúc EA khởi động.
+ *   - upsertCandle() (gọi mỗi khi WebSocket có nến mới) -> chỉ xử lý tiếp
+ *     các nến MỚI (chưa từng qua xử lý) của đúng leg liên quan, không build
+ *     lại từ đầu - rẻ hơn và đúng tinh thần "chỉ tính khi có nến mới".
+ *   - compute() giờ chỉ ĐỌC state đã lưu, không tính toán lại gì thêm.
  *
  * ===== TREND SCALP (chỉ 2 trạng thái, không có sideway) =====
  *   - vùng = High/Low của 2 nến H2 đã đóng gần nhất -> test bằng M5.
  *   - Khi M5 breakout khỏi vùng thì đổi hướng ("up"/"down"). Khi M5 nằm
  *     TRONG vùng thì GIỮ NGUYÊN hướng đang có trước đó (không có sideway).
- *   -> Đây là logic có "bộ nhớ", phải lặp qua toàn bộ lịch sử M5 đã tải để
- *      xác định đúng hướng đang giữ tại thời điểm hiện tại.
- *   (Không đổi trong đợt fix này.)
+ *   -> Vẫn lặp qua toàn bộ lịch sử M5 đã tải để xác định đúng hướng đang giữ
+ *      tại thời điểm hiện tại. KHÔNG đổi trong đợt fix này.
  *
  * Dữ liệu nến của các khung THẬT (5m, 15m, 30m, 2h, 6h, 12h, 1d) được app.js
  * tải (REST) và đẩy realtime (WebSocket) vào đây qua setCandles()/
@@ -73,10 +93,9 @@ const TrendReferenceModule = (function () {
   // Số nến signal liên tiếp phải đóng TRONG vùng zone thì Trend Swing
   // (H1/H4/D1) mới được coi là "sideway" - đổi số này để chỉnh độ nhạy: số
   // nhỏ hơn -> chuyển sang sideway nhanh hơn (dễ nhạy/dễ nhiễu hơn); số lớn
-  // hơn -> chậm hơn nhưng chắc chắn hơn. Áp dụng CHUNG cho cả 3 chân Swing vì
-  // cả 3 đều gọi chung computeSwingLeg(). KHÔNG ảnh hưởng Trend Scalp
-  // (computeScalpTrend() không dùng hằng số này, logic scalp không có
-  // sideway).
+  // hơn -> chậm hơn nhưng chắc chắn hơn. Áp dụng CHUNG cho cả 3 chân Swing.
+  // KHÔNG ảnh hưởng Trend Scalp (computeScalpTrend() không dùng hằng số
+  // này, logic scalp không có sideway).
   const SIDEWAY_CONSECUTIVE_CANDLES = 15;
 
   // ===== Các hàm tiện ích căn chỉnh đa khung (giống ý tưởng trong breakout.js,
@@ -190,9 +209,29 @@ const TrendReferenceModule = (function () {
       raw[role] = [];
     });
 
+    /**
+     * ===== STATE MACHINE CỘNG DỒN CHO TREND SWING (H1/H4/D1) =====
+     * Mỗi leg có 1 state riêng, tồn tại xuyên suốt qua các lần gọi compute():
+     *   trend            : 'up' | 'down' | 'sideway' | null (chưa xác định)
+     *   insideCount       : số nến signal liên tiếp đang nằm trong vùng
+     *                        (kể từ lần breakout gần nhất)
+     *   lastProcessedTime : time của nến signal ĐÃ ĐÓNG gần nhất đã xử lý
+     *                        qua stepLeg() - dùng để tránh xử lý lại 1 nến
+     *                        đã xử lý rồi.
+     */
+    const swingState = {};
+    SWING_LEGS.forEach((leg) => {
+      swingState[leg.key] = { trend: null, insideCount: 0, lastProcessedTime: null };
+    });
+
     function setCandles(role, candles) {
       if (!ROLE_INTERVAL[role]) return;
       raw[role] = candles ? candles.slice() : [];
+      // setCandles = tải lại TOÀN BỘ lịch sử (init lần đầu hoặc đổi symbol)
+      // -> dữ liệu cũ không còn liên quan, phải build lại baseline từ đầu,
+      // giống InitTrendStateFromHistory() quét ngược lịch sử lúc EA khởi
+      // động (thay vì giữ state cộng dồn cũ của symbol trước đó).
+      recomputeBaseline();
     }
 
     function upsertCandle(role, candle) {
@@ -204,6 +243,16 @@ const TrendReferenceModule = (function () {
       } else if (!last || candle.time > last.time) {
         arr.push(candle);
       }
+      // Chỉ xử lý tiếp (KHÔNG build lại từ đầu) các chân Swing có liên quan
+      // tới role vừa cập nhật - đúng tinh thần "chỉ tính khi có nến MỚI",
+      // không đụng tới các nến đã xử lý trước đó.
+      SWING_LEGS.forEach((leg) => {
+        const affectsSignal = role === leg.signalRole;
+        const affectsZone = role === leg.zoneRole || (leg.zoneRole === 'd2' && role === 'd1');
+        if (affectsSignal || affectsZone) {
+          processLegNewBars(leg);
+        }
+      });
     }
 
     function getClosed(role) {
@@ -219,65 +268,65 @@ const TrendReferenceModule = (function () {
       return raw[zoneRole];
     }
 
-    /** 1 chân Trend Swing: test nến signal đã đóng gần nhất so với vùng zone.
-     * Để chuyển sang sideway, cần ít nhất SIDEWAY_CONSECUTIVE_CANDLES nến
-     * signal liên tiếp đóng trong vùng zone tương ứng tại thời điểm đó. Nếu
-     * không đủ, xu hướng cũ (up/down/sideway trước đó) sẽ được giữ nguyên.
-     */
-    function computeSwingLeg(leg) {
-  const signalClosed = getClosed(leg.signalRole);
-  const zoneRaw = getZoneRaw(leg.zoneRole);
-  if (signalClosed.length < 1 || !zoneRaw || zoneRaw.length < ZONE_LOOKBACK) return null;
+    /** Xử lý 1 nến signal đã đóng, ĐÚNG 1 LẦN, cập nhật state cộng dồn của
+     * leg (giống 1 nhịp UpdateTrendState() trong MQL5). Trả về false nếu
+     * chưa đủ dữ liệu zone để xử lý - phải DỪNG lại, không được xử lý các
+     * nến sau nó trước (phải giữ đúng thứ tự thời gian). */
+    function stepLeg(st, bar, zoneSeries) {
+      const count = zoneSeries.filter((c) => c.closeTime <= bar.time).length;
+      const zone = computeZone(zoneSeries, count);
+      if (!zone) return false;
 
-  const zoneSeries = buildClosedSeries(zoneRaw);
-  const align = makeAligner(zoneSeries);
-
-  let direction = null;
-
-  for (let i = 0; i < signalClosed.length; i++) {
-    const bar = signalClosed[i];
-    const count = align(bar.time);
-    const zone = computeZone(zoneSeries, count);
-    if (!zone) continue;
-
-    if (bar.close > zone.maxHigh) {
-      direction = 'up';
-    } else if (bar.close < zone.minLow) {
-      direction = 'down';
-    } else {
-      // Nằm trong vùng zone áp dụng cho CHÍNH nến i này - kiểm tra
-      // SIDEWAY_CONSECUTIVE_CANDLES nến GẦN NHẤT (kể cả nến i) có đều nằm
-      // trong CÙNG vùng này không.
-      //
-      // FIX: trước đây so bar[i-k] với vùng riêng của NÓ tại thời điểm i-k
-      // (insideArray[i-k], tính từ zone lúc bar đó đóng). Khi H6/H12/D2 vừa
-      // đóng 1 nến mới ở GIỮA chuỗi 15 nến đang xét, vùng đổi giữa chừng ->
-      // 1 nến ở nửa đầu có thể bị coi là "breakout" so với vùng CŨ dù giá đó
-      // vẫn nằm gọn trong vùng MỚI đang hiển thị trên chart -> chuỗi liên
-      // tiếp bị "gãy" vô hình, không bao giờ đủ 15 nến dù nhìn bằng mắt vào
-      // vùng hiện tại vẫn thấy đủ. Giờ test cả 15 nến với ĐÚNG 1 vùng (vùng
-      // của nến i, tức vùng mới nhất tính đến thời điểm i) để khớp với cách
-      // người dùng nhìn trực quan trên chart.
-      if (i - SIDEWAY_CONSECUTIVE_CANDLES + 1 >= 0) {
-        let allInsideThisZone = true;
-        for (let k = 0; k < SIDEWAY_CONSECUTIVE_CANDLES; k++) {
-          const b = signalClosed[i - k];
-          if (b.close < zone.minLow || b.close > zone.maxHigh) {
-            allInsideThisZone = false;
-            break;
-          }
+      if (bar.close > zone.maxHigh) {
+        st.trend = 'up';
+        st.insideCount = 0;
+      } else if (bar.close < zone.minLow) {
+        st.trend = 'down';
+        st.insideCount = 0;
+      } else {
+        st.insideCount++;
+        if (st.insideCount >= SIDEWAY_CONSECUTIVE_CANDLES) {
+          st.trend = 'sideway';
         }
-        if (allInsideThisZone) {
-          direction = 'sideway';
-        }
+        // Chưa đủ nến -> st.trend giữ nguyên (không gán gì thêm) - đúng
+        // hành vi "giữ nguyên xu hướng cũ" của MQL5.
       }
-      // Không đủ nến lịch sử HOẶC không đủ 15 nến liên tiếp nằm trong vùng
-      // -> giữ nguyên xu hướng trước đó (direction không đổi).
+      st.lastProcessedTime = bar.time;
+      return true;
     }
-  }
 
-  return direction;
-}
+    /** Xử lý mọi nến signal ĐÃ ĐÓNG nhưng CHƯA từng qua stepLeg() của leg
+     * này (time > lastProcessedTime), theo đúng thứ tự thời gian tăng dần. */
+    function processLegNewBars(leg) {
+      const signalClosed = getClosed(leg.signalRole);
+      const zoneRaw = getZoneRaw(leg.zoneRole);
+      if (signalClosed.length < 1 || !zoneRaw || zoneRaw.length < ZONE_LOOKBACK) return;
+
+      const zoneSeries = buildClosedSeries(zoneRaw);
+      const st = swingState[leg.key];
+
+      let startIdx = 0;
+      if (st.lastProcessedTime !== null) {
+        startIdx = signalClosed.findIndex((b) => b.time > st.lastProcessedTime);
+        if (startIdx === -1) return; // không có nến mới nào cần xử lý
+      }
+
+      for (let i = startIdx; i < signalClosed.length; i++) {
+        // Nếu 1 nến chưa đủ dữ liệu zone để xử lý, DỪNG lại ở đây - không
+        // được xử lý nến sau nó trước, phải giữ đúng thứ tự thời gian.
+        if (!stepLeg(st, signalClosed[i], zoneSeries)) break;
+      }
+    }
+
+    /** Build lại toàn bộ 3 chân Swing từ đầu, dùng cho lần load đầu tiên
+     * hoặc mỗi khi đổi symbol (setCandles) - tương đương
+     * InitTrendStateFromHistory() quét ngược lịch sử lúc EA khởi động. */
+    function recomputeBaseline() {
+      SWING_LEGS.forEach((leg) => {
+        swingState[leg.key] = { trend: null, insideCount: 0, lastProcessedTime: null };
+        processLegNewBars(leg);
+      });
+    }
 
     /**
      * Trend Scalp: lặp qua TOÀN BỘ lịch sử nến signal (M5) đã đóng, mỗi lần
@@ -285,6 +334,7 @@ const TrendReferenceModule = (function () {
      * hướng trước đó. Không có "sideway". Trả về null nếu trong toàn bộ dữ
      * liệu đã tải chưa từng có 1 lần breakout nào (rất hiếm, coi như chưa
      * xác định được - UI sẽ hiện "Đang xác định...").
+     * (KHÔNG đổi trong đợt fix này.)
      */
     function computeScalpTrend() {
       const signalClosed = getClosed(SCALP_LEG.signalRole);
@@ -308,11 +358,12 @@ const TrendReferenceModule = (function () {
       return direction;
     }
 
-    /** Trả về { swing: { h1, h4, d1 }, scalp } - dùng cho UI hiển thị. */
+    /** Trả về { swing: { h1, h4, d1 }, scalp } - dùng cho UI hiển thị.
+     * CHỈ ĐỌC state đã lưu (swingState), không tính toán lại lịch sử. */
     function compute() {
       const swing = {};
       SWING_LEGS.forEach((leg) => {
-        swing[leg.key] = computeSwingLeg(leg);
+        swing[leg.key] = swingState[leg.key].trend;
       });
       return { swing, scalp: computeScalpTrend() };
     }
