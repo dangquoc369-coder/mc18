@@ -61,7 +61,8 @@
     UI.init();
     CountdownModule.init();
     NotificationsModule.init();
-
+    TasksModule.init();   // giữ dòng này
+    
     const state = Store.getState();
 
     for (const pane of state.panes) {

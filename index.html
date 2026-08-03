@@ -67,10 +67,22 @@
         <input type="text" id="symbolSearchInput" placeholder="Tìm cặp giao dịch (áp dụng cho ô đang chọn)..." autocomplete="off">
         <div id="symbolSearchResults" class="symbol-search-results hidden"></div>
       </div>
-
-      <div class="sidebar-section-title">Phổ biến</div>
-      <ul id="symbolList" class="symbol-list"><!-- render bằng ui.js --></ul>
-    </aside>
+      <!-- ===== TAB CHUYỂN ĐỔI: Biểu đồ / Công việc (thêm mới) ===== -->
+  <div class="sidebar-tabs">
+    <button type="button" class="sidebar-tab-btn active" id="sidebarTabChart" data-view="chart">📊 Biểu đồ</button>
+    <button type="button" class="sidebar-tab-btn" id="sidebarTabTasks" data-view="tasks">📝 Công việc</button>
+  </div>
+      <!-- Nội dung khi ở tab "Biểu đồ" (giữ nguyên như cũ, chỉ bọc lại) -->
+  <div id="sidebarChartSection" class="sidebar-tab-content">
+    <div class="sidebar-section-title">Phổ biến</div>
+    <ul id="symbolList" class="symbol-list"></ul>
+  </div>
+  <!-- Nội dung khi ở tab "Công việc" (thêm mới - danh sách rút gọn) -->
+  <div id="sidebarTasksSection" class="sidebar-tab-content hidden">
+    <div class="sidebar-section-title">Sắp đến hạn</div>
+    <div id="sidebarTasksMiniList" class="tasks-mini-list"></div>
+  </div>
+</aside>
 
     <!-- ===== MAIN ===== -->
     <main id="main">
@@ -157,7 +169,9 @@
           </div>
           <div id="pane-4-status" class="connection-status connecting">Đang kết nối...</div>
         </section>
-
+       <!-- ===== TRANG CÔNG VIỆC (thêm mới, ẩn mặc định, hiện khi chọn tab Công việc) ===== -->
+  <section id="tasksMainView" class="hidden"></section>
+</main>
       </div>
 
     </main>
@@ -173,6 +187,7 @@
   <script src="js/websocket.js"></script>
   <script src="js/indicator.js"></script>
   <script src="js/notifications.js"></script>
+  <script src="js/tasks.js"></script>
   <script src="js/alerts.js"></script>
   <script src="js/login.js"></script>
   <script src="js/indicator-prefs.js"></script>

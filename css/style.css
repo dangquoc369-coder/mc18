@@ -1494,3 +1494,215 @@ body.app-fullscreen #fullscreenExitBtn {
 
 @keyframes dq-reload-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .ms-reload.ms-reload-spinning .icon-svg { animation: dq-reload-spin 0.6s linear; }
+/* ===================== TAB SIDEBAR: BIỂU ĐỒ / CÔNG VIỆC ===================== */
+.sidebar-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 10px 12px 4px;
+  background: var(--bg-main);
+  padding: 3px;
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+}
+.sidebar-tab-btn {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 7px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sidebar-tab-btn:hover { color: var(--text-primary); }
+.sidebar-tab-btn.active { background: var(--bg-hover); color: var(--accent-blue); }
+
+.sidebar-tab-content { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+.sidebar-tab-content.hidden { display: none; }
+
+/* Danh sách rút gọn công việc trong sidebar */
+.tasks-mini-list {
+  overflow-y: auto;
+  flex: 1;
+  padding: 0 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tasks-mini-empty {
+  padding: 12px 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: center;
+}
+.tasks-mini-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.tasks-mini-item:hover { border-color: var(--accent-blue); }
+.tasks-mini-item.overdue { border-left: 2px solid var(--red); }
+.tasks-mini-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--accent-blue);
+}
+.tasks-mini-item.done .tasks-mini-dot { background: var(--green); }
+.tasks-mini-title {
+  font-size: 12.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tasks-mini-item.done .tasks-mini-title { text-decoration: line-through; color: var(--text-secondary); }
+.tasks-mini-time { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-secondary); flex-shrink: 0; margin-left: auto; }
+.tasks-mini-add-btn {
+  margin: 8px 8px 4px;
+  border: 1px dashed var(--border-color);
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: var(--radius-md);
+  padding: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.tasks-mini-add-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
+
+/* ===================== TRANG CÔNG VIỆC (main view) ===================== */
+#tasksMainView {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg-main);
+  padding: 18px 20px 40px;
+}
+#tasksMainView.hidden { display: none; }
+
+.tv-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.tv-title { font-size: 18px; font-weight: 700; }
+.tv-subtitle { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+.tv-add-btn {
+  border: none;
+  background: var(--accent-blue);
+  color: var(--on-accent);
+  font-weight: 600;
+  font-size: 13px;
+  padding: 9px 16px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tv-add-btn:hover { opacity: 0.9; }
+
+.tv-filters {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+.tv-filter-btn {
+  border: 1px solid var(--border-color);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.tv-filter-btn:hover { border-color: var(--accent-blue); }
+.tv-filter-btn.active { background: var(--accent-blue-soft); border-color: var(--accent-blue); color: var(--accent-blue); }
+
+.tv-group-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-secondary);
+  margin: 18px 0 8px;
+}
+.tv-group-title:first-child { margin-top: 0; }
+
+.tv-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+  margin-bottom: 8px;
+}
+.tv-card.overdue { border-left: 3px solid var(--red); }
+.tv-card.done { opacity: 0.55; }
+.tv-card-check {
+  width: 20px; height: 20px; margin-top: 1px; flex-shrink: 0; cursor: pointer; accent-color: var(--accent-blue);
+}
+.tv-card-body { flex: 1; min-width: 0; }
+.tv-card-title { font-size: 13.5px; font-weight: 600; word-break: break-word; }
+.tv-card.done .tv-card-title { text-decoration: line-through; color: var(--text-secondary); }
+.tv-card-note { font-size: 12px; color: var(--text-secondary); margin-top: 3px; }
+.tv-card-meta {
+  display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap;
+}
+.tv-card-time { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); }
+.tv-card-repeat-tag {
+  font-size: 10px; padding: 2px 7px; border-radius: 999px;
+  background: var(--accent-blue-soft); color: var(--accent-blue); font-weight: 600;
+}
+.tv-card-remove {
+  border: none; background: transparent; color: var(--text-secondary);
+  cursor: pointer; font-size: 15px; padding: 2px 4px; flex-shrink: 0;
+}
+.tv-card-remove:hover { color: var(--red); }
+
+.tv-empty-state {
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+  padding: 40px 10px;
+}
+
+/* Form thêm/sửa việc - modal nổi, không chiếm layout chart */
+.tv-modal-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 998;
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.tv-modal {
+  background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md); width: 100%; max-width: 380px; padding: 18px;
+  display: flex; flex-direction: column; gap: 10px; max-height: 85vh; overflow-y: auto;
+}
+.tv-modal-title { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+.tv-modal input[type="text"],
+.tv-modal input[type="date"],
+.tv-modal input[type="time"],
+.tv-modal select,
+.tv-modal textarea {
+  width: 100%; background: var(--bg-main); border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm); padding: 8px 10px; color: var(--text-primary); font-size: 13px; outline: none;
+}
+.tv-modal textarea { resize: vertical; min-height: 50px; font-family: var(--font); }
+.tv-modal label { font-size: 11px; color: var(--text-secondary); margin-bottom: 2px; display: block; }
+.tv-modal-row { display: flex; gap: 8px; }
+.tv-modal-row > * { flex: 1; }
+.tv-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.tv-modal-actions button {
+  border: none; border-radius: var(--radius-sm); padding: 8px 14px; font-size: 12.5px; cursor: pointer;
+}
+.tv-modal-cancel { background: transparent; color: var(--text-secondary); }
+.tv-modal-cancel:hover { color: var(--text-primary); }
+.tv-modal-save { background: var(--accent-blue); color: var(--on-accent); font-weight: 600; }
+
+@media (max-width: 900px) {
+  #tasksMainView { padding: 14px 12px 30px; }
+  .tv-title { font-size: 16px; }
+}
