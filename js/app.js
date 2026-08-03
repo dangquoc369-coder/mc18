@@ -61,7 +61,6 @@
     UI.init();
     CountdownModule.init();
     NotificationsModule.init();
-    TasksModule.init();
 
     const state = Store.getState();
 

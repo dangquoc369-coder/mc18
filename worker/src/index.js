@@ -48,9 +48,6 @@ const SUBS_KEY = 'subs_v1'; // { [deviceId]: PushSubscriptionJSON }
 // ===== TÀI KHOẢN NHẸ (đợt fix này) =====
 const PROFILES_KEY = 'profiles_v1'; // { [username]: pinHashHex }
 
-const TASKS_CONFIG_KEY = 'tasks_config_v1'; // { [deviceId]: [{id,title,note,date,time,repeat,daysOfWeek,enabled}] }
-const TASKS_STATE_KEY = 'tasks_state_v1';   // { [deviceId]: { [taskId]: lastNotifiedKey } }
-
 function withCors(resp) {
   resp.headers.set('Access-Control-Allow-Origin', '*');
   resp.headers.set('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
@@ -208,32 +205,6 @@ export default {
       return withCors(Response.json({ ok: true, count: merged.length }));
     }
 
-    if (url.pathname === '/api/tasks' && request.method === 'GET') {
-  const deviceId = url.searchParams.get('deviceId');
-  if (!deviceId) return withCors(new Response('Thiếu deviceId', { status: 400 }));
-  const allConfig = await readJSON(env.TRACKER_KV, TASKS_CONFIG_KEY, {});
-  return withCors(Response.json({ ok: true, tasks: allConfig[deviceId] || [] }));
-}
-
-if (url.pathname === '/api/tasks' && request.method === 'POST') {
-  let body;
-  try { body = await request.json(); } catch (err) { return withCors(new Response('JSON không hợp lệ', { status: 400 })); }
-  const { deviceId, tasks } = body || {};
-  if (!deviceId || !Array.isArray(tasks)) return withCors(new Response('Payload không hợp lệ', { status: 400 }));
-
-  const allConfig = await readJSON(env.TRACKER_KV, TASKS_CONFIG_KEY, {});
-  const merged = tasks
-    .filter((t) => t && t.id && t.title && t.date && t.time)
-    .map((t) => ({
-      id: t.id, title: t.title, note: t.note || '', date: t.date, time: t.time,
-      repeat: t.repeat || 'none', daysOfWeek: Array.isArray(t.daysOfWeek) ? t.daysOfWeek : [],
-      enabled: !!t.enabled,
-    }));
-
-  if (merged.length > 0) allConfig[deviceId] = merged; else delete allConfig[deviceId];
-  await writeJSON(env.TRACKER_KV, TASKS_CONFIG_KEY, allConfig);
-  return withCors(Response.json({ ok: true, count: merged.length }));
-}
     // Chỉ ghi vào SIGNALS_CONFIG_KEY - KHÔNG đụng vào SIGNALS_STATE_KEY
     // (lastDirection/lastNotifiedTime), cùng lý do như trên.
     if (url.pathname === '/api/signals' && request.method === 'POST') {
@@ -283,12 +254,6 @@ function sleep(ms) {
 
 async function runCronTick(env) {
   await Promise.allSettled([checkAlertsAndNotify(env), checkSignalsAndNotify(env)]);
-  await sleep(30000);
-  await checkAlertsAndNotify(env);
-}
-
-async function runCronTick(env) {
-  await Promise.allSettled([checkAlertsAndNotify(env), checkSignalsAndNotify(env), checkTasksAndNotify(env)]);
   await sleep(30000);
   await checkAlertsAndNotify(env);
 }
@@ -394,122 +359,6 @@ async function checkAlertsAndNotify(env) {
   if (subsChanged) await writeJSON(env.TRACKER_KV, SUBS_KEY, subs);
 }
 
-// Cloudflare Worker chạy Date theo UTC (không có múi giờ hệ thống), còn
-// HH:MM người dùng nhập là giờ Việt Nam (ICT, UTC+7) - phải tự bù offset
-// khi so khớp, nếu không lời nhắc server-side sẽ báo lệch đúng 7 tiếng.
-const TZ_OFFSET_MIN = 7 * 60;
-
-function localPartsFromUtc(utcMs) {
-  const s = new Date(utcMs + TZ_OFFSET_MIN * 60000);
-  return { y: s.getUTCFullYear(), m: s.getUTCMonth(), d: s.getUTCDate() };
-}
-function localToUtcMs(y, m, d, hh, mm) {
-  return Date.UTC(y, m, d, hh, mm, 0, 0) - TZ_OFFSET_MIN * 60000;
-}
-function lastDayOfMonthUTC(year, monthIndex) {
-  return new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
-}
-function dateKeyLocal(y, m, d) { return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
-
-function getDueOccurrenceServer(task, nowUtcMs) {
-  if (!task.enabled) return null;
-  const [hh, mm] = (task.time || '00:00').split(':').map(Number);
-  const [ay, am, ad] = (task.date || '1970-01-01').split('-').map(Number);
-  const anchorUtcMs = localToUtcMs(ay, am - 1, ad, 0, 0);
-  const now = localPartsFromUtc(nowUtcMs);
-
-  if (task.repeat === 'none' || !task.repeat) {
-    const dueUtc = localToUtcMs(ay, am - 1, ad, hh, mm);
-    return dueUtc <= nowUtcMs ? { key: 'once', timestamp: dueUtc } : null;
-  }
-
-  if (task.repeat === 'daily') {
-    for (let back = 0; back < 2; back++) {
-      const d = new Date(Date.UTC(now.y, now.m, now.d - back));
-      const y2 = d.getUTCFullYear(), m2 = d.getUTCMonth(), d2 = d.getUTCDate();
-      const candidateUtc = localToUtcMs(y2, m2, d2, hh, mm);
-      if (candidateUtc > nowUtcMs) continue;
-      if (localToUtcMs(y2, m2, d2, 0, 0) < anchorUtcMs) return null;
-      return { key: dateKeyLocal(y2, m2, d2), timestamp: candidateUtc };
-    }
-    return null;
-  }
-
-  if (task.repeat === 'weekly') {
-    const days = (task.daysOfWeek && task.daysOfWeek.length)
-      ? task.daysOfWeek : [new Date(Date.UTC(ay, am - 1, ad)).getUTCDay()];
-    for (let back = 0; back < 8; back++) {
-      const d = new Date(Date.UTC(now.y, now.m, now.d - back));
-      const y2 = d.getUTCFullYear(), m2 = d.getUTCMonth(), d2 = d.getUTCDate(), day2 = d.getUTCDay();
-      const candidateUtc = localToUtcMs(y2, m2, d2, hh, mm);
-      if (candidateUtc > nowUtcMs) continue;
-      if (localToUtcMs(y2, m2, d2, 0, 0) < anchorUtcMs) break;
-      if (days.includes(day2)) return { key: dateKeyLocal(y2, m2, d2), timestamp: candidateUtc };
-    }
-    return null;
-  }
-
-  if (task.repeat === 'monthly') {
-    for (let back = 0; back < 2; back++) {
-      const mIdx = now.m - back;
-      const y2 = now.y + Math.floor(mIdx / 12);
-      const m2 = ((mIdx % 12) + 12) % 12;
-      const day = Math.min(ad, lastDayOfMonthUTC(y2, m2));
-      const candidateUtc = localToUtcMs(y2, m2, day, hh, mm);
-      if (candidateUtc > nowUtcMs) continue;
-      if (localToUtcMs(y2, m2, day, 0, 0) < anchorUtcMs) break;
-      return { key: dateKeyLocal(y2, m2, day), timestamp: candidateUtc };
-    }
-    return null;
-  }
-  return null;
-}
-
-async function checkTasksAndNotify(env) {
-  const allConfig = await readJSON(env.TRACKER_KV, TASKS_CONFIG_KEY, {});
-  const allState = await readJSON(env.TRACKER_KV, TASKS_STATE_KEY, {});
-  const subs = await readJSON(env.TRACKER_KV, SUBS_KEY, {});
-  if (Object.keys(allConfig).length === 0) return;
-
-  const now = Date.now();
-  let stateChanged = false;
-  let subsChanged = false;
-
-  for (const deviceId of Object.keys(allConfig)) {
-    const list = allConfig[deviceId] || [];
-    const subscription = subs[deviceId];
-    const deviceState = allState[deviceId] || (allState[deviceId] = {});
-
-    for (const task of list) {
-      const occ = getDueOccurrenceServer(task, now);
-      if (!occ || deviceState[task.id] === occ.key) continue;
-
-      deviceState[task.id] = occ.key;
-      stateChanged = true;
-
-      if (subscription) {
-        const stillValid = await sendPush(env, subscription, {
-          title: '📝 Nhắc việc',
-          body: task.note ? `${task.title} - ${task.note}` : task.title,
-        });
-        if (!stillValid) { delete subs[deviceId]; subsChanged = true; }
-      }
-    }
-
-    const validIds = new Set(list.map((t) => t.id));
-    Object.keys(deviceState).forEach((id) => {
-      if (!validIds.has(id)) { delete deviceState[id]; stateChanged = true; }
-    });
-    if (Object.keys(deviceState).length === 0) delete allState[deviceId];
-  }
-
-  Object.keys(allState).forEach((deviceId) => {
-    if (!allConfig[deviceId]) { delete allState[deviceId]; stateChanged = true; }
-  });
-
-  if (stateChanged) await writeJSON(env.TRACKER_KV, TASKS_STATE_KEY, allState);
-  if (subsChanged) await writeJSON(env.TRACKER_KV, SUBS_KEY, subs);
-}
 const SYMBOL_TO_COINGECKO_ID = {
   BTC: 'bitcoin', ETH: 'ethereum', BNB: 'binancecoin', SOL: 'solana',
   XRP: 'ripple', ADA: 'cardano', DOGE: 'dogecoin', TON: 'the-open-network',
