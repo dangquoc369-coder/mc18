@@ -239,12 +239,16 @@ export default {
         .filter((a) => a && a.id && a.symbol && typeof a.price === 'number')
         .map((a) => ({ id: a.id, symbol: a.symbol, price: a.price }));
 
+      const prevStr = JSON.stringify(allConfig[deviceId] || []);
       if (merged.length > 0) {
         allConfig[deviceId] = merged;
       } else {
         delete allConfig[deviceId];
       }
-      await writeJSON(env.TRACKER_KV, ALERTS_CONFIG_KEY, allConfig);
+      const nextStr = JSON.stringify(allConfig[deviceId] || []);
+      if (prevStr !== nextStr) {
+        await writeJSON(env.TRACKER_KV, ALERTS_CONFIG_KEY, allConfig);
+      }
       return withCors(Response.json({ ok: true, count: merged.length }));
     }
 
@@ -271,8 +275,12 @@ if (url.pathname === '/api/tasks' && request.method === 'POST') {
       enabled: !!t.enabled,
     }));
 
+  const prevStr = JSON.stringify(allConfig[deviceId] || []);
   if (merged.length > 0) allConfig[deviceId] = merged; else delete allConfig[deviceId];
-  await writeJSON(env.TRACKER_KV, TASKS_CONFIG_KEY, allConfig);
+  const nextStr = JSON.stringify(allConfig[deviceId] || []);
+  if (prevStr !== nextStr) {
+    await writeJSON(env.TRACKER_KV, TASKS_CONFIG_KEY, allConfig);
+  }
   return withCors(Response.json({ ok: true, count: merged.length }));
 }
 
@@ -291,8 +299,12 @@ if (url.pathname === '/api/tasks' && request.method === 'POST') {
         return withCors(new Response('Payload không hợp lệ', { status: 400 }));
       }
       const allConfig = await readJSON(env.TRACKER_KV, SETUP_CONFIG_KEY, {});
-      allConfig[deviceId] = setup;
-      await writeJSON(env.TRACKER_KV, SETUP_CONFIG_KEY, allConfig);
+      const prevStr = JSON.stringify(allConfig[deviceId] || null);
+      const nextStr = JSON.stringify(setup);
+      if (prevStr !== nextStr) {
+        allConfig[deviceId] = setup;
+        await writeJSON(env.TRACKER_KV, SETUP_CONFIG_KEY, allConfig);
+      }
       return withCors(Response.json({ ok: true }));
     }
 
@@ -336,8 +348,12 @@ if (url.pathname === '/api/tasks' && request.method === 'POST') {
       // Sắp xếp theo closeTime mới nhất trước
       updatedList.sort((a, b) => new Date(b.closeTime) - new Date(a.closeTime));
 
-      allTrades[deviceId] = updatedList;
-      await writeJSON(env.TRACKER_KV, TRADES_CONFIG_KEY, allTrades);
+      const prevStr = JSON.stringify(existing);
+      const nextStr = JSON.stringify(updatedList);
+      if (prevStr !== nextStr) {
+        allTrades[deviceId] = updatedList;
+        await writeJSON(env.TRACKER_KV, TRADES_CONFIG_KEY, allTrades);
+      }
       return withCors(Response.json({ ok: true, count: updatedList.length, added: addedCount }));
     }
 
