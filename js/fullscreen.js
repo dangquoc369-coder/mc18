@@ -154,14 +154,14 @@ const FullscreenModule = (function () {
       } catch (err) {
         // bỏ qua - vẫn tiếp tục gỡ CSS fallback bình thường bên dưới
       }
-      await waitAFewFrames();
+      await waitAFewFrames(2);
     }
 
     document.body.classList.remove('app-fullscreen');
+    await waitAFewFrames(2);
     emitLayoutChanged();
 
-    // Vét thêm 1 lần sau 300ms phòng khi thiết bị/trình duyệt nào đó có
-    // animation co cửa sổ chậm hơn vài frame kể trên.
+    setTimeout(emitLayoutChanged, 100);
     setTimeout(emitLayoutChanged, 300);
   }
 

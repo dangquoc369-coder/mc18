@@ -166,6 +166,28 @@ app.get('/api/yahoo/search', async (req, res) => {
   }
 });
 
+// Trades API proxy / handler
+const WORKER_URL = 'https://dq-tracker-push.quocngyendanght.workers.dev';
+
+app.all('/api/trades*', async (req, res) => {
+  try {
+    const targetUrl = `${WORKER_URL}${req.originalUrl}`;
+    const options = {
+      method: req.method,
+      headers: { 'Content-Type': 'application/json' },
+    };
+    if (['POST', 'PUT', 'DELETE'].includes(req.method) && req.body) {
+      options.body = JSON.stringify(req.body);
+    }
+    const response = await fetch(targetUrl, options);
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (err) {
+    console.error('Trades API error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // SPA fallback or unmatched route fallback
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));

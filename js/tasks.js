@@ -474,38 +474,42 @@ const TasksModule = (function () {
     currentView = view;
     const tabChart = document.getElementById('sidebarTabChart');
     const tabTasks = document.getElementById('sidebarTabTasks');
+    const tabAnalytics = document.getElementById('sidebarTabAnalytics');
+
     const chartSection = document.getElementById('sidebarChartSection');
     const tasksSection = document.getElementById('sidebarTasksSection');
+    const analyticsSection = document.getElementById('sidebarAnalyticsSection');
+
     const controlBar = document.getElementById('controlBar');
     const chartArea = document.getElementById('chartArea');
     const tasksMainView = document.getElementById('tasksMainView');
+    const analyticsMainView = document.getElementById('analyticsMainView');
 
-    const isTasks = view === 'tasks';
-    tabChart?.classList.toggle('active', !isTasks);
-    tabTasks?.classList.toggle('active', isTasks);
-    chartSection?.classList.toggle('hidden', isTasks);
-    tasksSection?.classList.toggle('hidden', !isTasks);
-    if (controlBar) controlBar.style.display = isTasks ? 'none' : '';
-    if (chartArea) chartArea.style.display = isTasks ? 'none' : '';
-    if (tasksMainView) tasksMainView.classList.toggle('hidden', !isTasks);
+    tabChart?.classList.toggle('active', view === 'chart');
+    tabTasks?.classList.toggle('active', view === 'tasks');
+    tabAnalytics?.classList.toggle('active', view === 'analytics');
 
-    if (isTasks) {
+    chartSection?.classList.toggle('hidden', view !== 'chart');
+    tasksSection?.classList.toggle('hidden', view !== 'tasks');
+    analyticsSection?.classList.toggle('hidden', view !== 'analytics');
+
+    if (controlBar) controlBar.style.display = view === 'chart' ? '' : 'none';
+    if (chartArea) chartArea.style.display = view === 'chart' ? '' : 'none';
+    if (tasksMainView) tasksMainView.classList.toggle('hidden', view !== 'tasks');
+    if (analyticsMainView) analyticsMainView.classList.toggle('hidden', view !== 'analytics');
+
+    if (view === 'tasks') {
       renderMainView();
+    } else if (view === 'analytics') {
+      if (typeof AnalyticsModule !== 'undefined') AnalyticsModule.switchView('analytics');
     } else {
-      // QUAY LẠI TAB BIỂU ĐỒ: #chartArea vừa được display lại sau khi bị
-      // display:none - lúc ẩn, mọi .pane-chart-container có kích thước
-      // 0x0, ResizeObserver trong chart.js có thể đã "quên" size thật.
-      // Bắn lại đúng sự kiện 'layout:changed' mà app.js (onLayoutChanged)
-      // và layout.js đang lắng nghe sẵn - chúng tự chạy vòng lặp
-      // requestAnimationFrame để resize/redraw grid tới khi container ổn
-      // định, đúng cơ chế đã có cho case đổi layout/xoay màn hình, không
-      // cần viết thêm code resize riêng. Đợi 1 frame để trình duyệt áp
-      // dụng display:'' xong rồi mới đo.
       requestAnimationFrame(() => {
-        EventBus.emit('layout:changed', {
-          layout: Store.getState().layout,
-          visiblePaneIds: Store.getVisiblePaneIds(),
-        });
+        if (typeof EventBus !== 'undefined' && typeof Store !== 'undefined') {
+          EventBus.emit('layout:changed', {
+            layout: Store.getState().layout,
+            visiblePaneIds: Store.getVisiblePaneIds(),
+          });
+        }
       });
     }
   }

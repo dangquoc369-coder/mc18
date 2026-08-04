@@ -204,13 +204,43 @@ const AlertsModule = (function () {
         .join('');
     }
 
+    const isSoundOn = typeof NotificationsModule !== 'undefined' ? NotificationsModule.getSoundEnabled() : true;
+
     body.innerHTML = `
+      <div class="ms-row ms-bold" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>🔊 Âm thanh thông báo</span>
+        <div>
+          <button id="testSoundBtn" type="button" class="alert-remove-btn" style="margin-right:6px; background:var(--accent-color, #2962ff); color:#fff; border:none;">Thử chuông</button>
+          <button id="toggleSoundBtn" type="button" class="alert-remove-btn">${isSoundOn ? 'Tắt' : 'Bật'}</button>
+        </div>
+      </div>
+      <div class="ms-divider"></div>
       <div class="ms-row ms-bold">🔔 Cảnh báo giá</div>
       ${priceHTML}
       <div class="ms-divider"></div>
       <div class="ms-row ms-bold">📊 Thông báo tín hiệu BUY/SELL</div>
       ${signalHTML}
     `;
+
+    const testSoundBtn = body.querySelector('#testSoundBtn');
+    if (testSoundBtn) {
+      testSoundBtn.addEventListener('click', () => {
+        if (typeof NotificationsModule !== 'undefined') {
+          NotificationsModule.playSound();
+        }
+      });
+    }
+
+    const toggleSoundBtn = body.querySelector('#toggleSoundBtn');
+    if (toggleSoundBtn) {
+      toggleSoundBtn.addEventListener('click', () => {
+        if (typeof NotificationsModule !== 'undefined') {
+          const nextState = !NotificationsModule.getSoundEnabled();
+          NotificationsModule.setSoundEnabled(nextState);
+          renderPanel();
+        }
+      });
+    }
 
     body.querySelectorAll('.alert-remove-btn[data-id]').forEach((btn) => {
       btn.addEventListener('click', () => removeAlert(btn.dataset.id));

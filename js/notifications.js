@@ -16,8 +16,18 @@
  */
 
 const NotificationsModule = (function () {
+  const SOUND_KEY = 'dq_tracker_sound_enabled_v1';
   let bannerEl = null;
   let swRegistration = null;
+  let audioCtx = null;
+  let isSoundEnabled = true;
+
+  try {
+    const savedSound = localStorage.getItem(SOUND_KEY);
+    if (savedSound !== null) {
+      isSoundEnabled = savedSound === 'true';
+    }
+  } catch (err) {}
 
   function isSupported() {
     return 'Notification' in window;
@@ -25,6 +35,76 @@ const NotificationsModule = (function () {
 
   function getPermission() {
     return isSupported() ? Notification.permission : 'unsupported';
+  }
+
+  function getAudioContext() {
+    if (!audioCtx) {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (AudioContextClass) {
+        audioCtx = new AudioContextClass();
+      }
+    }
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(() => {});
+    }
+    return audioCtx;
+  }
+
+  function unlockAudio() {
+    const ctx = getAudioContext();
+    if (ctx && ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+  }
+
+  function setSoundEnabled(enabled) {
+    isSoundEnabled = !!enabled;
+    try {
+      localStorage.setItem(SOUND_KEY, isSoundEnabled ? 'true' : 'false');
+    } catch (err) {}
+  }
+
+  function getSoundEnabled() {
+    return isSoundEnabled;
+  }
+
+  /**
+   * Phát âm thanh chuông thông báo sử dụng Web Audio API (tổng hợp 2 nốt nhạc D5 -> A5 rõ ràng, êm tai).
+   */
+  function playSound() {
+    if (!isSoundEnabled) return;
+    try {
+      const ctx = getAudioContext();
+      if (!ctx) return;
+
+      const now = ctx.currentTime;
+
+      // Nốt 1 (D5 = 587.33 Hz)
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(587.33, now);
+      gain1.gain.setValueAtTime(0.2, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.25);
+
+      // Nốt 2 (A5 = 880 Hz)
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(880, now + 0.12);
+      gain2.gain.setValueAtTime(0.25, now + 0.12);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.start(now + 0.12);
+      osc2.stop(now + 0.4);
+    } catch (err) {
+      console.error('Không thể phát âm thanh thông báo:', err);
+    }
   }
 
   async function registerServiceWorker() {
@@ -40,15 +120,22 @@ const NotificationsModule = (function () {
 
   /** Xin quyền thông báo - trình duyệt tự hiển thị hộp thoại hệ thống (như app native). */
   function requestPermission() {
+    unlockAudio();
     if (!isSupported()) return Promise.resolve('unsupported');
     return Notification.requestPermission().then((perm) => {
       hideBanner();
+      if (perm === 'granted') {
+        playSound();
+      }
       return perm;
     });
   }
 
-  /** Gửi 1 thông báo cục bộ. Chỉ gửi khi đã được cấp quyền. */
+  /** Gửi 1 thông báo cục bộ và phát âm thanh. */
   async function notify(title, body) {
+    // Luôn phát âm thanh khi có thông báo
+    playSound();
+
     if (!isSupported() || Notification.permission !== 'granted') return;
 
     try {
@@ -79,7 +166,7 @@ const NotificationsModule = (function () {
     bannerEl = document.createElement('div');
     bannerEl.id = 'notifPermissionBanner';
     bannerEl.innerHTML = `
-      <span>🔔 Bật thông báo để nhận cảnh báo giá và tín hiệu BUY/SELL?</span>
+      <span>🔔 Bật thông báo & âm thanh để nhận cảnh báo giá và tín hiệu BUY/SELL?</span>
       <div class="notif-banner-actions">
         <button id="notifAllowBtn" type="button">Bật thông báo</button>
         <button id="notifDismissBtn" type="button">Để sau</button>
@@ -100,6 +187,20 @@ const NotificationsModule = (function () {
 
   /** Gọi 1 lần lúc app khởi động. */
   function init() {
+    // Kích hoạt AudioContext khi người dùng tương tác với app (giúp phát âm thanh mượt mà trên iOS/Android/Chrome)
+    window.addEventListener('click', unlockAudio, { passive: true });
+    window.addEventListener('touchstart', unlockAudio, { passive: true });
+    window.addEventListener('keydown', unlockAudio, { passive: true });
+
+    // Lắng nghe tín hiệu phát âm thanh từ Service Worker (khi nhận Push từ Server)
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', (event) => {
+        if (event.data && event.data.type === 'PLAY_NOTIFICATION_SOUND') {
+          playSound();
+        }
+      });
+    }
+
     registerServiceWorker();
     if (isSupported() && Notification.permission === 'default') {
       // Delay nhẹ để không hỏi ngay khi trang vừa mở, đỡ gây khó chịu.
@@ -107,5 +208,14 @@ const NotificationsModule = (function () {
     }
   }
 
-  return { init, requestPermission, notify, isSupported, getPermission };
+  return {
+    init,
+    requestPermission,
+    notify,
+    playSound,
+    setSoundEnabled,
+    getSoundEnabled,
+    isSupported,
+    getPermission,
+  };
 })();

@@ -46,6 +46,9 @@ const SIGNALS_STATE_KEY = 'signals_state_v1'; // { [deviceId]: { [signalStateKey
 const TASKS_CONFIG_KEY = 'tasks_config_v1'; // { [deviceId]: [{id,title,note,date,time,repeat,daysOfWeek,enabled}] }
 const TASKS_STATE_KEY = 'tasks_state_v1';   // { [deviceId]: { [taskId]: lastNotifiedKey } }
 
+const SETUP_CONFIG_KEY = 'setup_config_v1'; // { [deviceId]: { panes, enabledSignalTimeframes, layout, indicatorPrefs, theme } }
+const TRADES_CONFIG_KEY = 'trades_config_v1'; // { [deviceId]: [{ticket, symbol, type, lots, openPrice, closePrice, openTime, closeTime, pnl, commission, swap, magic, comment, isBot}] }
+
 const SUBS_KEY = 'subs_v1'; // { [deviceId]: PushSubscriptionJSON }
 
 // ===== TÀI KHOẢN NHẸ (đợt fix này) =====
@@ -93,6 +96,47 @@ async function hashPin(pin) {
   const enc = new TextEncoder().encode(pin);
   const digest = await crypto.subtle.digest('SHA-256', enc);
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function normalizeTradeItem(t) {
+  if (!t || typeof t !== 'object') return null;
+  let symbol = String(t.symbol || 'XAUUSD').trim();
+  if (/^[A-Za-z0-9]+c$/i.test(symbol) && symbol.length > 3) {
+    symbol = symbol.slice(0, -1);
+  }
+  symbol = symbol.toUpperCase();
+
+  const magic = Number(t.magic || 0);
+  const comment = String(t.comment || '').toLowerCase();
+  const isBot = t.isBot !== undefined ? !!t.isBot : (magic > 0 || comment.includes('ea') || comment.includes('bot'));
+
+  const ticket = String(t.ticket || t.id || 'tr_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6));
+  const type = String(t.type || 'BUY').toUpperCase();
+  const lots = Number(t.lots || t.volume || 0.01);
+  const openPrice = Number(t.openPrice || 0);
+  const closePrice = Number(t.closePrice || 0);
+  const openTime = t.openTime ? String(t.openTime) : new Date().toISOString();
+  const closeTime = t.closeTime ? String(t.closeTime) : new Date().toISOString();
+  const pnl = Number(t.pnl !== undefined ? t.pnl : (t.profit !== undefined ? t.profit : 0));
+  const commission = Number(t.commission || 0);
+  const swap = Number(t.swap || 0);
+
+  return {
+    ticket,
+    symbol,
+    type,
+    lots,
+    openPrice,
+    closePrice,
+    openTime,
+    closeTime,
+    pnl,
+    commission,
+    swap,
+    magic,
+    comment: t.comment || '',
+    isBot,
+  };
 }
 
 export default {
@@ -235,6 +279,90 @@ if (url.pathname === '/api/tasks' && request.method === 'POST') {
   await writeJSON(env.TRACKER_KV, TASKS_CONFIG_KEY, allConfig);
   return withCors(Response.json({ ok: true, count: merged.length }));
 }
+
+    if (url.pathname === '/api/setup' && request.method === 'GET') {
+      const deviceId = url.searchParams.get('deviceId');
+      if (!deviceId) return withCors(new Response('Thiếu deviceId', { status: 400 }));
+      const allConfig = await readJSON(env.TRACKER_KV, SETUP_CONFIG_KEY, {});
+      return withCors(Response.json({ ok: true, setup: allConfig[deviceId] || null }));
+    }
+
+    if (url.pathname === '/api/setup' && request.method === 'POST') {
+      let body;
+      try { body = await request.json(); } catch (err) { return withCors(new Response('JSON không hợp lệ', { status: 400 })); }
+      const { deviceId, setup } = body || {};
+      if (!deviceId || !setup || typeof setup !== 'object') {
+        return withCors(new Response('Payload không hợp lệ', { status: 400 }));
+      }
+      const allConfig = await readJSON(env.TRACKER_KV, SETUP_CONFIG_KEY, {});
+      allConfig[deviceId] = setup;
+      await writeJSON(env.TRACKER_KV, SETUP_CONFIG_KEY, allConfig);
+      return withCors(Response.json({ ok: true }));
+    }
+
+    if (url.pathname === '/api/trades' && request.method === 'GET') {
+      const deviceId = url.searchParams.get('deviceId');
+      if (!deviceId) return withCors(new Response('Thiếu deviceId', { status: 400 }));
+      const allTrades = await readJSON(env.TRACKER_KV, TRADES_CONFIG_KEY, {});
+      return withCors(Response.json({ ok: true, trades: allTrades[deviceId] || [] }));
+    }
+
+    if (url.pathname === '/api/trades' && request.method === 'POST') {
+      let body;
+      try { body = await request.json(); } catch (err) { return withCors(new Response('JSON không hợp lệ', { status: 400 })); }
+      const deviceId = body?.deviceId || url.searchParams.get('deviceId');
+      if (!deviceId) return withCors(new Response('Thiếu deviceId', { status: 400 }));
+
+      let incoming = [];
+      if (Array.isArray(body.trades)) {
+        incoming = body.trades;
+      } else if (body.trade && typeof body.trade === 'object') {
+        incoming = [body.trade];
+      } else if (body.ticket || body.id) {
+        incoming = [body];
+      }
+
+      const allTrades = await readJSON(env.TRACKER_KV, TRADES_CONFIG_KEY, {});
+      const existing = allTrades[deviceId] || [];
+      const tradeMap = new Map();
+      existing.forEach((t) => tradeMap.set(String(t.ticket), t));
+
+      let addedCount = 0;
+      incoming.forEach((raw) => {
+        const norm = normalizeTradeItem(raw);
+        if (norm && norm.ticket) {
+          tradeMap.set(String(norm.ticket), norm);
+          addedCount++;
+        }
+      });
+
+      const updatedList = Array.from(tradeMap.values());
+      // Sắp xếp theo closeTime mới nhất trước
+      updatedList.sort((a, b) => new Date(b.closeTime) - new Date(a.closeTime));
+
+      allTrades[deviceId] = updatedList;
+      await writeJSON(env.TRACKER_KV, TRADES_CONFIG_KEY, allTrades);
+      return withCors(Response.json({ ok: true, count: updatedList.length, added: addedCount }));
+    }
+
+    if (url.pathname === '/api/trades' && request.method === 'DELETE') {
+      let body = {};
+      try { body = await request.json(); } catch (e) {}
+      const deviceId = body?.deviceId || url.searchParams.get('deviceId');
+      const ticket = body?.ticket || url.searchParams.get('ticket');
+      if (!deviceId) return withCors(new Response('Thiếu deviceId', { status: 400 }));
+
+      const allTrades = await readJSON(env.TRACKER_KV, TRADES_CONFIG_KEY, {});
+      if (!allTrades[deviceId]) return withCors(Response.json({ ok: true, count: 0 }));
+
+      if (ticket) {
+        allTrades[deviceId] = allTrades[deviceId].filter((t) => String(t.ticket) !== String(ticket));
+      } else {
+        delete allTrades[deviceId];
+      }
+      await writeJSON(env.TRACKER_KV, TRADES_CONFIG_KEY, allTrades);
+      return withCors(Response.json({ ok: true }));
+    }
     // Chỉ ghi vào SIGNALS_CONFIG_KEY - KHÔNG đụng vào SIGNALS_STATE_KEY
     // (lastDirection/lastNotifiedTime), cùng lý do như trên.
     if (url.pathname === '/api/signals' && request.method === 'POST') {

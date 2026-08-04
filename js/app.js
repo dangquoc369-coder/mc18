@@ -54,7 +54,7 @@
   try {
     await init();
   } catch (err) {
-    console.error('Lỗi khởi động app:', err);
+    console.warn('Cảnh báo khởi động app:', err.message || err);
   }
 
   async function init() {
@@ -62,6 +62,9 @@
     CountdownModule.init();
     NotificationsModule.init();
     TasksModule.init();   // giữ dòng này
+    if (typeof AnalyticsModule !== 'undefined') {
+      AnalyticsModule.init();
+    }
     
     const state = Store.getState();
 
@@ -352,7 +355,7 @@
       const { lastPrice, changePercent } = await fetch24hTicker(symbol);
       Store.setPaneLastPrice(paneId, lastPrice, changePercent);
     } catch (err) {
-      console.error(`[${paneId}] Lỗi khi tải giá ban đầu:`, err);
+      console.warn(`[${paneId}] Không tải được giá 24h ban đầu (sẽ chờ WebSocket update):`, err.message || err);
     }
   }
 

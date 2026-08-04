@@ -344,6 +344,69 @@ const Store = (function () {
     EventBus.emit('pane:breakoutConfigChanged', {});
   }
 
+  function applyRemoteSetup(remoteSetup) {
+    if (!remoteSetup) return false;
+    let changed = false;
+
+    if (Array.isArray(remoteSetup.panes) && remoteSetup.panes.length === 4) {
+      remoteSetup.panes.forEach((saved, idx) => {
+        const p = state.panes[idx];
+        if (!p) return;
+        let pChanged = false;
+        if (saved.symbol && saved.symbol !== p.symbol) {
+          p.symbol = saved.symbol;
+          p.candles = [];
+          pChanged = true;
+        }
+        if (saved.timeframe && saved.timeframe !== p.timeframe) {
+          p.timeframe = saved.timeframe;
+          p.candles = [];
+          pChanged = true;
+        }
+        if (saved.breakoutLookback !== undefined && saved.breakoutLookback !== p.breakoutLookback) {
+          p.breakoutLookback = saved.breakoutLookback;
+          pChanged = true;
+        }
+        if (saved.slMode !== undefined && saved.slMode !== p.slMode) {
+          p.slMode = saved.slMode;
+          pChanged = true;
+        }
+        if (saved.slTimeframe !== undefined && saved.slTimeframe !== p.slTimeframe) {
+          p.slTimeframe = saved.slTimeframe;
+          pChanged = true;
+        }
+        if (saved.breakoutVisible !== undefined && saved.breakoutVisible !== p.breakoutVisible) {
+          p.breakoutVisible = !!saved.breakoutVisible;
+          pChanged = true;
+        }
+        if (saved.signalAlertEnabled !== undefined && saved.signalAlertEnabled !== p.signalAlertEnabled) {
+          p.signalAlertEnabled = !!saved.signalAlertEnabled;
+          pChanged = true;
+        }
+        if (pChanged) changed = true;
+      });
+      savePanes();
+    }
+
+    if (Array.isArray(remoteSetup.enabledSignalTimeframes)) {
+      state.enabledSignalTimeframes = remoteSetup.enabledSignalTimeframes;
+      saveEnabledSignalTimeframes(state.enabledSignalTimeframes);
+      changed = true;
+    }
+
+    if (remoteSetup.layout && LAYOUT_PANES[String(remoteSetup.layout)]) {
+      const max = maxPanesForOrientation(state.orientation);
+      let newLayout = String(remoteSetup.layout);
+      if (Number(newLayout) > max) newLayout = String(max);
+      if (state.layout !== newLayout) {
+        state.layout = newLayout;
+        changed = true;
+      }
+    }
+
+    return changed;
+  }
+
   return {
     getState,
     getPane,
@@ -367,5 +430,6 @@ const Store = (function () {
     setPaneBreakoutVisible,
     getEnabledSignalTimeframes,
     setEnabledSignalTimeframes,
+    applyRemoteSetup,
   };
 })();

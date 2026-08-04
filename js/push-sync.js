@@ -75,6 +75,100 @@ const PushSync = (function () {
     return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
   }
 
+  /** Tải cấu hình giao diện (panes, symbols, timeframes, breakout, indicator, layout, theme) từ server.
+   * BẮT BUỘC chạy ĐẦU TIÊN khi ứng dụng khởi động hoặc sau khi đăng nhập tài khoản. */
+  async function pullSetupFromServer() {
+    if (!isConfigured()) return;
+    const deviceId = getDeviceId();
+    if (!deviceId) return;
+    try {
+      const res = await fetch(`${WORKER_URL}/api/setup?deviceId=${encodeURIComponent(deviceId)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && data.ok && data.setup && typeof data.setup === 'object') {
+        const remoteSetup = data.setup;
+
+        if (remoteSetup.indicatorPrefs && typeof IndicatorPrefsModule !== 'undefined' && IndicatorPrefsModule.saveAll) {
+          IndicatorPrefsModule.saveAll(remoteSetup.indicatorPrefs);
+        }
+
+        if (remoteSetup.theme && typeof ThemeModule !== 'undefined' && ThemeModule.apply) {
+          if (ThemeModule.getTheme() !== remoteSetup.theme) {
+            ThemeModule.apply(remoteSetup.theme);
+          }
+        }
+
+        const changed = Store.applyRemoteSetup(remoteSetup);
+
+        if (changed) {
+          const state = Store.getState();
+          EventBus.emit('layout:changed', {
+            layout: state.layout,
+            visiblePaneIds: Store.getVisiblePaneIds(),
+            orientation: state.orientation,
+          });
+          state.panes.forEach((p) => {
+            EventBus.emit('pane:symbolChanged', { paneId: p.id, symbol: p.symbol });
+            EventBus.emit('pane:timeframeChanged', { paneId: p.id, timeframe: p.timeframe });
+            EventBus.emit('pane:breakoutConfigChanged', {
+              paneId: p.id,
+              breakoutLookback: p.breakoutLookback,
+              slMode: p.slMode,
+              slTimeframe: p.slTimeframe,
+            });
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Lỗi khi tải cấu hình (setup) từ Worker:', err);
+    }
+  }
+
+  function getSetupPayload() {
+    const state = Store.getState();
+    const panes = state.panes.map((p) => ({
+      symbol: p.symbol,
+      timeframe: p.timeframe,
+      breakoutLookback: p.breakoutLookback,
+      slMode: p.slMode,
+      slTimeframe: p.slTimeframe,
+      breakoutVisible: p.breakoutVisible,
+      signalAlertEnabled: p.signalAlertEnabled,
+    }));
+    const enabledSignalTimeframes = Store.getEnabledSignalTimeframes() || [];
+    const layout = state.layout;
+    const indicatorPrefs = typeof IndicatorPrefsModule !== 'undefined' && IndicatorPrefsModule.loadAll
+      ? IndicatorPrefsModule.loadAll()
+      : {};
+    const theme = typeof ThemeModule !== 'undefined' && ThemeModule.getTheme
+      ? ThemeModule.getTheme()
+      : 'dark';
+
+    return {
+      panes,
+      enabledSignalTimeframes,
+      layout,
+      indicatorPrefs,
+      theme,
+    };
+  }
+
+  async function syncSetup() {
+    if (!isConfigured()) return;
+    const deviceId = getDeviceId();
+    if (!deviceId) return;
+    try {
+      const setup = getSetupPayload();
+      await fetch(`${WORKER_URL}/api/setup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId, setup }),
+      });
+    } catch (err) {
+      console.error('Lỗi khi đồng bộ cấu hình (setup) lên Worker:', err);
+    }
+  }
+
   /** Tải cảnh báo đã lưu trên server về, gộp vào local TRƯỚC KHI syncAlerts()
    * chạy lần đầu - bắt buộc phải làm bước này trước, nếu không syncAlerts()
    * sẽ gửi mảng rỗng (local chưa có gì trên máy mới) lên server và server
@@ -269,16 +363,20 @@ const PushSync = (function () {
     // nhập hoặc TasksModule chưa sẵn sàng.
     EventBus.on('tasks:changed', () => syncTasks());
 
-    // Đồng bộ tín hiệu khi có thay đổi cấu hình pane, symbol, timeframe hoặc breakout/signal
-    EventBus.on('pane:symbolChanged', () => syncSignals());
-    EventBus.on('pane:timeframeChanged', () => syncSignals());
-    EventBus.on('pane:breakoutConfigChanged', () => syncSignals());
+    // Đồng bộ tín hiệu & setup khi có thay đổi cấu hình pane, symbol, timeframe, breakout, indicator, layout hoặc theme
+    EventBus.on('pane:symbolChanged', () => { syncSetup(); syncSignals(); });
+    EventBus.on('pane:timeframeChanged', () => { syncSetup(); syncSignals(); });
+    EventBus.on('pane:breakoutConfigChanged', () => { syncSetup(); syncSignals(); });
+    EventBus.on('layout:changed', () => syncSetup());
+    EventBus.on('theme:changed', () => syncSetup());
+    EventBus.on('indicator:changed', () => syncSetup());
 
     // Nếu người dùng vừa cấp quyền thông báo (bấm nút ở banner), đăng ký +
     // đồng bộ ngay thay vì chờ lần đổi cảnh báo tiếp theo.
     document.addEventListener('click', (e) => {
       if (e.target && e.target.id === 'notifAllowBtn') {
         setTimeout(() => {
+          syncSetup();
           syncAlerts();
           syncSignals();
           syncTasks();
@@ -286,21 +384,20 @@ const PushSync = (function () {
       }
     });
 
-    // Đồng bộ 1 lần lúc khởi động, phòng trường hợp đã có quyền từ trước
-    // (vd mở lại app sau khi đã cấp quyền ở lần dùng trước). Nếu chưa đăng
-    // nhập (chưa có deviceId), các hàm này tự bỏ qua - login.js sẽ hiện
-    // màn đăng nhập; sau khi đăng nhập xong trang sẽ reload và luồng này
-    // chạy lại từ đầu với deviceId hợp lệ.
+    // Đồng bộ 1 lần lúc khởi động. Nếu chưa đăng nhập (chưa có deviceId),
+    // các hàm này tự bỏ qua - login.js sẽ hiện màn đăng nhập; sau khi đăng
+    // nhập xong trang sẽ reload và luồng này chạy lại từ đầu với deviceId hợp lệ.
     //
-    // THỨ TỰ BẮT BUỘC: pull TRƯỚC sync, cho cả alerts lẫn tasks - nếu đảo
-    // ngược, máy mới sẽ gửi local rỗng lên và server xoá mất cấu hình cũ.
+    // THỨ TỰ BẮT BUỘC: pull TRƯỚC sync (setup -> alerts -> tasks -> sync tất cả)
     setTimeout(async () => {
+      await pullSetupFromServer();
       await pullAlertsFromServer();
       await pullTasksFromServer();
+      syncSetup();
       syncAlerts();
       syncSignals();
       syncTasks();
-    }, 2000);
+    }, 1000);
   }
 
   if (document.readyState === 'loading') {
@@ -309,5 +406,5 @@ const PushSync = (function () {
     init();
   }
 
-  return { syncAlerts, syncSignals, syncTasks, ensureSubscription };
+  return { syncAlerts, syncSignals, syncTasks, syncSetup, pullSetupFromServer, ensureSubscription };
 })();

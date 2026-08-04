@@ -262,24 +262,39 @@ const ChartModule = (function () {
       return chart;
     }
 
+    let lastWidth = 0;
+    let lastHeight = 0;
+    let resizeRafId = null;
+
+    function applyResize() {
+      if (!chart || !containerRef) return;
+      const width = Math.floor(containerRef.clientWidth);
+      const height = Math.floor(containerRef.clientHeight);
+      if (width <= 0 || height <= 0) return;
+      if (width === lastWidth && height === lastHeight) return;
+      lastWidth = width;
+      lastHeight = height;
+      chart.resize(width, height);
+    }
+
     function setupResize(container) {
       if (resizeObserver) resizeObserver.disconnect();
-      resizeObserver = new ResizeObserver((entries) => {
-        requestAnimationFrame(() => {
-          if (!entries || !entries.length) return;
-          const { width, height } = entries[0].contentRect;
-          if (width > 0 && height > 0) chart.resize(width, height);
+      resizeObserver = new ResizeObserver(() => {
+        if (resizeRafId) cancelAnimationFrame(resizeRafId);
+        resizeRafId = requestAnimationFrame(() => {
+          resizeRafId = null;
+          applyResize();
         });
       });
       resizeObserver.observe(container);
     }
 
     function resize() {
-      if (!chart || !containerRef) return;
-      const { clientWidth, clientHeight } = containerRef;
-      if (clientWidth > 0 && clientHeight > 0) {
-        chart.resize(clientWidth, clientHeight);
+      if (resizeRafId) {
+        cancelAnimationFrame(resizeRafId);
+        resizeRafId = null;
       }
+      applyResize();
     }
 
     function renderIndicators(candles) {

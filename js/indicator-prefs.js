@@ -51,7 +51,10 @@ const IndicatorPrefsModule = (function () {
     const all = loadAll();
     all[paneId] = prefs;
     saveAll(all);
+    if (typeof EventBus !== 'undefined') {
+      EventBus.emit('indicator:changed', { paneId, prefs });
+    }
   }
 
-  return { getPanePrefs, setPanePrefs };
+  return { getPanePrefs, setPanePrefs, loadAll, saveAll };
 })();

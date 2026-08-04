@@ -43,7 +43,15 @@ self.addEventListener('push', (event) => {
     data,
   };
 
-  event.waitUntil(self.registration.showNotification(title, options));
+  event.waitUntil(
+    self.registration.showNotification(title, options).then(() => {
+      return self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+        for (const client of list) {
+          client.postMessage({ type: 'PLAY_NOTIFICATION_SOUND' });
+        }
+      });
+    })
+  );
 });
 
 self.addEventListener('notificationclick', (event) => {

@@ -408,7 +408,19 @@ const IndicatorLegend = (function () {
 
     const notifyHint = document.createElement('div');
     notifyHint.className = 'bo-hint';
-    notifyHint.textContent = 'Chọn các khung thời gian bạn muốn nhận thông báo khi có tín hiệu BUY/SELL mới (cần cấp quyền thông báo cho trình duyệt/app trước).';
+    notifyHint.style.display = 'flex';
+    notifyHint.style.flexDirection = 'column';
+    notifyHint.style.gap = '6px';
+    notifyHint.innerHTML = `
+      <span>Chọn các khung thời gian bạn muốn nhận thông báo khi có tín hiệu BUY/SELL mới (kèm âm thanh chuông).</span>
+      <button type="button" id="boTestSoundBtn" style="align-self:flex-start; background:none; border:1px solid currentColor; padding:2px 8px; border-radius:4px; cursor:pointer; font-size:11px;">🔊 Thử âm thanh chuông</button>
+    `;
+    setTimeout(() => {
+      const b = notifyHint.querySelector('#boTestSoundBtn');
+      if (b && typeof NotificationsModule !== 'undefined') {
+        b.addEventListener('click', () => NotificationsModule.playSound());
+      }
+    }, 0);
 
     const actions = document.createElement('div');
     actions.className = 'indicator-popover-actions';

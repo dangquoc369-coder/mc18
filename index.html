@@ -25,6 +25,18 @@
      bấm, không set lại attribute nữa. -->
 <script>
   (function () {
+    window.addEventListener('error', function (e) {
+      if (e && e.message && (
+        e.message.indexOf('ResizeObserver loop completed with undelivered notifications') !== -1 ||
+        e.message.indexOf('ResizeObserver loop limit exceeded') !== -1
+      )) {
+        e.stopImmediatePropagation();
+        e.stopPropagation();
+        if (typeof e.preventDefault === 'function') e.preventDefault();
+        return true;
+      }
+    }, true);
+
     try {
       var saved = localStorage.getItem('dq_tracker_theme_v1');
       document.documentElement.setAttribute('data-theme', saved === 'light' ? 'light' : 'dark');
@@ -67,11 +79,21 @@
         <input type="text" id="symbolSearchInput" placeholder="Tìm cặp giao dịch (áp dụng cho ô đang chọn)..." autocomplete="off">
         <div id="symbolSearchResults" class="symbol-search-results hidden"></div>
       </div>
-      <!-- ===== TAB CHUYỂN ĐỔI: Biểu đồ / Công việc (thêm mới) ===== -->
-  <div class="sidebar-tabs">
-    <button type="button" class="sidebar-tab-btn active" id="sidebarTabChart" data-view="chart">📊 Biểu đồ</button>
-    <button type="button" class="sidebar-tab-btn" id="sidebarTabTasks" data-view="tasks">📝 Công việc</button>
-  </div>
+      <!-- ===== TAB CHUYỂN ĐỔI CHÍNH: Biểu đồ / Công việc / Phân tích (Nằm Dọc) ===== -->
+      <div class="sidebar-tabs">
+        <button type="button" class="sidebar-tab-btn active" id="sidebarTabChart" data-view="chart" title="Biểu đồ Trading">
+          <span class="v-tab-icon">📊</span>
+          <span class="v-tab-text">Biểu đồ</span>
+        </button>
+        <button type="button" class="sidebar-tab-btn" id="sidebarTabTasks" data-view="tasks" title="Nhắc nhở công việc">
+          <span class="v-tab-icon">📝</span>
+          <span class="v-tab-text">Công việc</span>
+        </button>
+        <button type="button" class="sidebar-tab-btn" id="sidebarTabAnalytics" data-view="analytics" title="Phân tích nhật ký lệnh">
+          <span class="v-tab-icon">📈</span>
+          <span class="v-tab-text">Phân tích</span>
+        </button>
+      </div>
       <!-- Nội dung khi ở tab "Biểu đồ" (giữ nguyên như cũ, chỉ bọc lại) -->
   <div id="sidebarChartSection" class="sidebar-tab-content">
     <div class="sidebar-section-title">Phổ biến</div>
@@ -81,6 +103,11 @@
   <div id="sidebarTasksSection" class="sidebar-tab-content hidden">
     <div class="sidebar-section-title">Sắp đến hạn</div>
     <div id="sidebarTasksMiniList" class="tasks-mini-list"></div>
+  </div>
+  <!-- Nội dung khi ở tab "Phân tích" -->
+  <div id="sidebarAnalyticsSection" class="sidebar-tab-content hidden">
+    <div class="sidebar-section-title">Hiệu suất</div>
+    <div id="sidebarAnalyticsSummary"></div>
   </div>
 </aside>
 
@@ -180,12 +207,9 @@
            tasksMainView nằm trong chartArea thì nó cũng bị ẩn theo, khiến
            trang Công việc trắng/biến mất khi mở. -->
       <section id="tasksMainView" class="hidden"></section>
+      <section id="analyticsMainView" class="hidden"></section>
 
     </main>
-      </div>
-
-    </main>
-
   </div>
 
   <!-- ===== SCRIPTS (thứ tự bắt buộc) ===== -->
@@ -203,6 +227,7 @@
   <script src="js/indicator-prefs.js"></script>
   <script src="js/push-sync.js"></script>
   <script src="js/tasks.js"></script>
+  <script src="js/analytics.js"></script>
   <script src="js/breakout.js"></script>
   <script src="js/drawing.js"></script>
   <script src="js/trend-reference.js"></script>  <!-- thêm dòng này -->
