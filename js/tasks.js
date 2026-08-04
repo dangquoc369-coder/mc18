@@ -5,13 +5,33 @@
  * (#tasksMainView) thay thế #chartArea + #controlBar khi được chọn -
  * không chiếm chỗ của topbar/controlBar cũ, phù hợp mobile.
  *
- * Đồng bộ lên server (Cloudflare Worker /api/tasks) để cron gửi Web Push
- * thật ngay cả khi app đã đóng hẳn, dùng chung deviceId với AlertsModule.
+ * ĐỒNG BỘ SERVER (ĐỢT FIX NÀY):
+ *   Trước đây module này TỰ fetch lên `window.PUSH_API_BASE` (biến không
+ *   hề tồn tại) và tự đọc deviceId qua `LoginModule.getDeviceId()` (hàm
+ *   cũng không tồn tại) -> mọi request không bao giờ tới đúng Cloudflare
+ *   Worker, nên: (1) wrangler tail không thấy gì, (2) KV không lưu, (3)
+ *   cron không có gì để kiểm tra -> không bao giờ nhận được Web Push khi
+ *   app đã tắt.
+ *
+ *   Sửa lại: tasks.js KHÔNG tự fetch nữa. Nó chỉ:
+ *     - Bắn sự kiện 'tasks:changed' mỗi khi danh sách đổi (thêm/sửa/xoá/
+ *       bật-tắt) - push-sync.js (đã có sẵn WORKER_URL + deviceId thật,
+ *       dùng chung với AlertsModule) lắng nghe sự kiện này và tự đồng bộ
+ *       lên `${WORKER_URL}/api/tasks`.
+ *     - Expose `getAllTasks()` để push-sync.js đọc danh sách hiện tại lúc
+ *       đồng bộ.
+ *     - Expose `mergeFromServer()` để push-sync.js gọi lúc khởi động (SAU
+ *       khi GET `/api/tasks` về) - PHẢI gọi hàm này TRƯỚC lần đồng bộ đầu
+ *       tiên, nếu không máy mới (local rỗng) sẽ gửi mảng rỗng lên và server
+ *       xoá mất toàn bộ task cũ - đúng bug đã được xử lý cho AlertsModule
+ *       (xem pullAlertsFromServer trong push-sync.js).
+ *
+ * Việc báo cục bộ khi app đang mở (NotificationsModule.notify) vẫn giữ
+ * nguyên như cũ, chạy song song, không phụ thuộc đồng bộ server.
  */
 const TasksModule = (function () {
   const TASKS_STORAGE_KEY = 'dq_tracker_tasks_v1';
   const CHECK_INTERVAL_MS = 30000;
-  const API_BASE = (window.PUSH_API_BASE || '');
   const WEEKDAY_LABELS = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
 
   let tasks = [];
@@ -19,16 +39,7 @@ const TasksModule = (function () {
   let currentFilter = 'upcoming'; // 'today' | 'upcoming' | 'all'
   let editingId = null;
 
-  // ---------- Lưu trữ ----------
-  function getDeviceId() {
-    try {
-      if (window.LoginModule && typeof LoginModule.getDeviceId === 'function') {
-        return LoginModule.getDeviceId();
-      }
-    } catch (err) { /* ignore */ }
-    return localStorage.getItem('dq_tracker_device_id') || null;
-  }
-
+  // ---------- Lưu trữ local ----------
   function load() {
     try {
       const raw = localStorage.getItem(TASKS_STORAGE_KEY);
@@ -40,27 +51,43 @@ const TasksModule = (function () {
     localStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(tasks));
     renderSidebarMiniList();
     if (currentView === 'tasks') renderMainView();
-    if (sync) syncToServer();
+    // Không tự fetch ở đây nữa - push-sync.js lắng nghe sự kiện này và tự
+    // gửi TOÀN BỘ danh sách (qua getAllTasks()) lên đúng Worker + deviceId.
+    if (sync) EventBus.emit('tasks:changed', {});
   }
 
-  async function syncToServer() {
-    const deviceId = getDeviceId();
-    if (!deviceId || !API_BASE) return;
-    try {
-      await fetch(`${API_BASE}/api/tasks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          deviceId,
-          tasks: tasks.map((t) => ({
-            id: t.id, title: t.title, note: t.note || '', date: t.date, time: t.time,
-            repeat: t.repeat, daysOfWeek: t.daysOfWeek || [], enabled: !!t.enabled,
-          })),
-        }),
+  /**
+   * Gộp danh sách task tải VỀ từ server (do push-sync.js gọi sau khi GET
+   * /api/tasks?deviceId=...) vào local - chỉ thêm task nào chưa có ở máy
+   * này (theo id), không ghi đè task local đang có. Gọi với sync:false để
+   * không lập tức gửi ngược lên server (tránh vòng lặp không cần thiết).
+   */
+  function mergeFromServer(serverTasks) {
+    if (!Array.isArray(serverTasks)) return;
+    const localIds = new Set(tasks.map((t) => t.id));
+    let changed = false;
+    serverTasks.forEach((st) => {
+      if (!st || !st.id || localIds.has(st.id)) return;
+      tasks.push({
+        id: st.id,
+        title: st.title || '',
+        note: st.note || '',
+        date: st.date,
+        time: st.time,
+        repeat: st.repeat || 'none',
+        daysOfWeek: st.daysOfWeek || [],
+        enabled: !!st.enabled,
+        done: false,
+        lastNotifiedKey: null,
       });
-    } catch (err) {
-      console.error('Lỗi đồng bộ công việc lên server:', err);
-    }
+      changed = true;
+    });
+    if (changed) persist({ sync: false });
+  }
+
+  /** push-sync.js gọi hàm này để lấy danh sách hiện tại và POST lên server. */
+  function getAllTasks() {
+    return tasks;
   }
 
   // ---------- Tiện ích ngày giờ ----------
@@ -440,7 +467,25 @@ const TasksModule = (function () {
     if (chartArea) chartArea.style.display = isTasks ? 'none' : '';
     if (tasksMainView) tasksMainView.classList.toggle('hidden', !isTasks);
 
-    if (isTasks) renderMainView();
+    if (isTasks) {
+      renderMainView();
+    } else {
+      // QUAY LẠI TAB BIỂU ĐỒ: #chartArea vừa được display lại sau khi bị
+      // display:none - lúc ẩn, mọi .pane-chart-container có kích thước
+      // 0x0, ResizeObserver trong chart.js có thể đã "quên" size thật.
+      // Bắn lại đúng sự kiện 'layout:changed' mà app.js (onLayoutChanged)
+      // và layout.js đang lắng nghe sẵn - chúng tự chạy vòng lặp
+      // requestAnimationFrame để resize/redraw grid tới khi container ổn
+      // định, đúng cơ chế đã có cho case đổi layout/xoay màn hình, không
+      // cần viết thêm code resize riêng. Đợi 1 frame để trình duyệt áp
+      // dụng display:'' xong rồi mới đo.
+      requestAnimationFrame(() => {
+        EventBus.emit('layout:changed', {
+          layout: Store.getState().layout,
+          visiblePaneIds: Store.getVisiblePaneIds(),
+        });
+      });
+    }
   }
 
   function bindTabs() {
@@ -456,5 +501,5 @@ const TasksModule = (function () {
     checkDueTasks(); // bắt occurrence bị lỡ ngay lúc mở lại app
   }
 
-  return { init, upsertTask, removeTask, toggleDone };
+  return { init, upsertTask, removeTask, toggleDone, getAllTasks, mergeFromServer };
 })();

@@ -178,6 +178,48 @@ const PushSync = (function () {
       console.error('Lỗi khi đồng bộ tín hiệu lên Worker:', err);
     }
   }
+  
+  /** Tải công việc đã lưu trên server về, gộp vào local TRƯỚC KHI syncTasks()
+   * chạy lần đầu - cùng lý do như pullAlertsFromServer(): nếu không, máy
+   * mới đăng nhập sẽ gửi mảng rỗng lên và server sẽ XOÁ cấu hình cũ. */
+  async function pullTasksFromServer() {
+    if (!isConfigured()) return;
+    const deviceId = getDeviceId();
+    if (!deviceId) return;
+    try {
+      const res = await fetch(`${WORKER_URL}/api/tasks?deviceId=${encodeURIComponent(deviceId)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && Array.isArray(data.tasks) && window.TasksModule && TasksModule.mergeFromServer) {
+        TasksModule.mergeFromServer(data.tasks);
+      }
+    } catch (err) {
+      console.error('Lỗi khi tải công việc từ Worker:', err);
+    }
+  }
+
+  async function syncTasks() {
+    if (!isConfigured()) return;
+    const deviceId = getDeviceId();
+    if (!deviceId) return; // chưa đăng nhập - chờ login.js
+    if (!window.TasksModule || !TasksModule.getAllTasks) return;
+    try {
+      await ensureSubscription();
+
+      const tasks = TasksModule.getAllTasks().map((t) => ({
+        id: t.id, title: t.title, note: t.note || '', date: t.date, time: t.time,
+        repeat: t.repeat, daysOfWeek: t.daysOfWeek || [], enabled: !!t.enabled,
+      }));
+
+      await fetch(`${WORKER_URL}/api/tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId, tasks }),
+      });
+    } catch (err) {
+      console.error('Lỗi khi đồng bộ công việc lên Worker:', err);
+    }
+  }
 
   function init() {
     if (!isConfigured()) {
@@ -191,6 +233,7 @@ const PushSync = (function () {
     // Đồng bộ lại mỗi khi danh sách cảnh báo đổi (thêm/xoá/kích hoạt).
     // syncAlerts() tự bỏ qua nếu chưa có deviceId (chưa đăng nhập).
     EventBus.on('alerts:changed', () => syncAlerts());
+    EventBus.on('tasks:changed', () => syncTasks()); // thêm dòng này
 
     // Đồng bộ tín hiệu khi có thay đổi cấu hình pane, symbol, timeframe hoặc breakout/signal
     EventBus.on('pane:symbolChanged', () => syncSignals());
@@ -204,6 +247,7 @@ const PushSync = (function () {
         setTimeout(() => {
           syncAlerts();
           syncSignals();
+          syncTasks(); // thêm dòng này
         }, 500);
       }
     });
@@ -215,8 +259,10 @@ const PushSync = (function () {
     // lại từ đầu với deviceId hợp lệ.
     setTimeout(async () => {
       await pullAlertsFromServer(); // BẮT BUỘC chạy trước - xem giải thích ở hàm trên
+      await pullTasksFromServer(); // thêm dòng này - trước syncTasks()
       syncAlerts();
       syncSignals();
+      syncTasks(); // thêm dòng này
     }, 2000);
   }
 
@@ -226,5 +272,5 @@ const PushSync = (function () {
     init();
   }
 
-  return { syncAlerts, ensureSubscription };
+  return { syncAlerts, syncTasks, ensureSubscription };
 })();

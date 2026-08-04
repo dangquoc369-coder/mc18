@@ -220,6 +220,7 @@ if (url.pathname === '/api/tasks' && request.method === 'POST') {
   try { body = await request.json(); } catch (err) { return withCors(new Response('JSON không hợp lệ', { status: 400 })); }
   const { deviceId, tasks } = body || {};
   if (!deviceId || !Array.isArray(tasks)) return withCors(new Response('Payload không hợp lệ', { status: 400 }));
+  console.log(`[api/tasks] deviceId=${deviceId} nhận ${tasks.length} task(s)`); // thêm dòng này để thấy trong tail
 
   const allConfig = await readJSON(env.TRACKER_KV, TASKS_CONFIG_KEY, {});
   const merged = tasks
@@ -460,6 +461,7 @@ function getDueOccurrenceServer(task, nowUtcMs) {
 
 async function checkTasksAndNotify(env) {
   const allConfig = await readJSON(env.TRACKER_KV, TASKS_CONFIG_KEY, {});
+  console.log(`[cron-tasks] devices=${Object.keys(allConfig).length}`); // thêm dòng này
   const allState = await readJSON(env.TRACKER_KV, TASKS_STATE_KEY, {});
   const subs = await readJSON(env.TRACKER_KV, SUBS_KEY, {});
   if (Object.keys(allConfig).length === 0) return;
