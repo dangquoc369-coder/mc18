@@ -219,13 +219,20 @@ app.post('/api/trades', async (req, res) => {
 
 app.delete('/api/trades', async (req, res) => {
   const deviceId = req.body?.deviceId || req.query.deviceId;
+  const ticket = req.body?.ticket || req.query.ticket;
   if (deviceId) {
-    localTradesStore.delete(deviceId);
+    if (ticket) {
+      const existing = localTradesStore.get(deviceId) || [];
+      const updated = existing.filter(t => String(t.ticket) !== String(ticket));
+      localTradesStore.set(deviceId, updated);
+    } else {
+      localTradesStore.delete(deviceId);
+    }
   }
   fetch(`${WORKER_URL}/api/trades`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ deviceId })
+    body: JSON.stringify({ deviceId, ticket })
   }).catch(() => {});
   return res.json({ ok: true });
 });

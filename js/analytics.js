@@ -150,6 +150,22 @@ const AnalyticsModule = (function () {
     }
   }
 
+  // Xóa lệnh trên Server (nếu truyền ticket -> xóa 1 lệnh, nếu không -> xóa toàn bộ)
+  async function deleteTradeOnServer(ticket) {
+    const deviceId = getDeviceId();
+    if (!deviceId) return;
+    try {
+      const url = getApiTradesUrl();
+      await fetch(url, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ticket ? { deviceId, ticket } : { deviceId })
+      });
+    } catch (err) {
+      console.error('[analytics.js] Lỗi xóa lệnh trên server:', err);
+    }
+  }
+
   // Tải từ Server về
   async function pullTradesFromServer() {
     const deviceId = getDeviceId();
@@ -1160,14 +1176,16 @@ const AnalyticsModule = (function () {
     if (!ticket) return;
     if (confirm(`Bạn có chắc chắn muốn xóa lệnh #${ticket} không?`)) {
       trades = trades.filter((t) => String(t.ticket) !== String(ticket));
-      persistLocalTrades({ sync: true });
+      persistLocalTrades({ sync: false });
+      deleteTradeOnServer(ticket);
     }
   }
 
   function clearAllTrades() {
     if (confirm('Bạn có chắc chắn muốn XOÁ TOÀN BỘ nhật ký lệnh của tài khoản này không?')) {
       trades = [];
-      persistLocalTrades({ sync: true });
+      persistLocalTrades({ sync: false });
+      deleteTradeOnServer();
     }
   }
 
