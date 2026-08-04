@@ -115,11 +115,22 @@ const AnalyticsModule = (function () {
   }
 
   // Đồng bộ lên Server
+  function getApiTradesUrl(pathSuffix = '') {
+    const appOrigin = window.location.origin || '';
+    const isGithub = appOrigin.includes('github.io');
+    if (!isGithub && appOrigin.startsWith('http')) {
+      return appOrigin + '/api/trades' + pathSuffix;
+    }
+    const base = typeof WORKER_URL !== 'undefined' ? WORKER_URL : 'https://dq-tracker-push.quocngyendanght.workers.dev';
+    return base + '/api/trades' + pathSuffix;
+  }
+
+  // Đẩy lên Server
   async function syncTradesToServer() {
     const deviceId = getDeviceId();
     if (!deviceId) return;
     try {
-      const url = (typeof WORKER_URL !== 'undefined' ? WORKER_URL : 'https://dq-tracker-push.quocngyendanght.workers.dev') + '/api/trades';
+      const url = getApiTradesUrl();
       await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -135,11 +146,11 @@ const AnalyticsModule = (function () {
     const deviceId = getDeviceId();
     if (!deviceId) return;
     try {
-      const url = (typeof WORKER_URL !== 'undefined' ? WORKER_URL : 'https://dq-tracker-push.quocngyendanght.workers.dev') + `/api/trades?deviceId=${encodeURIComponent(deviceId)}`;
+      const url = getApiTradesUrl(`?deviceId=${encodeURIComponent(deviceId)}`);
       const res = await fetch(url);
       if (!res.ok) return;
       const data = await res.json();
-      if (data && data.ok && Array.isArray(data.trades)) {
+      if (data && Array.isArray(data.trades)) {
         mergeFromServer(data.trades);
       }
     } catch (err) {
@@ -1164,7 +1175,11 @@ const AnalyticsModule = (function () {
   // ===== MODAL EA MT5 MQL5 SCRIPT & HƯỚNG DẪN =====
   function openEaModal() {
     const username = getDeviceId();
-    const serverUrl = typeof WORKER_URL !== 'undefined' ? WORKER_URL : 'https://dq-tracker-push.quocngyendanght.workers.dev';
+    const appOrigin = window.location.origin || '';
+    const isGithub = appOrigin.includes('github.io');
+    const serverUrl = (!isGithub && appOrigin.startsWith('http')) 
+      ? appOrigin 
+      : (typeof WORKER_URL !== 'undefined' ? WORKER_URL : 'https://dq-tracker-push.quocngyendanght.workers.dev');
 
     const mql5Code = `//+------------------------------------------------------------------+
 //|                                          TradingPro_EA_Sync.mq5 |

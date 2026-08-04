@@ -169,26 +169,65 @@ app.get('/api/yahoo/search', async (req, res) => {
   }
 });
 
-// Trades API proxy / handler
+// Trades API handler (with local store fallback)
 const WORKER_URL = 'https://dq-tracker-push.quocngyendanght.workers.dev';
+const localTradesStore = new Map(); // deviceId -> Array of trades
 
-app.all('/api/trades*', async (req, res) => {
+app.get('/api/trades', async (req, res) => {
+  const deviceId = req.query.deviceId;
+  if (!deviceId) return res.status(400).json({ error: 'Missing deviceId' });
+
   try {
-    const targetUrl = `${WORKER_URL}${req.originalUrl}`;
-    const options = {
-      method: req.method,
-      headers: { 'Content-Type': 'application/json' },
-    };
-    if (['POST', 'PUT', 'DELETE'].includes(req.method) && req.body) {
-      options.body = JSON.stringify(req.body);
+    const response = await fetch(`${WORKER_URL}/api/trades?deviceId=${encodeURIComponent(deviceId)}`);
+    if (response.ok) {
+      const data = await response.json();
+      if (data && Array.isArray(data.trades)) {
+        localTradesStore.set(deviceId, data.trades);
+        return res.json(data);
+      }
     }
-    const response = await fetch(targetUrl, options);
-    const data = await response.json();
-    res.status(response.status).json(data);
   } catch (err) {
-    console.error('Trades API error:', err);
-    res.status(500).json({ error: err.message });
+    // Ignore worker failure
   }
+
+  const trades = localTradesStore.get(deviceId) || [];
+  return res.json({ trades });
+});
+
+app.post('/api/trades', async (req, res) => {
+  const { deviceId, trades } = req.body || {};
+  if (!deviceId) return res.status(400).json({ error: 'Missing deviceId' });
+
+  let existing = localTradesStore.get(deviceId) || [];
+  if (Array.isArray(trades) && trades.length > 0) {
+    const map = new Map();
+    existing.forEach(t => map.set(t.ticket, t));
+    trades.forEach(t => map.set(t.ticket, t));
+    existing = Array.from(map.values()).sort((a, b) => new Date(b.closeTime) - new Date(a.closeTime));
+    localTradesStore.set(deviceId, existing);
+  }
+
+  // Attempt async sync to worker
+  fetch(`${WORKER_URL}/api/trades`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ deviceId, trades })
+  }).catch(() => {});
+
+  return res.json({ ok: true, count: existing.length, trades: existing });
+});
+
+app.delete('/api/trades', async (req, res) => {
+  const deviceId = req.body?.deviceId || req.query.deviceId;
+  if (deviceId) {
+    localTradesStore.delete(deviceId);
+  }
+  fetch(`${WORKER_URL}/api/trades`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ deviceId })
+  }).catch(() => {});
+  return res.json({ ok: true });
 });
 
 // SPA fallback or unmatched route fallback
