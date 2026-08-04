@@ -75,6 +75,20 @@ const PushSync = (function () {
     return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
   }
 
+  async function safeFetch(url, options = {}, timeoutMs = 6000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timer);
+      return res;
+    } catch (err) {
+      clearTimeout(timer);
+      console.warn(`[push-sync] Sync warning (${url}):`, err.message || err);
+      return null;
+    }
+  }
+
   /** Tải cấu hình giao diện (panes, symbols, timeframes, breakout, indicator, layout, theme) từ server.
    * BẮT BUỘC chạy ĐẦU TIÊN khi ứng dụng khởi động hoặc sau khi đăng nhập tài khoản. */
   async function pullSetupFromServer() {
@@ -82,8 +96,8 @@ const PushSync = (function () {
     const deviceId = getDeviceId();
     if (!deviceId) return;
     try {
-      const res = await fetch(`${WORKER_URL}/api/setup?deviceId=${encodeURIComponent(deviceId)}`);
-      if (!res.ok) return;
+      const res = await safeFetch(`${WORKER_URL}/api/setup?deviceId=${encodeURIComponent(deviceId)}`);
+      if (!res || !res.ok) return;
       const data = await res.json();
       if (data && data.ok && data.setup && typeof data.setup === 'object') {
         const remoteSetup = data.setup;
@@ -120,7 +134,7 @@ const PushSync = (function () {
         }
       }
     } catch (err) {
-      console.error('Lỗi khi tải cấu hình (setup) từ Worker:', err);
+      console.warn('Tải cấu hình (setup) từ Worker:', err);
     }
   }
 
@@ -159,13 +173,13 @@ const PushSync = (function () {
     if (!deviceId) return;
     try {
       const setup = getSetupPayload();
-      await fetch(`${WORKER_URL}/api/setup`, {
+      await safeFetch(`${WORKER_URL}/api/setup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deviceId, setup }),
       });
     } catch (err) {
-      console.error('Lỗi khi đồng bộ cấu hình (setup) lên Worker:', err);
+      console.warn('Đồng bộ cấu hình (setup) lên Worker:', err);
     }
   }
 
@@ -178,14 +192,14 @@ const PushSync = (function () {
     const deviceId = getDeviceId();
     if (!deviceId) return;
     try {
-      const res = await fetch(`${WORKER_URL}/api/alerts?deviceId=${encodeURIComponent(deviceId)}`);
-      if (!res.ok) return;
+      const res = await safeFetch(`${WORKER_URL}/api/alerts?deviceId=${encodeURIComponent(deviceId)}`);
+      if (!res || !res.ok) return;
       const data = await res.json();
       if (data && Array.isArray(data.alerts)) {
         AlertsModule.mergeFromServer(data.alerts);
       }
     } catch (err) {
-      console.error('Lỗi khi tải cảnh báo từ Worker:', err);
+      console.warn('Tải cảnh báo từ Worker:', err);
     }
   }
 
@@ -198,21 +212,16 @@ const PushSync = (function () {
     if (!isConfigured()) return;
     const deviceId = getDeviceId();
     if (!deviceId) return;
-    // FIX: TasksModule khai báo bằng `const` ở top-level của tasks.js -
-    // const/let KHÔNG tự gắn vào window (khác với var/function declaration),
-    // nên `window.TasksModule` LUÔN LÀ undefined dù TasksModule có tồn tại
-    // thật hay không. Dùng `typeof TasksModule !== 'undefined'` để kiểm tra
-    // an toàn (không ném ReferenceError) mà vẫn đúng với biến global thật.
     if (typeof TasksModule === 'undefined' || !TasksModule.mergeFromServer) return;
     try {
-      const res = await fetch(`${WORKER_URL}/api/tasks?deviceId=${encodeURIComponent(deviceId)}`);
-      if (!res.ok) return;
+      const res = await safeFetch(`${WORKER_URL}/api/tasks?deviceId=${encodeURIComponent(deviceId)}`);
+      if (!res || !res.ok) return;
       const data = await res.json();
       if (data && Array.isArray(data.tasks)) {
         TasksModule.mergeFromServer(data.tasks);
       }
     } catch (err) {
-      console.error('Lỗi khi tải công việc từ Worker:', err);
+      console.warn('Tải công việc từ Worker:', err);
     }
   }
 
@@ -228,8 +237,8 @@ const PushSync = (function () {
       let sub = await reg.pushManager.getSubscription();
 
       if (!sub) {
-        const res = await fetch(`${WORKER_URL}/api/vapid-public-key`);
-        if (!res.ok) throw new Error('Không lấy được VAPID public key từ Worker');
+        const res = await safeFetch(`${WORKER_URL}/api/vapid-public-key`);
+        if (!res || !res.ok) return null;
         const { publicKey } = await res.json();
         sub = await reg.pushManager.subscribe({
           userVisibleOnly: true,
@@ -237,7 +246,7 @@ const PushSync = (function () {
         });
       }
 
-      await fetch(`${WORKER_URL}/api/subscribe`, {
+      await safeFetch(`${WORKER_URL}/api/subscribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deviceId, subscription: sub.toJSON() }),
@@ -245,7 +254,7 @@ const PushSync = (function () {
 
       return sub;
     } catch (err) {
-      console.error('Lỗi khi đăng ký Web Push:', err);
+      console.warn('Đăng ký Web Push:', err);
       return null;
     }
   }
@@ -261,13 +270,13 @@ const PushSync = (function () {
         .filter((a) => !a.triggered)
         .map((a) => ({ id: a.id, symbol: a.symbol, price: a.price }));
 
-      await fetch(`${WORKER_URL}/api/alerts`, {
+      await safeFetch(`${WORKER_URL}/api/alerts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deviceId, alerts }),
       });
     } catch (err) {
-      console.error('Lỗi khi đồng bộ cảnh báo lên Worker:', err);
+      console.warn('Đồng bộ cảnh báo lên Worker:', err);
     }
   }
 
@@ -297,13 +306,13 @@ const PushSync = (function () {
         }
       });
 
-      await fetch(`${WORKER_URL}/api/signals`, {
+      await safeFetch(`${WORKER_URL}/api/signals`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deviceId, signals }),
       });
     } catch (err) {
-      console.error('Lỗi khi đồng bộ tín hiệu lên Worker:', err);
+      console.warn('Đồng bộ tín hiệu lên Worker:', err);
     }
   }
 
@@ -314,9 +323,6 @@ const PushSync = (function () {
     if (!isConfigured()) return;
     const deviceId = getDeviceId();
     if (!deviceId) return; // chưa đăng nhập - chờ login.js
-    // FIX: xem giải thích ở pullTasksFromServer() - window.TasksModule luôn
-    // undefined vì TasksModule khai báo bằng const ở top-level, không gắn
-    // vào window. Dùng typeof để kiểm tra đúng.
     if (typeof TasksModule === 'undefined' || !TasksModule.getAllTasks) return;
     try {
       await ensureSubscription();
@@ -325,6 +331,9 @@ const PushSync = (function () {
         id: t.id,
         title: t.title,
         note: t.note || '',
+        category: t.category || 'plan',
+        priority: t.priority || 'medium',
+        symbol: t.symbol || '',
         date: t.date,
         time: t.time,
         repeat: t.repeat,
@@ -332,16 +341,16 @@ const PushSync = (function () {
         enabled: !!t.enabled,
       }));
 
-      const res = await fetch(`${WORKER_URL}/api/tasks`, {
+      const res = await safeFetch(`${WORKER_URL}/api/tasks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deviceId, tasks }),
       });
-      if (!res.ok) {
-        console.error('Đồng bộ công việc thất bại, HTTP status:', res.status);
+      if (res && !res.ok) {
+        console.warn('Đồng bộ công việc thất bại, HTTP status:', res.status);
       }
     } catch (err) {
-      console.error('Lỗi khi đồng bộ công việc lên Worker:', err);
+      console.warn('Đồng bộ công việc lên Worker:', err);
     }
   }
 

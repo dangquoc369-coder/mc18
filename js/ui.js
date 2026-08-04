@@ -36,42 +36,42 @@ const UI = (function () {
     {
       id: 'lines', label: 'Đường kẻ',
       tools: [
-        { id: 'trendline', label: '╱', title: 'Đường xu hướng' },
-        { id: 'ray', label: '↗', title: 'Tia (Ray)' },
-        { id: 'extendedline', label: '↔', title: 'Đường mở rộng' },
-        { id: 'hline', label: '─', title: 'Đường ngang' },
-        { id: 'hray', label: '⟶', title: 'Tia ngang' },
-        { id: 'vline', label: '│', title: 'Đường dọc' },
+        { id: 'trendline', icon: 'trendline', title: 'Đường xu hướng' },
+        { id: 'ray', icon: 'ray', title: 'Tia (Ray)' },
+        { id: 'extendedline', icon: 'extendedline', title: 'Đường mở rộng' },
+        { id: 'hline', icon: 'hline', title: 'Đường ngang' },
+        { id: 'hray', icon: 'hray', title: 'Tia ngang' },
+        { id: 'vline', icon: 'vline', title: 'Đường dọc' },
       ],
     },
     {
       id: 'fib', label: 'Fibonacci',
       tools: [
-        { id: 'fib', label: '𝄒', title: 'Thoái lui Fibonacci' },
-        { id: 'fibextension', label: 'F+', title: 'Mở rộng Fibonacci (Fib Extension)' },
+        { id: 'fib', icon: 'fib', title: 'Thoái lui Fibonacci' },
+        { id: 'fibextension', icon: 'fibextension', title: 'Mở rộng Fibonacci (Fib Extension)' },
       ],
     },
     {
       id: 'shapes', label: 'Hình vẽ & Kênh giá',
       tools: [
-        { id: 'rectangle', label: '▭', title: 'Hình chữ nhật' },
-        { id: 'circle', label: '◯', title: 'Hình tròn / Ellipse' },
-        { id: 'triangle', label: '△', title: 'Tam giác' },
-        { id: 'channel', label: '≋', title: 'Kênh giá song song' },
+        { id: 'rectangle', icon: 'rectangle', title: 'Hình chữ nhật' },
+        { id: 'circle', icon: 'circle', title: 'Hình tròn / Ellipse' },
+        { id: 'triangle', icon: 'triangle', title: 'Tam giác' },
+        { id: 'channel', icon: 'channel', title: 'Kênh giá song song' },
       ],
     },
     {
       id: 'position', label: 'Lệnh giao dịch',
       tools: [
-        { id: 'long', label: 'L↑', title: 'Lệnh Long (tự tính TP theo R:R)' },
-        { id: 'short', label: 'S↓', title: 'Lệnh Short (tự tính TP theo R:R)' },
+        { id: 'long', icon: 'long', title: 'Lệnh Long (tự tính TP theo R:R)' },
+        { id: 'short', icon: 'short', title: 'Lệnh Short (tự tính TP theo R:R)' },
       ],
     },
     {
       id: 'annotate', label: 'Ghi chú',
       tools: [
-        { id: 'text', label: 'Ｔ', title: 'Chữ / Ghi chú' },
-        { id: 'arrow', label: '➔', title: 'Mũi tên' },
+        { id: 'text', icon: 'text', title: 'Chữ / Ghi chú' },
+        { id: 'arrow', icon: 'arrow', title: 'Mũi tên' },
       ],
     },
   ];
@@ -85,6 +85,16 @@ const UI = (function () {
       if (t) return t;
     }
     return null;
+  }
+
+  function bindSectionTitleCollapses() {
+    document.querySelectorAll('.sidebar-section-title').forEach((titleEl) => {
+      if (titleEl.dataset.collapseBound) return;
+      titleEl.dataset.collapseBound = 'true';
+      titleEl.addEventListener('click', () => {
+        titleEl.classList.toggle('collapsed-title');
+      });
+    });
   }
 
   function init() {
@@ -101,6 +111,7 @@ const UI = (function () {
     bindLayoutChangedEvent();
     bindOrientationChangedEvent();
     bindDrawToolChanged();
+    bindSectionTitleCollapses();
 
     LayoutModule.initOrientationWatcher();
     LayoutModule.render();
@@ -325,7 +336,8 @@ const UI = (function () {
         const b = document.createElement('button');
         b.type = 'button';
         b.className = 'draw-flyout-item' + (t.id === lastDrawShapeTool ? ' active' : '');
-        b.innerHTML = `<span class="dfi-icon">${t.label}</span><span class="dfi-label">${t.title}</span>`;
+        const iconSvg = (typeof Icons !== 'undefined' && Icons[t.icon]) ? Icons[t.icon] : (t.label || '');
+        b.innerHTML = `<span class="dfi-icon">${iconSvg}</span><span class="dfi-label">${t.title}</span>`;
         b.addEventListener('click', (e) => {
           e.stopPropagation();
           selectDrawTool(t.id);
@@ -403,15 +415,17 @@ function makeToolbarBtn(labelOrIcon, title, active, onClick, isIcon) {
 groupEl.appendChild(makeToolbarBtn('cursor', 'Con trỏ', activeTool === 'cursor', () => selectDrawTool('cursor'), true));
 
     // 2. Combo: icon công cụ vẽ hình gần nhất + mũi tên mở bảng chọn
-    const meta = findToolMeta(lastDrawShapeTool) || { label: '╱', title: 'Đường xu hướng' };
+    const meta = findToolMeta(lastDrawShapeTool) || { icon: 'trendline', title: 'Đường xu hướng' };
     const combo = document.createElement('div');
     combo.className = 'draw-tool-combo';
 
+    const iconKey = meta.icon || meta.id || 'trendline';
     const mainBtn = makeToolbarBtn(
-      meta.label,
+      iconKey,
       meta.title + ' (bấm mũi tên bên phải để chọn công cụ khác)',
       activeTool === lastDrawShapeTool,
-      () => selectDrawTool(lastDrawShapeTool)
+      () => selectDrawTool(lastDrawShapeTool),
+      true
     );
     mainBtn.classList.add('draw-tool-combo-main');
 

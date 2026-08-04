@@ -358,7 +358,7 @@ const AnalyticsModule = (function () {
         <!-- Top Header Bar -->
         <div class="an-header">
           <div class="an-header-title-box">
-            <h2 class="an-title">📈 Phân Tích Nhật Ký Lệnh Trading (Quant Analytics)</h2>
+            <h2 class="an-title">${(typeof Icons !== 'undefined' && Icons.tabAnalytics) ? `<span class="icon-svg-inline">${Icons.tabAnalytics}</span>` : '📈'} Phân Tích Nhật Ký Lệnh Trading (Quant Analytics)</h2>
             <div class="an-subtitle">
               Tài khoản: <strong>${escapeHtml(username)}</strong> &bull; Tự động đồng bộ từ EA MQL5 &bull; Đơn vị hiển thị: <strong>USD</strong>
             </div>
@@ -916,7 +916,7 @@ const AnalyticsModule = (function () {
     ctx.fillText('$' + Math.round(minEq), padding.left - 6, height - padding.bottom);
   }
 
-  // ===== VẼ BIỂU ĐỒ EQUITY CURVE (CANVAS 2D) =====
+  // ===== VẼ BIỂU ĐỒ EQUITY CURVE (CANVAS 2D SMOOTH LINE) =====
   function drawEquityCurve(sortedTrades) {
     const canvas = document.getElementById('anEquityCanvas');
     const wrapper = document.getElementById('anCanvasWrapper');
@@ -936,11 +936,10 @@ const AnalyticsModule = (function () {
     const ctx = canvas.getContext('2d');
     ctx.scale(dpr, dpr);
 
-    ctx.clearRect(0, 0, width, height);
-
     const isLight = document.documentElement.getAttribute('data-theme') === 'light';
 
     if (!Array.isArray(sortedTrades) || sortedTrades.length === 0) {
+      ctx.clearRect(0, 0, width, height);
       ctx.fillStyle = isLight ? '#676f7e' : 'rgba(150, 150, 150, 0.8)';
       ctx.font = '14px Inter, sans-serif';
       ctx.textAlign = 'center';
@@ -956,14 +955,14 @@ const AnalyticsModule = (function () {
       points.push({ time: t.closeTime, pnl: t.pnlUSD, cumPnl: cum, trade: t });
     });
 
-    const padding = { top: 20, right: 30, bottom: 30, left: 60 };
+    const padding = { top: 20, right: 30, bottom: 30, left: 65 };
     const chartW = width - padding.left - padding.right;
     const chartH = height - padding.top - padding.bottom;
 
     const minPnl = Math.min(0, ...points.map((p) => p.cumPnl));
     const maxPnl = Math.max(0, ...points.map((p) => p.cumPnl));
     const range = (maxPnl - minPnl) || 10;
-    const yMargin = range * 0.1;
+    const yMargin = range * 0.12;
     const yMin = minPnl - yMargin;
     const yMax = maxPnl + yMargin;
 
@@ -976,103 +975,154 @@ const AnalyticsModule = (function () {
       return padding.top + chartH - ((val - yMin) / (yMax - yMin)) * chartH;
     }
 
-    // Đường 0 tham chiếu
-    const zeroY = getY(0);
-    ctx.beginPath();
-    ctx.strokeStyle = isLight ? 'rgba(0, 0, 0, 0.15)' : 'rgba(255, 255, 255, 0.15)';
-    ctx.setLineDash([4, 4]);
-    ctx.moveTo(padding.left, zeroY);
-    ctx.lineTo(width - padding.right, zeroY);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    const pts = points.map((p, idx) => ({
+      x: getX(idx),
+      y: getY(p.cumPnl),
+      cumPnl: p.cumPnl,
+      pnl: p.pnl,
+      time: p.time,
+      trade: p.trade
+    }));
 
-    // Gradient tô bên dưới đường
-    const lineGrad = ctx.createLinearGradient(0, padding.top, 0, height - padding.bottom);
+    const zeroY = getY(0);
     const lastCum = points[points.length - 1].cumPnl;
-    if (lastCum >= 0) {
-      lineGrad.addColorStop(0, 'rgba(38, 166, 154, 0.35)');
-      lineGrad.addColorStop(1, 'rgba(38, 166, 154, 0.0)');
-    } else {
-      lineGrad.addColorStop(0, 'rgba(239, 83, 80, 0.35)');
-      lineGrad.addColorStop(1, 'rgba(239, 83, 80, 0.0)');
+    const primaryColor = lastCum >= 0 ? '#26a69a' : '#ef5350';
+
+    function renderChart(hoverIdx = null) {
+      ctx.clearRect(0, 0, width, height);
+
+      // Đường 0 tham chiếu
+      ctx.beginPath();
+      ctx.strokeStyle = isLight ? 'rgba(0, 0, 0, 0.12)' : 'rgba(255, 255, 255, 0.12)';
+      ctx.setLineDash([4, 4]);
+      ctx.moveTo(padding.left, zeroY);
+      ctx.lineTo(width - padding.right, zeroY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Gradient tô dưới đường
+      const lineGrad = ctx.createLinearGradient(0, padding.top, 0, height - padding.bottom);
+      if (lastCum >= 0) {
+        lineGrad.addColorStop(0, 'rgba(38, 166, 154, 0.28)');
+        lineGrad.addColorStop(1, 'rgba(38, 166, 154, 0.01)');
+      } else {
+        lineGrad.addColorStop(0, 'rgba(239, 83, 80, 0.28)');
+        lineGrad.addColorStop(1, 'rgba(239, 83, 80, 0.01)');
+      }
+
+      // 1. Vẽ Area Fill bên dưới đường mượt
+      ctx.beginPath();
+      pts.forEach((pt, i) => {
+        if (i === 0) ctx.moveTo(pt.x, pt.y);
+        else {
+          const prev = pts[i - 1];
+          const cx = (prev.x + pt.x) / 2;
+          ctx.quadraticCurveTo(prev.x, prev.y, cx, (prev.y + pt.y) / 2);
+        }
+      });
+      const lastPt = pts[pts.length - 1];
+      ctx.lineTo(lastPt.x, lastPt.y);
+      ctx.lineTo(lastPt.x, zeroY);
+      ctx.lineTo(padding.left, zeroY);
+      ctx.closePath();
+      ctx.fillStyle = lineGrad;
+      ctx.fill();
+
+      // 2. Vẽ Đường Line Mượt (Smooth Path - Không vẽ các chấm lệnh)
+      ctx.beginPath();
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      pts.forEach((pt, i) => {
+        if (i === 0) ctx.moveTo(pt.x, pt.y);
+        else {
+          const prev = pts[i - 1];
+          const cx = (prev.x + pt.x) / 2;
+          ctx.quadraticCurveTo(prev.x, prev.y, cx, (prev.y + pt.y) / 2);
+        }
+      });
+      ctx.lineTo(lastPt.x, lastPt.y);
+      ctx.strokeStyle = primaryColor;
+      ctx.lineWidth = 2.2;
+      ctx.stroke();
+
+      // 3. Nhãn Trục Y
+      ctx.fillStyle = isLight ? '#676f7e' : 'rgba(200, 205, 220, 0.6)';
+      ctx.font = '11px JetBrains Mono, monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText('$' + Math.round(maxPnl), padding.left - 8, padding.top + 8);
+      ctx.fillText('$0', padding.left - 8, zeroY + 4);
+      ctx.fillText('$' + Math.round(minPnl), padding.left - 8, height - padding.bottom);
+
+      // 4. Nếu đang Hover: Vẽ Crosshair + 1 Chấm Nút Độc Nhất tại điểm hover
+      if (hoverIdx !== null && pts[hoverIdx]) {
+        const target = pts[hoverIdx];
+
+        // Đường dọc crosshair
+        ctx.beginPath();
+        ctx.strokeStyle = isLight ? 'rgba(0, 0, 0, 0.35)' : 'rgba(255, 255, 255, 0.45)';
+        ctx.setLineDash([3, 3]);
+        ctx.moveTo(target.x, padding.top);
+        ctx.lineTo(target.x, height - padding.bottom);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Vòng tròn điểm chọn
+        ctx.beginPath();
+        ctx.arc(target.x, target.y, 6, 0, Math.PI * 2);
+        ctx.fillStyle = primaryColor;
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(target.x, target.y, 9, 0, Math.PI * 2);
+        ctx.strokeStyle = primaryColor;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
     }
 
-    // Đường Curve
-    ctx.beginPath();
-    points.forEach((p, idx) => {
-      const x = getX(idx);
-      const y = getY(p.cumPnl);
-      if (idx === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
+    // Initial render
+    renderChart(null);
 
-    // Fill area
-    ctx.lineTo(getX(points.length - 1), zeroY);
-    ctx.lineTo(padding.left, zeroY);
-    ctx.closePath();
-    ctx.fillStyle = lineGrad;
-    ctx.fill();
-
-    // Line stroke
-    ctx.beginPath();
-    points.forEach((p, idx) => {
-      const x = getX(idx);
-      const y = getY(p.cumPnl);
-      if (idx === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.strokeStyle = lastCum >= 0 ? '#26a69a' : '#ef5350';
-    ctx.lineWidth = 2.5;
-    ctx.stroke();
-
-    // Điểm nút (Dots)
-    points.forEach((p, idx) => {
-      const x = getX(idx);
-      const y = getY(p.cumPnl);
-      ctx.beginPath();
-      ctx.arc(x, y, 3, 0, Math.PI * 2);
-      ctx.fillStyle = p.pnl >= 0 ? '#26a69a' : '#ef5350';
-      ctx.fill();
-    });
-
-    // Tooltip khi di chuột
-    let activePoint = null;
+    // Xử lý di chuột O(1) cực mượt, không giật lag
+    let rafId = null;
     canvas.onmousemove = (e) => {
       const bbox = canvas.getBoundingClientRect();
       const mouseX = e.clientX - bbox.left;
-      const mouseY = e.clientY - bbox.top;
 
-      let closest = null;
-      let minDist = Infinity;
+      if (mouseX < padding.left || mouseX > width - padding.right) {
+        if (tooltip) tooltip.classList.add('hidden');
+        renderChart(null);
+        return;
+      }
 
-      points.forEach((p, idx) => {
-        const x = getX(idx);
-        const y = getY(p.cumPnl);
-        const dist = Math.hypot(mouseX - x, mouseY - y);
-        if (dist < minDist && dist < 30) {
-          minDist = dist;
-          closest = { ...p, x, y };
+      const rawIdx = Math.round(((mouseX - padding.left) / chartW) * (pts.length - 1));
+      const hoverIdx = Math.max(0, Math.min(pts.length - 1, rawIdx));
+      const target = pts[hoverIdx];
+
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        renderChart(hoverIdx);
+
+        if (target && tooltip) {
+          tooltip.classList.remove('hidden');
+          const tooltipX = Math.min(target.x + 12, width - 180);
+          const tooltipY = Math.max(padding.top, target.y - 45);
+          tooltip.style.left = tooltipX + 'px';
+          tooltip.style.top = tooltipY + 'px';
+          tooltip.innerHTML = `
+            <div><strong>${target.trade ? target.trade.symbol : 'Bắt đầu'}</strong> ${target.trade ? '#' + target.trade.ticket : ''}</div>
+            <div>PnL Lệnh: <span class="${target.pnl >= 0 ? 'an-positive' : 'an-negative'}">${fmtUSD(target.pnl, true)}</span></div>
+            <div>Lợi Nhuận Tích Lũy: <strong>${fmtUSD(target.cumPnl, true)}</strong></div>
+            <div style="font-size:10px; opacity:0.75; margin-top:2px;">${formatDateStr(target.time)}</div>
+          `;
         }
       });
-
-      if (closest && tooltip) {
-        activePoint = closest;
-        tooltip.classList.remove('hidden');
-        tooltip.style.left = (closest.x + 10) + 'px';
-        tooltip.style.top = (closest.y - 10) + 'px';
-        tooltip.innerHTML = `
-          <div><strong>${closest.trade ? closest.trade.symbol : 'Bắt đầu'}</strong> #${closest.trade ? closest.trade.ticket : '0'}</div>
-          <div>PnL Lệnh: <span class="${closest.pnl >= 0 ? 'an-positive' : 'an-negative'}">${fmtUSD(closest.pnl, true)}</span></div>
-          <div>Tích Lũy: <strong>${fmtUSD(closest.cumPnl, true)}</strong></div>
-          <div style="font-size:10px; opacity:0.7;">${formatDateStr(closest.time)}</div>
-        `;
-      } else if (tooltip) {
-        tooltip.classList.add('hidden');
-      }
     };
 
     canvas.onmouseleave = () => {
+      if (rafId) cancelAnimationFrame(rafId);
       if (tooltip) tooltip.classList.add('hidden');
+      renderChart(null);
     };
   }
 
