@@ -153,6 +153,17 @@ body,
   display: block;
 }
 
+button .icon-svg-inline,
+.an-btn .icon-svg-inline,
+.an-seg-btn .icon-svg-inline,
+.an-source .icon-svg-inline,
+.an-icon-btn .icon-svg-inline {
+  color: inherit;
+}
+.an-btn.primary .icon-svg-inline {
+  color: var(--on-accent);
+}
+
 #sidebar.collapsed .symbol-search,
 #sidebar.collapsed .symbol-list,
 #sidebar.collapsed .sidebar-section-title,
@@ -1268,6 +1279,12 @@ body,
   border-radius: var(--radius-md);
   font-size: 16px;
   cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+  transition: all 0.15s ease;
+}
+#mobileSidebarToggle:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent-blue);
 }
 
 @media (max-width: 900px) {
@@ -2643,16 +2660,16 @@ body.app-fullscreen #fullscreenExitBtn {
   padding: 14px 16px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .an-mc-advice-title {
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 700;
   color: var(--text-primary);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .an-mc-advice-list {
@@ -2660,12 +2677,37 @@ body.app-fullscreen #fullscreenExitBtn {
   color: var(--text-primary);
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-left: 4px;
+  gap: 10px;
 }
 
 .an-mc-advice-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   line-height: 1.5;
+}
+
+.an-advice-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  margin-top: 1px;
+}
+
+.an-advice-icon svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+
+.an-advice-content {
+  flex: 1;
+  min-width: 0;
 }
 
 /* Bộ Lọc Thống Kê (Horizontal Filter Card) */

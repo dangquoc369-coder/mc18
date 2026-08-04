@@ -33,6 +33,15 @@ const AnalyticsModule = (function () {
   let currentPage = 1;
   const pageSize = 20;
 
+  // Helper lấy SVG Icon an toàn
+  function getIconSvg(name, extraStyle = '') {
+    if (typeof Icons !== 'undefined' && Icons && Icons[name]) {
+      const styleAttr = extraStyle ? ` style="${extraStyle}"` : '';
+      return `<span class="icon-svg-inline"${styleAttr}>${Icons[name]}</span>`;
+    }
+    return '';
+  }
+
   // Lấy deviceId (tên tài khoản người dùng)
   function getDeviceId() {
     try {
@@ -358,15 +367,15 @@ const AnalyticsModule = (function () {
         <!-- Top Header Bar -->
         <div class="an-header">
           <div class="an-header-title-box">
-            <h2 class="an-title">${(typeof Icons !== 'undefined' && Icons.tabAnalytics) ? `<span class="icon-svg-inline">${Icons.tabAnalytics}</span>` : '📈'} Phân Tích Nhật Ký Lệnh Trading (Quant Analytics)</h2>
+            <h2 class="an-title">${getIconSvg('tabAnalytics', 'margin-right:6px;')} Phân Tích Nhật Ký Lệnh Trading (Quant Analytics)</h2>
             <div class="an-subtitle">
               Tài khoản: <strong>${escapeHtml(username)}</strong> &bull; Tự động đồng bộ từ EA MQL5 &bull; Đơn vị hiển thị: <strong>USD</strong>
             </div>
           </div>
           <div class="an-header-actions">
-            <button type="button" class="an-btn primary" id="anOpenEaModalBtn">🤖 Mã EA MT5 (MQL5)</button>
-            <button type="button" class="an-btn" id="anAddManualTradeBtn">+ Thêm lệnh tay</button>
-            <button type="button" class="an-btn danger" id="anClearTradesBtn">🗑 Xóa nhật ký</button>
+            <button type="button" class="an-btn primary" id="anOpenEaModalBtn">${getIconSvg('bot', 'margin-right:4px; font-size:13px;')} Mã EA MT5 (MQL5)</button>
+            <button type="button" class="an-btn" id="anAddManualTradeBtn">${getIconSvg('plus', 'margin-right:4px; font-size:13px;')} Thêm lệnh tay</button>
+            <button type="button" class="an-btn danger" id="anClearTradesBtn">${getIconSvg('trash', 'margin-right:4px; font-size:13px;')} Xóa nhật ký</button>
           </div>
         </div>
 
@@ -376,8 +385,8 @@ const AnalyticsModule = (function () {
             <label>Nguồn lệnh:</label>
             <div class="an-segmented">
               <button type="button" class="an-seg-btn ${filterType === 'all' ? 'active' : ''}" data-filter-type="all">Tất cả</button>
-              <button type="button" class="an-seg-btn ${filterType === 'bot' ? 'active' : ''}" data-filter-type="bot">🤖 Bot EA</button>
-              <button type="button" class="an-seg-btn ${filterType === 'manual' ? 'active' : ''}" data-filter-type="manual">✋ Lệnh tay</button>
+              <button type="button" class="an-seg-btn ${filterType === 'bot' ? 'active' : ''}" data-filter-type="bot">${getIconSvg('bot', 'margin-right:4px; font-size:12px;')} Bot EA</button>
+              <button type="button" class="an-seg-btn ${filterType === 'manual' ? 'active' : ''}" data-filter-type="manual">${getIconSvg('manual', 'margin-right:4px; font-size:12px;')} Lệnh tay</button>
             </div>
           </div>
 
@@ -486,7 +495,7 @@ const AnalyticsModule = (function () {
         <!-- Biểu đồ Đường Lợi Nhuận Tích Lũy (Cumulative Equity Curve) -->
         <div class="an-chart-card">
           <div class="an-chart-header">
-            <div class="an-chart-title">📊 Biểu Đồ Lợi Nhuận Tích Lũy (Cumulative Equity Curve - USD)</div>
+            <div class="an-chart-title">${getIconSvg('equityCurve', 'margin-right:6px;')} Biểu Đồ Lợi Nhuận Tích Lũy (Cumulative Equity Curve - USD)</div>
             <div class="an-chart-tag">Tự động cập nhật 2D Canvas</div>
           </div>
           <div class="an-canvas-wrapper" id="anCanvasWrapper">
@@ -499,7 +508,7 @@ const AnalyticsModule = (function () {
         <div class="an-mc-card">
           <div class="an-mc-header">
             <div>
-              <div class="an-mc-title">🎲 Mô Phỏng Monte Carlo &amp; Quản Trị Rủi Ro (Quant Risk Lab)</div>
+              <div class="an-mc-title">${getIconSvg('dice', 'margin-right:6px;')} Mô Phỏng Monte Carlo &amp; Quản Trị Rủi Ro (Quant Risk Lab)</div>
               <div class="an-mc-subtitle">Xáo trộn chuỗi lệnh ngẫu nhiên &amp; tính toán rủi ro cháy tài khoản, Kelly Criterion, Worst Drawdown</div>
             </div>
             <div class="an-mc-controls">
@@ -515,7 +524,7 @@ const AnalyticsModule = (function () {
                   <option value="5000">5,000 lần</option>
                 </select>
               </div>
-              <button type="button" class="an-btn primary" id="anRunMcBtn">🚀 Chạy Mô Phỏng Monte Carlo</button>
+              <button type="button" class="an-btn primary" id="anRunMcBtn">${getIconSvg('rocket', 'margin-right:4px; font-size:13px;')} Chạy Mô Phỏng Monte Carlo</button>
             </div>
           </div>
 
@@ -528,7 +537,7 @@ const AnalyticsModule = (function () {
         <!-- Bảng Nhật Ký Lệnh (Trades Table) -->
         <div class="an-table-card">
           <div class="an-table-header">
-            <div class="an-table-title">📝 Lịch Sử Lệnh Giao Dịch (${filteredList.length} lệnh)</div>
+            <div class="an-table-title">${getIconSvg('journal', 'margin-right:6px;')} Lịch Sử Lệnh Giao Dịch (${filteredList.length} lệnh)</div>
             <div class="an-table-pagination">
               <button type="button" class="an-btn-sm" id="anPrevPageBtn" ${currentPage <= 1 ? 'disabled' : ''}>&laquo; Trước</button>
               <span>Trang ${currentPage} / ${totalPages}</span>
@@ -569,9 +578,9 @@ const AnalyticsModule = (function () {
                       <td>${t.openPrice ? t.openPrice.toFixed(2) : '-'}</td>
                       <td>${t.closePrice ? t.closePrice.toFixed(2) : '-'}</td>
                       <td class="${pnlClass} ms-bold">${fmtUSD(t.pnlUSD, true)}</td>
-                      <td><span class="an-source ${t.isBot ? 'bot' : 'manual'}">${t.isBot ? '🤖 EA Bot' : '✋ Tay'}</span></td>
+                      <td><span class="an-source ${t.isBot ? 'bot' : 'manual'}">${t.isBot ? `${getIconSvg('bot', 'margin-right:3px; font-size:11px;')} EA Bot` : `${getIconSvg('manual', 'margin-right:3px; font-size:11px;')} Tay`}</span></td>
                       <td>
-                        <button type="button" class="an-icon-btn remove" data-action="delete" data-ticket="${t.ticket}">🗑</button>
+                        <button type="button" class="an-icon-btn remove" data-action="delete" data-ticket="${t.ticket}" title="Xoá lệnh">${getIconSvg('trash', 'font-size:13px;')}</button>
                       </td>
                     </tr>
                   `;
@@ -737,20 +746,35 @@ const AnalyticsModule = (function () {
 
     const adviceList = [];
     if (p95DDPct > 20) {
-      adviceList.push(`⚠️ <strong>Rủi ro sụt giảm cao (High Drawdown Risk)</strong>: Mô phỏng xáo trộn cho thấy ở độ tin cậy 95%, Max Drawdown có thể sụt giảm tới <strong>-${p95DDPct.toFixed(1)}% (-$${p95DDUSD.toFixed(0)} USD)</strong>. Hãy cân nhắc hạ 30% - 50% khối lượng lot.`);
+      adviceList.push({
+        icon: getIconSvg('warning', 'color:var(--red);'),
+        text: `<strong>Rủi ro sụt giảm cao (High Drawdown Risk)</strong>: Ở độ tin cậy 95%, Max Drawdown có thể đạt <strong>-${p95DDPct.toFixed(1)}% (-$${p95DDUSD.toFixed(0)} USD)</strong>. Khuyên dùng: Giảm 30% - 50% khối lượng lot/trade để hạ sụt giảm xuống dưới mức an toàn 15%.`
+      });
     } else {
-      adviceList.push(`✅ <strong>Kiểm soát sụt giảm tốt (Safe Drawdown Profile)</strong>: Mức Drawdown kịch bản xấu (95% tin cậy) giữ ở mức <strong>-${p95DDPct.toFixed(1)}% (-$${p95DDUSD.toFixed(0)} USD)</strong>, rất an toàn.`);
+      adviceList.push({
+        icon: getIconSvg('shield', 'color:var(--green);'),
+        text: `<strong>Kiểm soát sụt giảm tốt (Safe Drawdown Profile)</strong>: Kịch bản sụt giảm xấu nhất (95% CI) duy trì ở mức <strong>-${p95DDPct.toFixed(1)}% (-$${p95DDUSD.toFixed(0)} USD)</strong>, nằm trong ngưỡng an toàn chịu đựng của tài khoản.`
+      });
     }
 
-    if (p95LossStreak >= 5) {
-      adviceList.push(`🎲 <strong>Cảnh báo chuỗi thua ngẫu nhiên (Sequence Risk)</strong>: Trong ${numSims.toLocaleString()} kịch bản mô phỏng, có 95% khả năng xuất hiện chuỗi thua liên tiếp lên tới <strong>${p95LossStreak} lệnh liên tiếp</strong>. Đừng vội tăng vol khi gặp chuỗi lỗ.`);
+    if (p95LossStreak >= 4) {
+      adviceList.push({
+        icon: getIconSvg('dice', 'color:#f2a339;'),
+        text: `<strong>Cảnh báo chuỗi thua ngẫu nhiên (Sequence Risk)</strong>: Mô phỏng ${numSims.toLocaleString()} kịch bản cho thấy khả năng cao tài khoản sẽ đối mặt chuỗi <strong>${p95LossStreak} lệnh thua liên tiếp</strong>. Giữ kỷ luật tuyệt đối, tránh tâm lý trả thù thị trường (Revenge Trading) khi gặp dải chuỗi đỏ này.`
+      });
     }
 
     if (kellyFraction > 0) {
       const halfKelly = kellyFraction * 0.5;
-      adviceList.push(`💡 <strong>Tỷ lệ vị thế Kelly (Kelly Criterion)</strong>: Mức Full Kelly tối ưu toán học là <strong>${(kellyFraction * 100).toFixed(1)}%</strong> vốn. Khuyên dùng <strong>Half-Kelly (${(halfKelly * 100).toFixed(1)}%)</strong> để vừa tối ưu tăng trưởng vừa tránh biến động nặng.`);
+      adviceList.push({
+        icon: getIconSvg('lightbulb', 'color:#3b82f6;'),
+        text: `<strong>Tỷ lệ vị thế Kelly (Kelly Criterion)</strong>: Mức Full Kelly toán học là <strong>${(kellyFraction * 100).toFixed(1)}%</strong>. Khuyên dùng mức <strong>Half-Kelly (${(halfKelly * 100).toFixed(1)}% vốn)</strong> để đạt lợi nhuận tối ưu dài hạn mà không chịu biến động nặng.`
+      });
     } else {
-      adviceList.push(`🚨 <strong>Chiến lược kỳ vọng âm (Negative Expectancy)</strong>: Tỷ lệ Win/Loss hiện tại cho kết quả Kelly ≤ 0. Nên tối ưu hóa điểm vào lệnh (Risk:Reward ≥ 1.2) trước khi nâng vốn.`);
+      adviceList.push({
+        icon: getIconSvg('warning', 'color:var(--red);'),
+        text: `<strong>Chiến lược kỳ vọng âm (Negative Expectancy)</strong>: Tỷ lệ Win/Loss hiện tại cho kết quả Kelly ≤ 0. Nên cải thiện điểm vào lệnh (Risk:Reward Ratio ≥ 1.3) trước khi tăng quy mô vốn.`
+      });
     }
 
     return {
@@ -778,7 +802,7 @@ const AnalyticsModule = (function () {
     area.innerHTML = `
       ${!mcData.hasRealTrades ? `
         <div style="font-size:12px; padding:8px 12px; background:rgba(242, 163, 57, 0.12); border:1px solid rgba(242, 163, 57, 0.3); border-radius:6px; color:var(--text-primary); margin-bottom:12px;">
-          ℹ️ <strong>Đang dùng bộ dữ liệu mẫu Benchmark</strong> (${mcData.numSims.toLocaleString()} lần xáo trộn). Khi bạn thêm lệnh thực tế, mô phỏng sẽ tự động tính chính xác theo lịch sử giao dịch của bạn.
+          ${getIconSvg('lightbulb', 'color:#f2a339; margin-right:4px;')} <strong>Đang dùng bộ dữ liệu mẫu Benchmark</strong> (${mcData.numSims.toLocaleString()} lần xáo trộn). Khi bạn thêm lệnh thực tế, mô phỏng sẽ tự động tính chính xác theo lịch sử giao dịch của bạn.
         </div>
       ` : ''}
 
@@ -816,15 +840,20 @@ const AnalyticsModule = (function () {
 
       <div style="margin-top:14px; position:relative;" id="anMcCanvasWrapper">
         <div style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:6px;">
-          📈 Biểu Đồ Quạt Các Kịch Bản Mô Phỏng (${mcData.numSims.toLocaleString()} Đường Equity)
+          ${getIconSvg('equityCurve', 'margin-right:4px;')} Biểu Đồ Quạt Các Kịch Bản Mô Phỏng (${mcData.numSims.toLocaleString()} Đường Equity)
         </div>
         <canvas id="anMcCanvas"></canvas>
       </div>
 
       <div class="an-mc-advice-box" style="margin-top:14px;">
-        <div class="an-mc-advice-title">🧠 Lời Khuyên &amp; Chỉ Số Quản Trị Rủi Ro Chuyên Nghiệp</div>
+        <div class="an-mc-advice-title">${getIconSvg('brain', 'margin-right:6px;')} Lời Khuyên &amp; Chỉ Số Quản Trị Rủi Ro Chuyên Nghiệp</div>
         <div class="an-mc-advice-list">
-          ${mcData.adviceList.map((adv) => `<div class="an-mc-advice-item">${adv}</div>`).join('')}
+          ${mcData.adviceList.map((adv) => `
+            <div class="an-mc-advice-item">
+              <div class="an-advice-icon">${adv.icon}</div>
+              <div class="an-advice-content">${adv.text}</div>
+            </div>
+          `).join('')}
         </div>
       </div>
     `;
@@ -1136,7 +1165,7 @@ const AnalyticsModule = (function () {
   }
 
   function clearAllTrades() {
-    if (confirm('⚠️ Bạn có chắc chắn muốn XOÁ TOÀN BỘ nhật ký lệnh của tài khoản này không?')) {
+    if (confirm('Bạn có chắc chắn muốn XOÁ TOÀN BỘ nhật ký lệnh của tài khoản này không?')) {
       trades = [];
       persistLocalTrades({ sync: true });
     }
@@ -1148,7 +1177,7 @@ const AnalyticsModule = (function () {
     backdrop.className = 'an-modal-backdrop';
     backdrop.innerHTML = `
       <div class="an-modal">
-        <div class="an-modal-title">✋ Thêm Lệnh Giao Dịch Thủ Công</div>
+        <div class="an-modal-title">${getIconSvg('manual', 'margin-right:6px;')} Thêm Lệnh Giao Dịch Thủ Công</div>
         <div class="an-form-group">
           <label>Cặp tiền (Symbol)</label>
           <select id="mtSymbol">
@@ -1392,13 +1421,13 @@ void SendJsonPost(string url, string jsonBody, int itemCount)
     backdrop.className = 'an-modal-backdrop';
     backdrop.innerHTML = `
       <div class="an-modal large">
-        <div class="an-modal-title">🤖 Mã Nguồn EA MQL5 Cho MT5 VPS &amp; HƯỚNG DẪN ĐỒNG BỘ</div>
+        <div class="an-modal-title">${getIconSvg('bot', 'margin-right:6px;')} Mã Nguồn EA MQL5 Cho MT5 VPS &amp; HƯỚNG DẪN ĐỒNG BỘ</div>
         
         <div style="margin-bottom: 12px; padding: 10px 14px; background: rgba(59, 130, 246, 0.08); border-left: 4px solid #3b82f6; border-radius: 6px;">
           <label style="font-weight:700; font-size: 13px; color: var(--text-color); display:block; margin-bottom: 4px;">🌐 URL Server Backend (Chèn tự động vào MQL5):</label>
           <input type="text" id="anServerUrlInput" class="an-input" value="${currentServerUrl}" style="width:100%; font-family:monospace; padding: 6px 10px; border: 1px solid var(--border-color); border-radius: 4px; font-size: 13px;" placeholder="https://your-backend-server.com" />
           <div style="font-size:12px; color: var(--text-muted); margin-top:6px; line-height: 1.4;">
-            ⚠️ <strong>LƯU Ý VỀ LỖI 404:</strong> Nếu bạn đang dùng Cloudflare Worker (<code>dq-tracker-push...</code>) mà MT5 báo <code>Error code: 404</code>, do bạn chưa deploy code mới lên Cloudflare. Bạn cần mở terminal tại máy tính và chạy lệnh: <code style="background:rgba(0,0,0,0.1); padding:2px 6px; border-radius:3px;">cd worker && npx wrangler deploy</code> để cập nhật route <code>/api/trades</code>.
+            ${getIconSvg('warning', 'color:#f2a339; margin-right:4px;')} <strong>LƯU Ý VỀ LỖI 404:</strong> Nếu bạn đang dùng Cloudflare Worker (<code>dq-tracker-push...</code>) mà MT5 báo <code>Error code: 404</code>, do bạn chưa deploy code mới lên Cloudflare. Bạn cần mở terminal tại máy tính và chạy lệnh: <code style="background:rgba(0,0,0,0.1); padding:2px 6px; border-radius:3px;">cd worker && npx wrangler deploy</code> để cập nhật route <code>/api/trades</code>.
           </div>
         </div>
 
@@ -1407,7 +1436,7 @@ void SendJsonPost(string url, string jsonBody, int itemCount)
           <ol>
             <li>Mở <strong>MT5 trên VPS</strong> &rarr; Nhấn phím <code>F4</code> để mở trình soạn thảo <strong>MetaEditor</strong>.</li>
             <li>Vào <code>File</code> &rarr; <code>New</code> &rarr; Chọn <strong>Expert Advisor (template)</strong> &rarr; Đặt tên <code>TradingPro_EA_Sync</code> &rarr; Nhấn Finish.</li>
-            <li>Xóa toàn bộ mã mặc định, nhấn nút <strong>📋 Copy Mã MQL5</strong> bên dưới và DÁN vào MetaEditor.</li>
+            <li>Xóa toàn bộ mã mặc định, nhấn nút <strong>${getIconSvg('copy', 'margin-right:2px; font-size:12px;')} Copy Mã MQL5</strong> bên dưới và DÁN vào MetaEditor.</li>
             <li>Nhấn <code>F7</code> (Compile) để biên dịch. Màn hình báo <em>0 errors, 0 warnings</em> là xong.</li>
             <li>Trên giao diện MT5 chính: Vào <code>Tools</code> &rarr; <code>Options</code> &rarr; Chọn tab <code>Expert Advisors</code>.</li>
             <li>Tích chọn <code>Allow WebRequest for listed URL</code> và thêm URL Server Backend này vào danh sách: <br><code id="anServerUrlDisplay" style="color:var(--accent-blue);font-weight:bold;">${currentServerUrl}</code></li>
@@ -1417,7 +1446,7 @@ void SendJsonPost(string url, string jsonBody, int itemCount)
 
         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px;">
           <label style="font-weight:600;">Mã nguồn MQL5 (Sẽ tự động cập nhật theo Server URL ở trên):</label>
-          <button type="button" class="an-btn primary" id="anCopyCodeBtn">📋 Copy Mã MQL5</button>
+          <button type="button" class="an-btn primary" id="anCopyCodeBtn">${getIconSvg('copy', 'margin-right:4px; font-size:13px;')} Copy Mã MQL5</button>
         </div>
 
         <textarea readonly class="an-code-area" id="anCodeArea" style="height: 220px;">${buildMql5Code(currentServerUrl)}</textarea>
