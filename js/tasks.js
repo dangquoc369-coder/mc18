@@ -258,14 +258,29 @@ const TasksModule = (function () {
           <span class="tasks-mini-dot"></span>
           <span class="tasks-mini-title">${escapeHtml(t.title)}</span>
           <span class="tasks-mini-time">${timeLabel}</span>
+          <button type="button" class="alert-remove-btn tasks-mini-remove-btn" data-remove-id="${t.id}" title="Xoá công việc này">✕</button>
         </div>`;
       }).join('') + `<button type="button" class="tasks-mini-add-btn" id="miniAddTaskBtn">+ Thêm nhắc việc</button>`;
     }
 
+    // Bấm vào phần thân của mục -> mở modal sửa. Bấm nút ✕ -> xoá NGAY tại
+    // đây (có xác nhận), không mở modal - dùng stopPropagation để 2 vùng
+    // bấm không giẫm lên nhau.
     listEl.querySelectorAll('.tasks-mini-item').forEach((el) => {
       el.addEventListener('click', () => {
         switchView('tasks');
         openTaskModal(el.dataset.taskId);
+      });
+    });
+    listEl.querySelectorAll('.tasks-mini-remove-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.removeId;
+        const t = tasks.find((x) => x.id === id);
+        const label = t ? t.title : 'công việc này';
+        if (confirm(`Xoá "${label}"? Hành động này không thể hoàn tác.`)) {
+          removeTask(id);
+        }
       });
     });
     const addBtn = document.getElementById('miniAddTaskBtn');
@@ -364,7 +379,14 @@ const TasksModule = (function () {
     container.querySelectorAll('.tv-card').forEach((card) => {
       const id = card.dataset.taskId;
       card.querySelector('[data-action="toggle"]').addEventListener('click', (e) => { e.stopPropagation(); toggleDone(id); });
-      card.querySelector('[data-action="remove"]').addEventListener('click', (e) => { e.stopPropagation(); removeTask(id); });
+      card.querySelector('[data-action="remove"]').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const t = tasks.find((x) => x.id === id);
+        const label = t ? t.title : 'công việc này';
+        if (confirm(`Xoá "${label}"? Hành động này không thể hoàn tác.`)) {
+          removeTask(id);
+        }
+      });
       card.querySelector('[data-action="edit"]').addEventListener('click', () => openTaskModal(id));
     });
   }
@@ -404,6 +426,7 @@ const TasksModule = (function () {
           ${WEEKDAY_LABELS.map((label, i) => `<button type="button" class="dt-swatch-btn tm-weekday-btn" data-day="${i}">${label}</button>`).join('')}
         </div>
         <div class="tv-modal-actions">
+          ${existing ? `<button type="button" class="tv-modal-cancel" id="tmDelete" style="color:var(--red);margin-right:auto;">🗑 Xoá</button>` : ''}
           <button type="button" class="tv-modal-cancel" id="tmCancel">Huỷ</button>
           <button type="button" class="tv-modal-save" id="tmSave">Lưu</button>
         </div>
@@ -434,6 +457,16 @@ const TasksModule = (function () {
     function close() { backdrop.remove(); }
     backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
     backdrop.querySelector('#tmCancel').addEventListener('click', close);
+
+    const deleteBtn = backdrop.querySelector('#tmDelete');
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', () => {
+        if (confirm(`Xoá "${existing.title}"? Hành động này không thể hoàn tác.`)) {
+          removeTask(existing.id);
+          close();
+        }
+      });
+    }
     backdrop.querySelector('#tmSave').addEventListener('click', () => {
       const title = backdrop.querySelector('#tmTitle').value.trim();
       const date = backdrop.querySelector('#tmDate').value;

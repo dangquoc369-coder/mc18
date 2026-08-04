@@ -169,9 +169,19 @@
           </div>
           <div id="pane-4-status" class="connection-status connecting">Đang kết nối...</div>
         </section>
-       <!-- ===== TRANG CÔNG VIỆC (thêm mới, ẩn mặc định, hiện khi chọn tab Công việc) ===== -->
-  <section id="tasksMainView" class="hidden"></section>
-</main>
+
+      </div>
+      <!-- ↑ đóng #chartArea ĐÚNG VỊ TRÍ, ngay sau pane-4, TRƯỚC khi thêm section khác -->
+
+      <!-- ===== TRANG CÔNG VIỆC (ẩn mặc định, hiện khi chọn tab Công việc) =====
+           Đặt là SIBLING của #chartArea (cùng cấp, bên trong #main), KHÔNG
+           lồng bên trong #chartArea - vì switchView() trong tasks.js set
+           chartArea.style.display='none' khi vào tab Công việc; nếu
+           tasksMainView nằm trong chartArea thì nó cũng bị ẩn theo, khiến
+           trang Công việc trắng/biến mất khi mở. -->
+      <section id="tasksMainView" class="hidden"></section>
+
+    </main>
       </div>
 
     </main>
@@ -187,11 +197,12 @@
   <script src="js/websocket.js"></script>
   <script src="js/indicator.js"></script>
   <script src="js/notifications.js"></script>
-  <script src="js/tasks.js"></script>
+  
   <script src="js/alerts.js"></script>
   <script src="js/login.js"></script>
   <script src="js/indicator-prefs.js"></script>
   <script src="js/push-sync.js"></script>
+  <script src="js/tasks.js"></script>
   <script src="js/breakout.js"></script>
   <script src="js/drawing.js"></script>
   <script src="js/trend-reference.js"></script>  <!-- thêm dòng này -->

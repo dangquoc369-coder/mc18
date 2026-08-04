@@ -1,10 +1,10 @@
 /**
  * push-sync.js
- * Đồng bộ cảnh báo giá lên Cloudflare Worker để nhận thông báo NGAY CẢ KHI
- * ĐÃ TẮT APP/ĐÓNG TRÌNH DUYỆT (Web Push thật qua VAPID) - khác với
- * notifications.js (NotificationsModule), module đó chỉ hoạt động khi app
- * còn đang chạy (kể cả chạy nền/tab khác), KHÔNG hoạt động khi app đã đóng
- * hẳn hoặc máy khoá lâu.
+ * Đồng bộ cảnh báo giá / tín hiệu / công việc lên Cloudflare Worker để nhận
+ * thông báo NGAY CẢ KHI ĐÃ TẮT APP/ĐÓNG TRÌNH DUYỆT (Web Push thật qua
+ * VAPID) - khác với notifications.js (NotificationsModule), module đó chỉ
+ * hoạt động khi app còn đang chạy (kể cả chạy nền/tab khác), KHÔNG hoạt
+ * động khi app đã đóng hẳn hoặc máy khoá lâu.
  *
  * FIX (đợt fix mới nhất - PHỐI HỢP VỚI login.js, "tài khoản nhẹ" tên+PIN):
  *   Trước đây getDeviceId() TỰ SINH 1 chuỗi ngẫu nhiên nếu localStorage
@@ -29,14 +29,21 @@
  *         chặn...), push-sync.js sẽ tự động im lặng bỏ qua thay vì đồng bộ
  *         nhầm dưới 1 danh tính rác.
  *
+ * ĐỢT FIX NÀY (THÊM ĐỒNG BỘ CÔNG VIỆC / TASKS - xem tasks.js):
+ *   tasks.js KHÔNG tự fetch lên server nữa - nó chỉ lưu local rồi bắn sự
+ *   kiện 'tasks:changed'. Thêm syncTasks()/pullTasksFromServer() ở đây,
+ *   theo ĐÚNG khuôn đã dùng cho syncAlerts()/pullAlertsFromServer(), để
+ *   toàn bộ luồng auth + domain Worker CHỈ có 1 nguồn sự thật (WORKER_URL +
+ *   DEVICE_ID_KEY ở file này) - tránh lặp/lệch cấu hình như bug cũ.
+ *
  * CÁCH HOẠT ĐỘNG (còn lại, không đổi):
  *   1) ensureSubscription(): đăng ký Push Subscription qua PushManager của
  *      trình duyệt (dùng VAPID public key lấy từ Worker), rồi gửi lên Worker
  *      để lưu lại (worker/src/index.js: POST /api/subscribe).
- *   2) syncAlerts()/syncSignals(): mỗi khi có thay đổi, gửi TOÀN BỘ cấu
- *      hình cảnh báo/tín hiệu hiện tại lên Worker. Worker tự kiểm tra bằng
- *      Cron Trigger và gửi push khi tới lúc - không phụ thuộc việc máy có
- *      đang mở app hay không.
+ *   2) syncAlerts()/syncSignals()/syncTasks(): mỗi khi có thay đổi, gửi
+ *      TOÀN BỘ cấu hình hiện tại lên Worker. Worker tự kiểm tra bằng Cron
+ *      Trigger và gửi push khi tới lúc - không phụ thuộc việc máy có đang
+ *      mở app hay không.
  *
  * BẮT BUỘC: đổi WORKER_URL bên dưới thành địa chỉ Worker bạn đã deploy, và
  * PHẢI GIỐNG HỆT WORKER_URL trong login.js.
@@ -67,7 +74,7 @@ const PushSync = (function () {
     const rawData = atob(base64);
     return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
   }
-  
+
   /** Tải cảnh báo đã lưu trên server về, gộp vào local TRƯỚC KHI syncAlerts()
    * chạy lần đầu - bắt buộc phải làm bước này trước, nếu không syncAlerts()
    * sẽ gửi mảng rỗng (local chưa có gì trên máy mới) lên server và server
@@ -85,6 +92,33 @@ const PushSync = (function () {
       }
     } catch (err) {
       console.error('Lỗi khi tải cảnh báo từ Worker:', err);
+    }
+  }
+
+  /** Tương tự pullAlertsFromServer() nhưng cho CÔNG VIỆC (tasks.js). PHẢI
+   * chạy TRƯỚC syncTasks() lần đầu, cùng lý do hệt như alerts: nếu không,
+   * máy mới đăng nhập (local rỗng) sẽ gửi mảng rỗng lên và server XOÁ mất
+   * toàn bộ công việc đã lưu từ thiết bị khác (index.js: merged.length===0
+   * -> delete allConfig[deviceId]). */
+  async function pullTasksFromServer() {
+    if (!isConfigured()) return;
+    const deviceId = getDeviceId();
+    if (!deviceId) return;
+    // FIX: TasksModule khai báo bằng `const` ở top-level của tasks.js -
+    // const/let KHÔNG tự gắn vào window (khác với var/function declaration),
+    // nên `window.TasksModule` LUÔN LÀ undefined dù TasksModule có tồn tại
+    // thật hay không. Dùng `typeof TasksModule !== 'undefined'` để kiểm tra
+    // an toàn (không ném ReferenceError) mà vẫn đúng với biến global thật.
+    if (typeof TasksModule === 'undefined' || !TasksModule.mergeFromServer) return;
+    try {
+      const res = await fetch(`${WORKER_URL}/api/tasks?deviceId=${encodeURIComponent(deviceId)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && Array.isArray(data.tasks)) {
+        TasksModule.mergeFromServer(data.tasks);
+      }
+    } catch (err) {
+      console.error('Lỗi khi tải công việc từ Worker:', err);
     }
   }
 
@@ -178,44 +212,40 @@ const PushSync = (function () {
       console.error('Lỗi khi đồng bộ tín hiệu lên Worker:', err);
     }
   }
-  
-  /** Tải công việc đã lưu trên server về, gộp vào local TRƯỚC KHI syncTasks()
-   * chạy lần đầu - cùng lý do như pullAlertsFromServer(): nếu không, máy
-   * mới đăng nhập sẽ gửi mảng rỗng lên và server sẽ XOÁ cấu hình cũ. */
-  async function pullTasksFromServer() {
-    if (!isConfigured()) return;
-    const deviceId = getDeviceId();
-    if (!deviceId) return;
-    try {
-      const res = await fetch(`${WORKER_URL}/api/tasks?deviceId=${encodeURIComponent(deviceId)}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data && Array.isArray(data.tasks) && window.TasksModule && TasksModule.mergeFromServer) {
-        TasksModule.mergeFromServer(data.tasks);
-      }
-    } catch (err) {
-      console.error('Lỗi khi tải công việc từ Worker:', err);
-    }
-  }
 
+  /** Đồng bộ TOÀN BỘ công việc/lời nhắc (tasks.js) lên Worker. Được gọi mỗi
+   * khi tasks.js bắn sự kiện 'tasks:changed' (thêm/sửa/xoá/bật-tắt), và
+   * 1 lần lúc khởi động (sau pullTasksFromServer). */
   async function syncTasks() {
     if (!isConfigured()) return;
     const deviceId = getDeviceId();
     if (!deviceId) return; // chưa đăng nhập - chờ login.js
-    if (!window.TasksModule || !TasksModule.getAllTasks) return;
+    // FIX: xem giải thích ở pullTasksFromServer() - window.TasksModule luôn
+    // undefined vì TasksModule khai báo bằng const ở top-level, không gắn
+    // vào window. Dùng typeof để kiểm tra đúng.
+    if (typeof TasksModule === 'undefined' || !TasksModule.getAllTasks) return;
     try {
       await ensureSubscription();
 
       const tasks = TasksModule.getAllTasks().map((t) => ({
-        id: t.id, title: t.title, note: t.note || '', date: t.date, time: t.time,
-        repeat: t.repeat, daysOfWeek: t.daysOfWeek || [], enabled: !!t.enabled,
+        id: t.id,
+        title: t.title,
+        note: t.note || '',
+        date: t.date,
+        time: t.time,
+        repeat: t.repeat,
+        daysOfWeek: t.daysOfWeek || [],
+        enabled: !!t.enabled,
       }));
 
-      await fetch(`${WORKER_URL}/api/tasks`, {
+      const res = await fetch(`${WORKER_URL}/api/tasks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deviceId, tasks }),
       });
+      if (!res.ok) {
+        console.error('Đồng bộ công việc thất bại, HTTP status:', res.status);
+      }
     } catch (err) {
       console.error('Lỗi khi đồng bộ công việc lên Worker:', err);
     }
@@ -233,7 +263,11 @@ const PushSync = (function () {
     // Đồng bộ lại mỗi khi danh sách cảnh báo đổi (thêm/xoá/kích hoạt).
     // syncAlerts() tự bỏ qua nếu chưa có deviceId (chưa đăng nhập).
     EventBus.on('alerts:changed', () => syncAlerts());
-    EventBus.on('tasks:changed', () => syncTasks()); // thêm dòng này
+
+    // Đồng bộ lại mỗi khi danh sách công việc/lời nhắc đổi (tasks.js bắn
+    // sự kiện này trong persist()). syncTasks() tự bỏ qua nếu chưa đăng
+    // nhập hoặc TasksModule chưa sẵn sàng.
+    EventBus.on('tasks:changed', () => syncTasks());
 
     // Đồng bộ tín hiệu khi có thay đổi cấu hình pane, symbol, timeframe hoặc breakout/signal
     EventBus.on('pane:symbolChanged', () => syncSignals());
@@ -247,22 +281,25 @@ const PushSync = (function () {
         setTimeout(() => {
           syncAlerts();
           syncSignals();
-          syncTasks(); // thêm dòng này
+          syncTasks();
         }, 500);
       }
     });
 
     // Đồng bộ 1 lần lúc khởi động, phòng trường hợp đã có quyền từ trước
     // (vd mở lại app sau khi đã cấp quyền ở lần dùng trước). Nếu chưa đăng
-    // nhập (chưa có deviceId), 2 hàm này tự bỏ qua - login.js sẽ hiện màn
-    // đăng nhập; sau khi đăng nhập xong trang sẽ reload và luồng này chạy
-    // lại từ đầu với deviceId hợp lệ.
+    // nhập (chưa có deviceId), các hàm này tự bỏ qua - login.js sẽ hiện
+    // màn đăng nhập; sau khi đăng nhập xong trang sẽ reload và luồng này
+    // chạy lại từ đầu với deviceId hợp lệ.
+    //
+    // THỨ TỰ BẮT BUỘC: pull TRƯỚC sync, cho cả alerts lẫn tasks - nếu đảo
+    // ngược, máy mới sẽ gửi local rỗng lên và server xoá mất cấu hình cũ.
     setTimeout(async () => {
-      await pullAlertsFromServer(); // BẮT BUỘC chạy trước - xem giải thích ở hàm trên
-      await pullTasksFromServer(); // thêm dòng này - trước syncTasks()
+      await pullAlertsFromServer();
+      await pullTasksFromServer();
       syncAlerts();
       syncSignals();
-      syncTasks(); // thêm dòng này
+      syncTasks();
     }, 2000);
   }
 
@@ -272,5 +309,5 @@ const PushSync = (function () {
     init();
   }
 
-  return { syncAlerts, syncTasks, ensureSubscription };
+  return { syncAlerts, syncSignals, syncTasks, ensureSubscription };
 })();
