@@ -157,7 +157,9 @@ body,
 #sidebar.collapsed .symbol-list,
 #sidebar.collapsed .sidebar-section-title,
 #sidebar.collapsed .sidebar-tab-content,
-#sidebar.collapsed .logo-text {
+#sidebar.collapsed .logo-text,
+#sidebar.collapsed .logo-brand-wrap,
+#sidebar.collapsed .slogan-badge {
   display: none !important;
 }
 
@@ -179,8 +181,8 @@ body,
 .sidebar-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 16px;
+  gap: 10px;
+  padding: 14px 16px;
   border-bottom: 1px solid var(--border-color);
 }
 
@@ -193,8 +195,54 @@ body,
 }
 .logo-mark svg { display: block; }
 
-.logo-text { font-size: 14.5px; font-weight: 500; letter-spacing: 0.2px; }
+.logo-brand-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.logo-text {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  line-height: 1.15;
+  color: var(--text-primary);
+}
 .logo-text b { color: var(--accent-blue); font-weight: 700; }
+
+.slogan-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  color: #10b981;
+  white-space: nowrap;
+  user-select: none;
+  width: fit-content;
+  line-height: 1.2;
+}
+
+.slogan-badge .slogan-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+  animation: sloganPulse 2s infinite ease-in-out;
+  flex-shrink: 0;
+}
+
+@keyframes sloganPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.8); }
+}
 
 .symbol-search {
   position: relative;
@@ -358,8 +406,8 @@ body,
 
 .topbar-left {
   display: flex;
-  align-items: baseline;
-  gap: 12px;
+  align-items: center;
+  gap: 10px;
 }
 
 .topbar-title {
@@ -1249,7 +1297,9 @@ body,
   #sidebar.collapsed .symbol-list,
   #sidebar.collapsed .sidebar-section-title,
   #sidebar.collapsed .sidebar-tab-content,
-  #sidebar.collapsed .logo-text {
+  #sidebar.collapsed .logo-text,
+  #sidebar.collapsed .logo-brand-wrap,
+  #sidebar.collapsed .slogan-badge {
     display: flex;
   }
 
