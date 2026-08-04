@@ -401,12 +401,16 @@ if (url.pathname === '/api/tasks' && request.method === 'POST') {
           lookbackCandles: s.lookbackCandles || 2,
         }));
 
+      const prevStr = JSON.stringify(allConfig[deviceId] || []);
       if (merged.length > 0) {
         allConfig[deviceId] = merged;
       } else {
         delete allConfig[deviceId];
       }
-      await writeJSON(env.TRACKER_KV, SIGNALS_CONFIG_KEY, allConfig);
+      const nextStr = JSON.stringify(allConfig[deviceId] || []);
+      if (prevStr !== nextStr) {
+        await writeJSON(env.TRACKER_KV, SIGNALS_CONFIG_KEY, allConfig);
+      }
       return withCors(Response.json({ ok: true, count: merged.length }));
     }
 
