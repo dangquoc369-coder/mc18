@@ -275,12 +275,7 @@ const TasksModule = (function () {
     listEl.querySelectorAll('.tasks-mini-remove-btn').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const id = btn.dataset.removeId;
-        const t = tasks.find((x) => x.id === id);
-        const label = t ? t.title : 'công việc này';
-        if (confirm(`Xoá "${label}"? Hành động này không thể hoàn tác.`)) {
-          removeTask(id);
-        }
+        removeTask(btn.dataset.removeId);
       });
     });
     const addBtn = document.getElementById('miniAddTaskBtn');
@@ -381,11 +376,7 @@ const TasksModule = (function () {
       card.querySelector('[data-action="toggle"]').addEventListener('click', (e) => { e.stopPropagation(); toggleDone(id); });
       card.querySelector('[data-action="remove"]').addEventListener('click', (e) => {
         e.stopPropagation();
-        const t = tasks.find((x) => x.id === id);
-        const label = t ? t.title : 'công việc này';
-        if (confirm(`Xoá "${label}"? Hành động này không thể hoàn tác.`)) {
-          removeTask(id);
-        }
+        removeTask(id);
       });
       card.querySelector('[data-action="edit"]').addEventListener('click', () => openTaskModal(id));
     });
@@ -461,10 +452,8 @@ const TasksModule = (function () {
     const deleteBtn = backdrop.querySelector('#tmDelete');
     if (deleteBtn) {
       deleteBtn.addEventListener('click', () => {
-        if (confirm(`Xoá "${existing.title}"? Hành động này không thể hoàn tác.`)) {
-          removeTask(existing.id);
-          close();
-        }
+        removeTask(existing.id);
+        close();
       });
     }
     backdrop.querySelector('#tmSave').addEventListener('click', () => {
