@@ -142,21 +142,17 @@ function normalizeTradeItem(t) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    const cleanPath = url.pathname.replace(/\/+/g, '/').replace(/\/$/, '') || '/';
 
     if (request.method === 'OPTIONS') {
       return withCors(new Response(null, { status: 204 }));
     }
 
-    if (url.pathname === '/api/vapid-public-key' && request.method === 'GET') {
+    if ((cleanPath === '/api/vapid-public-key' || cleanPath === '/vapid-public-key') && request.method === 'GET') {
       return withCors(Response.json({ publicKey: env.VAPID_PUBLIC_KEY }));
     }
 
-    // ===== TÀI KHOẢN NHẸ (đợt fix này) =====
-    // Tên CHƯA từng dùng -> tạo hồ sơ mới với PIN gửi lên.
-    // Tên ĐÃ có -> phải khớp PIN đã lưu mới cho đăng nhập.
-    // Trả về deviceId = username đã chuẩn hoá, để client lưu làm deviceId
-    // dùng chung với toàn bộ hệ thống alerts/signals/subs cũ.
-    if (url.pathname === '/api/login' && request.method === 'POST') {
+    if ((cleanPath === '/api/login' || cleanPath === '/login') && request.method === 'POST') {
       let body;
       try {
         body = await request.json();
@@ -300,14 +296,14 @@ if (url.pathname === '/api/tasks' && request.method === 'POST') {
       return withCors(Response.json({ ok: true }));
     }
 
-    if (url.pathname === '/api/trades' && request.method === 'GET') {
+    if ((cleanPath === '/api/trades' || cleanPath === '/trades') && request.method === 'GET') {
       const deviceId = url.searchParams.get('deviceId');
       if (!deviceId) return withCors(new Response('Thiếu deviceId', { status: 400 }));
       const allTrades = await readJSON(env.TRACKER_KV, TRADES_CONFIG_KEY, {});
       return withCors(Response.json({ ok: true, trades: allTrades[deviceId] || [] }));
     }
 
-    if (url.pathname === '/api/trades' && request.method === 'POST') {
+    if ((cleanPath === '/api/trades' || cleanPath === '/trades') && request.method === 'POST') {
       let body;
       try { body = await request.json(); } catch (err) { return withCors(new Response('JSON không hợp lệ', { status: 400 })); }
       const deviceId = body?.deviceId || url.searchParams.get('deviceId');
@@ -345,7 +341,7 @@ if (url.pathname === '/api/tasks' && request.method === 'POST') {
       return withCors(Response.json({ ok: true, count: updatedList.length, added: addedCount }));
     }
 
-    if (url.pathname === '/api/trades' && request.method === 'DELETE') {
+    if ((cleanPath === '/api/trades' || cleanPath === '/trades') && request.method === 'DELETE') {
       let body = {};
       try { body = await request.json(); } catch (e) {}
       const deviceId = body?.deviceId || url.searchParams.get('deviceId');

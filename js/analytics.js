@@ -1176,8 +1176,8 @@ const AnalyticsModule = (function () {
 #property strict
 
 //--- INPUT CONFIGURATION
-input string   InpServerUrl     = "${serverUrl}"; // URL Server
-input string   InpDeviceId      = "${username}"; // Tên + PIN tài khoản của bạn
+input string   InpServerUrl     = "${serverUrl}"; // URL Server Backend (Allow WebRequest URL)
+input string   InpDeviceId      = "${username}"; // Tên tài khoản của bạn (Chỉ nhập Tên, KHÔNG cần nhập PIN)
 input bool     InpIsCentAccount = true;                                                 // Tài khoản Cent (USC)?
 input int      InpSyncInterval  = 10;                                                   // Khoảng thời gian sync (giây)
 
@@ -1206,7 +1206,7 @@ void OnTimer()
 
 void SyncHistoryTrades()
 {
-   if(!HistorySelect(0, TimeCurrent())) return;
+   if(!HistorySelect(0, TimeCurrent() + 86400)) return;
    
    int totalDeals = HistoryDealsTotal();
    if(totalDeals <= 0) return;
@@ -1263,7 +1263,22 @@ void SyncHistoryTrades()
    if(count == 0) return;
 
    string payload = "{\\"deviceId\\":\\"" + InpDeviceId + "\\",\\"trades\\":" + jsonTrades + "}";
-   SendJsonPost(InpServerUrl + "/api/trades", payload);
+
+   string cleanUrl = InpServerUrl;
+   StringTrimLeft(cleanUrl);
+   StringTrimRight(cleanUrl);
+   while(StringLen(cleanUrl) > 0 && StringSubstr(cleanUrl, StringLen(cleanUrl) - 1, 1) == "/")
+   {
+      cleanUrl = StringSubstr(cleanUrl, 0, StringLen(cleanUrl) - 1);
+   }
+
+   string endpoint = cleanUrl;
+   if(StringFind(cleanUrl, "/api/trades") < 0 && StringFind(cleanUrl, "/trades") < 0)
+   {
+      endpoint = cleanUrl + "/api/trades";
+   }
+
+   SendJsonPost(endpoint, payload, count);
 }
 
 string NormalizeSymbol(string sym)
@@ -1284,7 +1299,7 @@ string SanitizeJson(string s)
    return s;
 }
 
-void SendJsonPost(string url, string jsonBody)
+void SendJsonPost(string url, string jsonBody, int itemCount)
 {
    char data[];
    char result[];
@@ -1298,11 +1313,11 @@ void SendJsonPost(string url, string jsonBody)
    int res = WebRequest("POST", url, headers, 3000, data, result, resultHeaders);
    if(res == 200)
    {
-      // Sync thành công
+      Print("[TradingPro EA] ✅ Đồng bộ thành công ", itemCount, " lệnh lên App!");
    }
    else
    {
-      Print("[TradingPro EA] Error code: ", res, " | Err: ", GetLastError());
+      Print("[TradingPro EA] ❌ Error code: ", res, " | Err: ", GetLastError(), " | URL: ", url);
    }
 }`;
 
@@ -1319,8 +1334,13 @@ void SendJsonPost(string url, string jsonBody)
             <li>Xóa toàn bộ mã mặc định, nhấn nút <strong>📋 Copy Mã MQL5</strong> bên dưới và DÁN vào MetaEditor.</li>
             <li>Nhấn <code>F7</code> (Compile) để biên dịch. Màn hình báo <em>0 errors, 0 warnings</em> là xong.</li>
             <li>Trên giao diện MT5 chính: Vào <code>Tools</code> &rarr; <code>Options</code> &rarr; Chọn tab <code>Expert Advisors</code>.</li>
-            <li>Tích chọn <code>Allow WebRequest for listed URL</code> và bấm đôi chuột thêm URL này vào danh sách: <br><code style="color:var(--accent-blue);">${serverUrl}</code></li>
-            <li>Kéo EA <code>TradingPro_EA_Sync</code> thả vào 1 biểu đồ bất kỳ (VD XAUUSDc M1) và bật <code>Algo Trading</code>. EA sẽ tự động chuyển đổi XAUUSDc/BTCUSDc thành XAUUSD/BTCUSD và đẩy PnL chuẩn USD lên tài khoản <strong>${escapeHtml(username)}</strong> của bạn!</li>
+            <li>Tích chọn <code>Allow WebRequest for listed URL</code> và thêm URL Server Backend này vào danh sách (<strong>KHÔNG</strong> phải link GitHub Pages): <br><code style="color:var(--accent-blue);font-weight:bold;">${serverUrl}</code></li>
+            <li>Kéo EA <code>TradingPro_EA_Sync</code> vào 1 biểu đồ bất kỳ và bật <code>Algo Trading</code>. Tại tab <strong>Inputs</strong>:
+              <ul>
+                <li><strong>InpDeviceId:</strong> Chỉ cần điền <strong>Tên tài khoản (Username)</strong> của bạn (ví dụ: <code>${escapeHtml(username)}</code>), <strong>KHÔNG</strong> cần điền PIN. (Nút Copy Mã ở dưới đã tự điền sẵn tên này).</li>
+                <li><strong>InpServerUrl:</strong> Giữ nguyên đường link Server Backend ở trên.</li>
+              </ul>
+            </li>
           </ol>
         </div>
 
