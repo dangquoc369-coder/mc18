@@ -1177,11 +1177,12 @@ const AnalyticsModule = (function () {
     const username = getDeviceId();
     const appOrigin = window.location.origin || '';
     const isGithub = appOrigin.includes('github.io');
-    const serverUrl = (!isGithub && appOrigin.startsWith('http')) 
+    let currentServerUrl = (!isGithub && appOrigin.startsWith('http')) 
       ? appOrigin 
       : (typeof WORKER_URL !== 'undefined' ? WORKER_URL : 'https://dq-tracker-push.quocngyendanght.workers.dev');
 
-    const mql5Code = `//+------------------------------------------------------------------+
+    function buildMql5Code(serverUrl) {
+      return `//+------------------------------------------------------------------+
 //|                                          TradingPro_EA_Sync.mq5 |
 //|                                  Copyright 2026, TradingPro App |
 //+------------------------------------------------------------------+
@@ -1335,12 +1336,22 @@ void SendJsonPost(string url, string jsonBody, int itemCount)
       Print("[TradingPro EA] ❌ Error code: ", res, " | Err: ", GetLastError(), " | URL: ", url);
    }
 }`;
+    }
 
     const backdrop = document.createElement('div');
     backdrop.className = 'an-modal-backdrop';
     backdrop.innerHTML = `
       <div class="an-modal large">
-        <div class="an-modal-title">🤖 Mã Nguồn EA MQL5 Cho MT5 VPS &amp; Hướng Dẫn</div>
+        <div class="an-modal-title">🤖 Mã Nguồn EA MQL5 Cho MT5 VPS &amp; HƯỚNG DẪN ĐỒNG BỘ</div>
+        
+        <div style="margin-bottom: 12px; padding: 10px 14px; background: rgba(59, 130, 246, 0.08); border-left: 4px solid #3b82f6; border-radius: 6px;">
+          <label style="font-weight:700; font-size: 13px; color: var(--text-color); display:block; margin-bottom: 4px;">🌐 URL Server Backend (Chèn tự động vào MQL5):</label>
+          <input type="text" id="anServerUrlInput" class="an-input" value="${currentServerUrl}" style="width:100%; font-family:monospace; padding: 6px 10px; border: 1px solid var(--border-color); border-radius: 4px; font-size: 13px;" placeholder="https://your-backend-server.com" />
+          <div style="font-size:12px; color: var(--text-muted); margin-top:6px; line-height: 1.4;">
+            ⚠️ <strong>LƯU Ý VỀ LỖI 404:</strong> Nếu bạn đang dùng Cloudflare Worker (<code>dq-tracker-push...</code>) mà MT5 báo <code>Error code: 404</code>, do bạn chưa deploy code mới lên Cloudflare. Bạn cần mở terminal tại máy tính và chạy lệnh: <code style="background:rgba(0,0,0,0.1); padding:2px 6px; border-radius:3px;">cd worker && npx wrangler deploy</code> để cập nhật route <code>/api/trades</code>.
+          </div>
+        </div>
+
         <div class="an-guide-box">
           <p><strong>CÁC BƯỚC CÀI ĐẶT EA LÊN MT5 VPS:</strong></p>
           <ol>
@@ -1349,22 +1360,17 @@ void SendJsonPost(string url, string jsonBody, int itemCount)
             <li>Xóa toàn bộ mã mặc định, nhấn nút <strong>📋 Copy Mã MQL5</strong> bên dưới và DÁN vào MetaEditor.</li>
             <li>Nhấn <code>F7</code> (Compile) để biên dịch. Màn hình báo <em>0 errors, 0 warnings</em> là xong.</li>
             <li>Trên giao diện MT5 chính: Vào <code>Tools</code> &rarr; <code>Options</code> &rarr; Chọn tab <code>Expert Advisors</code>.</li>
-            <li>Tích chọn <code>Allow WebRequest for listed URL</code> và thêm URL Server Backend này vào danh sách (<strong>KHÔNG</strong> phải link GitHub Pages): <br><code style="color:var(--accent-blue);font-weight:bold;">${serverUrl}</code></li>
-            <li>Kéo EA <code>TradingPro_EA_Sync</code> vào 1 biểu đồ bất kỳ và bật <code>Algo Trading</code>. Tại tab <strong>Inputs</strong>:
-              <ul>
-                <li><strong>InpDeviceId:</strong> Chỉ cần điền <strong>Tên tài khoản (Username)</strong> của bạn (ví dụ: <code>${escapeHtml(username)}</code>), <strong>KHÔNG</strong> cần điền PIN. (Nút Copy Mã ở dưới đã tự điền sẵn tên này).</li>
-                <li><strong>InpServerUrl:</strong> Giữ nguyên đường link Server Backend ở trên.</li>
-              </ul>
-            </li>
+            <li>Tích chọn <code>Allow WebRequest for listed URL</code> và thêm URL Server Backend này vào danh sách: <br><code id="anServerUrlDisplay" style="color:var(--accent-blue);font-weight:bold;">${currentServerUrl}</code></li>
+            <li>Kéo EA <code>TradingPro_EA_Sync</code> vào 1 biểu đồ bất kỳ và bật <code>Algo Trading</code>.</li>
           </ol>
         </div>
 
         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px;">
-          <label style="font-weight:600;">Mã nguồn MQL5 (Đã tích hợp Tên + PIN tài khoản của bạn):</label>
+          <label style="font-weight:600;">Mã nguồn MQL5 (Sẽ tự động cập nhật theo Server URL ở trên):</label>
           <button type="button" class="an-btn primary" id="anCopyCodeBtn">📋 Copy Mã MQL5</button>
         </div>
 
-        <textarea readonly class="an-code-area" id="anCodeArea">${mql5Code}</textarea>
+        <textarea readonly class="an-code-area" id="anCodeArea" style="height: 220px;">${buildMql5Code(currentServerUrl)}</textarea>
 
         <div class="an-modal-actions" style="margin-top:12px;">
           <button type="button" class="an-btn" id="anCloseEaModalBtn">Đóng</button>
@@ -1374,12 +1380,21 @@ void SendJsonPost(string url, string jsonBody, int itemCount)
 
     document.body.appendChild(backdrop);
 
+    const urlInput = backdrop.querySelector('#anServerUrlInput');
+    const urlDisplay = backdrop.querySelector('#anServerUrlDisplay');
+    const codeArea = backdrop.querySelector('#anCodeArea');
+
+    urlInput.addEventListener('input', () => {
+      const val = urlInput.value.trim();
+      urlDisplay.textContent = val || 'https://your-backend-server.com';
+      codeArea.value = buildMql5Code(val || 'https://your-backend-server.com');
+    });
+
     backdrop.querySelector('#anCloseEaModalBtn').addEventListener('click', () => backdrop.remove());
     backdrop.querySelector('#anCopyCodeBtn').addEventListener('click', () => {
-      const codeArea = backdrop.querySelector('#anCodeArea');
       codeArea.select();
-      navigator.clipboard.writeText(mql5Code).then(() => {
-        alert('✅ Đã copy mã MQL5 vào bộ nhớ tạm!');
+      navigator.clipboard.writeText(codeArea.value).then(() => {
+        alert('✅ Đã copy mã MQL5 thành công với Server URL hiện tại!');
       }).catch(() => {
         document.execCommand('copy');
         alert('✅ Đã copy mã MQL5!');
