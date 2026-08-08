@@ -36,6 +36,27 @@
  *   toàn bộ luồng auth + domain Worker CHỈ có 1 nguồn sự thật (WORKER_URL +
  *   DEVICE_ID_KEY ở file này) - tránh lặp/lệch cấu hình như bug cũ.
  *
+ * FIX (đợt fix mới nhất - TASK ĐÃ XOÁ CỨ QUAY LẠI KHI DÙNG NHIỀU THIẾT BỊ):
+ *   syncTasks() cũ là "full sync" - mỗi lần đổi (thêm/sửa/xoá/tick) đều gửi
+ *   NGUYÊN mảng task hiện có trên máy lên, ghi đè toàn bộ trên server. Nếu
+ *   mở nhiều thiết bị song song, thiết bị chưa biết 1 task đã bị xoá ở nơi
+ *   khác vẫn có thể gửi lại mảng cũ (còn task đó) lên và "hồi sinh" nó.
+ *
+ *   Giải pháp (phối hợp với tasks.js và worker/src/index.js):
+ *     - Thêm deleteTaskOnServer(id): gọi thẳng DELETE /api/tasks ngay khi
+ *       người dùng bấm xoá (lắng nghe sự kiện 'tasks:deleted' riêng, tách
+ *       biệt khỏi 'tasks:changed' dùng cho full sync) - worker xoá NGAY
+ *       và ghi tombstone dùng chung cho mọi thiết bị cùng deviceId.
+ *     - pullTasksFromServer() giờ đọc thêm "deletedIds" trả về từ GET
+ *       /api/tasks và gọi TasksModule.mergeDeletedFromServer() TRƯỚC khi
+ *       mergeFromServer() - để bất kỳ thiết bị nào (kể cả thiết bị chưa hề
+ *       biết task đã bị xoá) cũng tự dọn task đó khỏi local của mình mỗi
+ *       lần tải lại trang.
+ *     - Nhờ tombstone giờ nằm trên server (không chỉ trong localStorage
+ *       của riêng 1 máy), full sync từ 1 thiết bị "chậm chân" cũng không
+ *       làm task sống lại nữa, vì worker tự lọc bỏ id đã tombstone trước
+ *       khi ghi (xem index.js).
+ *
  * CÁCH HOẠT ĐỘNG (còn lại, không đổi):
  *   1) ensureSubscription(): đăng ký Push Subscription qua PushManager của
  *      trình duyệt (dùng VAPID public key lấy từ Worker), rồi gửi lên Worker
@@ -207,7 +228,12 @@ const PushSync = (function () {
    * chạy TRƯỚC syncTasks() lần đầu, cùng lý do hệt như alerts: nếu không,
    * máy mới đăng nhập (local rỗng) sẽ gửi mảng rỗng lên và server XOÁ mất
    * toàn bộ công việc đã lưu từ thiết bị khác (index.js: merged.length===0
-   * -> delete allConfig[deviceId]). */
+   * -> delete allConfig[deviceId]).
+   *
+   * FIX: giờ còn đọc thêm "deletedIds" (tombstone dùng chung mọi thiết bị,
+   * xem worker/src/index.js) và gọi mergeDeletedFromServer() TRƯỚC
+   * mergeFromServer() - để thiết bị này tự dọn khỏi local mọi task đã bị
+   * xoá ở NƠI KHÁC, dù bản thân nó chưa từng biết việc xoá đó. */
   async function pullTasksFromServer() {
     if (!isConfigured()) return;
     const deviceId = getDeviceId();
@@ -217,6 +243,9 @@ const PushSync = (function () {
       const res = await safeFetch(`${WORKER_URL}/api/tasks?deviceId=${encodeURIComponent(deviceId)}`);
       if (!res || !res.ok) return;
       const data = await res.json();
+      if (data && Array.isArray(data.deletedIds) && data.deletedIds.length > 0 && TasksModule.mergeDeletedFromServer) {
+        TasksModule.mergeDeletedFromServer(data.deletedIds);
+      }
       if (data && Array.isArray(data.tasks)) {
         TasksModule.mergeFromServer(data.tasks);
       }
@@ -318,7 +347,12 @@ const PushSync = (function () {
 
   /** Đồng bộ TOÀN BỘ công việc/lời nhắc (tasks.js) lên Worker. Được gọi mỗi
    * khi tasks.js bắn sự kiện 'tasks:changed' (thêm/sửa/xoá/bật-tắt), và
-   * 1 lần lúc khởi động (sau pullTasksFromServer). */
+   * 1 lần lúc khởi động (sau pullTasksFromServer).
+   *
+   * Lưu ý: đây vẫn là "full sync" ghi đè toàn bộ mảng, nhưng giờ đã AN
+   * TOÀN với việc xoá nhờ worker tự lọc bỏ id đã tombstone (xem
+   * index.js) - dù hàm này gửi lên 1 mảng "lỡ" còn sót task đã bị xoá ở
+   * thiết bị khác, worker vẫn không cho nó sống lại. */
   async function syncTasks() {
     if (!isConfigured()) return;
     const deviceId = getDeviceId();
@@ -354,6 +388,30 @@ const PushSync = (function () {
     }
   }
 
+  /** FIX MỚI: xoá ĐÚNG 1 task trên Worker ngay lập tức (không đợi full
+   * sync qua syncTasks()). Đây là bước quan trọng nhất để chống "task xoá
+   * xong cứ quay lại" khi dùng nhiều thiết bị song song - worker ghi
+   * tombstone ngay khi nhận được, nên MỌI thiết bị khác (kể cả đang mở
+   * sẵn, chưa reload) sẽ tự dọn task này ở lượt pullTasksFromServer() kế
+   * tiếp, và mọi full-sync "lỡ" gửi id này lên sau đó đều bị worker chặn. */
+  async function deleteTaskOnServer(id) {
+    if (!isConfigured()) return;
+    const deviceId = getDeviceId();
+    if (!deviceId || !id) return;
+    try {
+      const res = await safeFetch(`${WORKER_URL}/api/tasks`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId, id }),
+      });
+      if (res && !res.ok) {
+        console.warn('Xoá công việc trên Worker thất bại, HTTP status:', res.status);
+      }
+    } catch (err) {
+      console.warn('Xoá công việc trên Worker:', err);
+    }
+  }
+
   function init() {
     if (!isConfigured()) {
       console.warn(
@@ -371,6 +429,11 @@ const PushSync = (function () {
     // sự kiện này trong persist()). syncTasks() tự bỏ qua nếu chưa đăng
     // nhập hoặc TasksModule chưa sẵn sàng.
     EventBus.on('tasks:changed', () => syncTasks());
+
+    // FIX MỚI: xoá 1 task trên Worker NGAY LẬP TỨC, tách biệt khỏi
+    // 'tasks:changed' (full sync). tasks.js bắn sự kiện này kèm { id }
+    // ngay trong removeTask().
+    EventBus.on('tasks:deleted', ({ id } = {}) => deleteTaskOnServer(id));
 
     // Đồng bộ tín hiệu & setup khi có thay đổi cấu hình pane, symbol, timeframe, breakout, indicator, layout hoặc theme
     EventBus.on('pane:symbolChanged', () => { syncSetup(); syncSignals(); });
@@ -415,5 +478,5 @@ const PushSync = (function () {
     init();
   }
 
-  return { syncAlerts, syncSignals, syncTasks, syncSetup, pullSetupFromServer, ensureSubscription };
+  return { syncAlerts, syncSignals, syncTasks, syncSetup, pullSetupFromServer, ensureSubscription, deleteTaskOnServer };
 })();

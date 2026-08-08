@@ -1,6 +1,6 @@
 /**
  * dq-tracker-push / src/index.js
- *
+
  * (Xem chú thích đầy đủ về cron/KV/alerts/signals ở các đợt fix trước -
  * không đổi. Đợt fix NÀY chỉ thêm phần "tài khoản nhẹ" (tên + PIN) để
  * nhiều người dùng chung app không bị lẫn cảnh báo của nhau.)
@@ -31,6 +31,33 @@
  *       liên quan gì đến tần suất chạy cron).
  *     - Hash PIN bằng SHA-256 (Web Crypto có sẵn trong Workers, không cần
  *       cài thêm thư viện) - KHÔNG lưu PIN dạng plain text.
+ *
+ * FIX (đợt fix mới nhất - TASK ĐÃ XOÁ CỨ QUAY LẠI KHI DÙNG NHIỀU THIẾT BỊ):
+ *   Nguyên nhân gốc: /api/tasks POST là kiểu "full sync" - mỗi thiết bị
+ *   gửi TOÀN BỘ danh sách task hiện có trên máy nó lên, server GHI ĐÈ
+ *   nguyên mảng cho deviceId đó. Nếu người dùng đăng nhập CÙNG 1 tên/PIN
+ *   trên nhiều thiết bị song song:
+ *     1) Thiết bị A xoá task X -> gửi full list (không có X) lên server ->
+ *        server xoá X thành công.
+ *     2) Thiết bị B (đang mở sẵn, CHƯA reload nên local vẫn còn X) sau đó
+ *        có bất kỳ thay đổi nào khác (thêm task mới, tick hoàn thành...)
+ *        -> syncTasks() của B gửi full list CỦA NÓ lên (vẫn còn X, vì B
+ *        chưa hề biết X đã bị xoá) -> ghi đè lên server -> X "sống lại".
+ *
+ *   Giải pháp: thêm 1 key KV "tasks_deleted_v1" làm TOMBSTONE dùng chung
+ *   cho mọi thiết bị cùng deviceId - đây là nguồn sự thật duy nhất, không
+ *   phụ thuộc localStorage của riêng thiết bị nào:
+ *     - Thêm endpoint DELETE /api/tasks: xoá đúng 1 task khỏi config VÀ
+ *       ghi ngay vào tombstone. Client (tasks.js/push-sync.js) gọi thẳng
+ *       endpoint này ngay khi người dùng bấm xoá, không đợi full sync.
+ *     - POST /api/tasks (full sync) giờ LỌC BỎ mọi id đã có trong
+ *       tombstone trước khi ghi - nên dù thiết bị B gửi lên list cũ còn
+ *       X, server vẫn không cho X sống lại.
+ *     - GET /api/tasks trả thêm "deletedIds" - để MỌI thiết bị khi pull
+ *       về đều biết X đã bị xoá và tự dọn X khỏi local của chính nó (xem
+ *       TasksModule.mergeDeletedFromServer() trong tasks.js).
+ *     - Tombstone tự dọn sau 90 ngày (TASKS_DELETED_TTL_MS) để không phình
+ *       KV vô hạn.
  */
 
 import { buildPushPayload } from '@block65/webcrypto-web-push';
@@ -45,6 +72,8 @@ const SIGNALS_STATE_KEY = 'signals_state_v1'; // { [deviceId]: { [signalStateKey
 
 const TASKS_CONFIG_KEY = 'tasks_config_v1'; // { [deviceId]: [{id,title,note,date,time,repeat,daysOfWeek,enabled}] }
 const TASKS_STATE_KEY = 'tasks_state_v1';   // { [deviceId]: { [taskId]: lastNotifiedKey } }
+const TASKS_DELETED_KEY = 'tasks_deleted_v1'; // { [deviceId]: { [taskId]: deletedAtTimestampMs } } - tombstone dùng chung mọi thiết bị
+const TASKS_DELETED_TTL_MS = 90 * 24 * 60 * 60 * 1000; // tự dọn tombstone sau 90 ngày
 
 const SETUP_CONFIG_KEY = 'setup_config_v1'; // { [deviceId]: { panes, enabledSignalTimeframes, layout, indicatorPrefs, theme } }
 const TRADES_CONFIG_KEY = 'trades_config_v1'; // { [deviceId]: [{ticket, symbol, type, lots, openPrice, closePrice, openTime, closeTime, pnl, commission, swap, magic, comment, isBot}] }
@@ -96,6 +125,20 @@ async function hashPin(pin) {
   const enc = new TextEncoder().encode(pin);
   const digest = await crypto.subtle.digest('SHA-256', enc);
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Dọn các tombstone quá hạn (90 ngày) khỏi 1 map { [taskId]: deletedAtMs }.
+// Trả về true nếu có thay đổi (để caller biết còn cần ghi lại KV hay không).
+function pruneDeletedMap(map) {
+  const now = Date.now();
+  let changed = false;
+  Object.keys(map).forEach((id) => {
+    if (now - map[id] > TASKS_DELETED_TTL_MS) {
+      delete map[id];
+      changed = true;
+    }
+  });
+  return changed;
 }
 
 function normalizeTradeItem(t) {
@@ -253,36 +296,91 @@ export default {
     }
 
     if (url.pathname === '/api/tasks' && request.method === 'GET') {
-  const deviceId = url.searchParams.get('deviceId');
-  if (!deviceId) return withCors(new Response('Thiếu deviceId', { status: 400 }));
-  const allConfig = await readJSON(env.TRACKER_KV, TASKS_CONFIG_KEY, {});
-  return withCors(Response.json({ ok: true, tasks: allConfig[deviceId] || [] }));
-}
+      const deviceId = url.searchParams.get('deviceId');
+      if (!deviceId) return withCors(new Response('Thiếu deviceId', { status: 400 }));
+      const allConfig = await readJSON(env.TRACKER_KV, TASKS_CONFIG_KEY, {});
+      const allDeleted = await readJSON(env.TRACKER_KV, TASKS_DELETED_KEY, {});
+      const deviceDeleted = allDeleted[deviceId] || {};
+      return withCors(Response.json({
+        ok: true,
+        tasks: allConfig[deviceId] || [],
+        // Trả kèm danh sách id đã xoá để MỌI thiết bị pull về đều tự dọn
+        // task đó khỏi local của chính nó (xem mergeDeletedFromServer).
+        deletedIds: Object.keys(deviceDeleted),
+      }));
+    }
 
-if (url.pathname === '/api/tasks' && request.method === 'POST') {
-  let body;
-  try { body = await request.json(); } catch (err) { return withCors(new Response('JSON không hợp lệ', { status: 400 })); }
-  const { deviceId, tasks } = body || {};
-  if (!deviceId || !Array.isArray(tasks)) return withCors(new Response('Payload không hợp lệ', { status: 400 }));
-  console.log(`[api/tasks] deviceId=${deviceId} nhận ${tasks.length} task(s)`); // thêm dòng này để thấy trong tail
+    if (url.pathname === '/api/tasks' && request.method === 'POST') {
+      let body;
+      try { body = await request.json(); } catch (err) { return withCors(new Response('JSON không hợp lệ', { status: 400 })); }
+      const { deviceId, tasks } = body || {};
+      if (!deviceId || !Array.isArray(tasks)) return withCors(new Response('Payload không hợp lệ', { status: 400 }));
+      console.log(`[api/tasks] deviceId=${deviceId} nhận ${tasks.length} task(s)`); // thêm dòng này để thấy trong tail
 
-  const allConfig = await readJSON(env.TRACKER_KV, TASKS_CONFIG_KEY, {});
-  const merged = tasks
-    .filter((t) => t && t.id && t.title && t.date && t.time)
-    .map((t) => ({
-      id: t.id, title: t.title, note: t.note || '', date: t.date, time: t.time,
-      repeat: t.repeat || 'none', daysOfWeek: Array.isArray(t.daysOfWeek) ? t.daysOfWeek : [],
-      enabled: !!t.enabled,
-    }));
+      const allConfig = await readJSON(env.TRACKER_KV, TASKS_CONFIG_KEY, {});
+      const allDeleted = await readJSON(env.TRACKER_KV, TASKS_DELETED_KEY, {});
+      const deviceDeleted = allDeleted[deviceId] || {};
 
-  const prevStr = JSON.stringify(allConfig[deviceId] || []);
-  if (merged.length > 0) allConfig[deviceId] = merged; else delete allConfig[deviceId];
-  const nextStr = JSON.stringify(allConfig[deviceId] || []);
-  if (prevStr !== nextStr) {
-    await writeJSON(env.TRACKER_KV, TASKS_CONFIG_KEY, allConfig);
-  }
-  return withCors(Response.json({ ok: true, count: merged.length }));
-}
+      const merged = tasks
+        .filter((t) => t && t.id && t.title && t.date && t.time)
+        // BẮT BUỘC: bỏ qua mọi id đã có trong tombstone - đây là chỗ chặn
+        // trường hợp 1 thiết bị/tab khác (chưa biết task đã bị xoá) gửi
+        // lên full list cũ còn chứa task đó và ghi đè làm nó "sống lại".
+        .filter((t) => !deviceDeleted[t.id])
+        .map((t) => ({
+          id: t.id, title: t.title, note: t.note || '', date: t.date, time: t.time,
+          repeat: t.repeat || 'none', daysOfWeek: Array.isArray(t.daysOfWeek) ? t.daysOfWeek : [],
+          enabled: !!t.enabled,
+        }));
+
+      const prevStr = JSON.stringify(allConfig[deviceId] || []);
+      if (merged.length > 0) allConfig[deviceId] = merged; else delete allConfig[deviceId];
+      const nextStr = JSON.stringify(allConfig[deviceId] || []);
+      if (prevStr !== nextStr) {
+        await writeJSON(env.TRACKER_KV, TASKS_CONFIG_KEY, allConfig);
+      }
+      return withCors(Response.json({ ok: true, count: merged.length }));
+    }
+
+    // Xoá ĐÚNG 1 task và ghi tombstone ngay lập tức - gọi thẳng từ client
+    // ngay khi người dùng bấm xoá (không đợi full sync qua POST ở trên).
+    // Đây là nguồn sự thật chung cho MỌI thiết bị cùng deviceId.
+    if (url.pathname === '/api/tasks' && request.method === 'DELETE') {
+      let body = {};
+      try { body = await request.json(); } catch (e) {}
+      const deviceId = body?.deviceId || url.searchParams.get('deviceId');
+      const taskId = body?.id || body?.taskId || url.searchParams.get('id');
+      if (!deviceId || !taskId) return withCors(new Response('Thiếu deviceId hoặc id', { status: 400 }));
+
+      const allConfig = await readJSON(env.TRACKER_KV, TASKS_CONFIG_KEY, {});
+      const allDeleted = await readJSON(env.TRACKER_KV, TASKS_DELETED_KEY, {});
+      const allTaskState = await readJSON(env.TRACKER_KV, TASKS_STATE_KEY, {});
+
+      let configChanged = false;
+      if (allConfig[deviceId]) {
+        const before = allConfig[deviceId].length;
+        allConfig[deviceId] = allConfig[deviceId].filter((t) => t.id !== taskId);
+        if (allConfig[deviceId].length !== before) configChanged = true;
+        if (allConfig[deviceId].length === 0) delete allConfig[deviceId];
+      }
+
+      const deviceDeleted = allDeleted[deviceId] || (allDeleted[deviceId] = {});
+      deviceDeleted[taskId] = Date.now();
+      pruneDeletedMap(deviceDeleted); // tiện thể dọn tombstone quá hạn của deviceId này
+
+      let stateChanged = false;
+      if (allTaskState[deviceId] && allTaskState[deviceId][taskId] !== undefined) {
+        delete allTaskState[deviceId][taskId];
+        stateChanged = true;
+        if (Object.keys(allTaskState[deviceId]).length === 0) delete allTaskState[deviceId];
+      }
+
+      if (configChanged) await writeJSON(env.TRACKER_KV, TASKS_CONFIG_KEY, allConfig);
+      await writeJSON(env.TRACKER_KV, TASKS_DELETED_KEY, allDeleted);
+      if (stateChanged) await writeJSON(env.TRACKER_KV, TASKS_STATE_KEY, allTaskState);
+
+      return withCors(Response.json({ ok: true }));
+    }
 
     if (url.pathname === '/api/setup' && request.method === 'GET') {
       const deviceId = url.searchParams.get('deviceId');

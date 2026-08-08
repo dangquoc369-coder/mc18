@@ -4,11 +4,37 @@
  * Hỗ trợ phân loại chuyên sâu cho Trader (Kế hoạch, Quản trị rủi ro, Nhật ký, VPS/Hệ thống),
  * độ ưu tiên (Cao, Trung bình, Thấp), gắn Symbol cặp giao dịch, Mẫu gợi ý nhanh (Trading Presets),
  * Bảng thống kê tiến độ (Dashboard KPI Cards) và bộ lọc đa năng.
+ *
+ * FIX (đợt fix mới nhất - TASK ĐÃ XOÁ CỨ QUAY LẠI):
+ *   Nguyên nhân: mergeFromServer() trước đây chỉ biết "thêm task nếu local
+ *   chưa có id đó" - nó KHÔNG phân biệt được giữa "id này chưa từng tồn tại"
+ *   và "id này đã từng tồn tại nhưng người dùng đã chủ động xoá". Vì vậy nếu
+ *   1 lượt GET /api/tasks chạy và trả về dữ liệu CŨ (ví dụ: do POST xoá lên
+ *   server bị debounce/mất mạng/đóng tab chưa kịp gửi xong, hoặc do
+ *   pullTasksFromServer() chạy lại lúc load trang), task vừa xoá sẽ bị
+ *   mergeFromServer() nhét lại vào local -> cảm giác "xoá không được".
+ *
+ *   Giải pháp: thêm cơ chế "tombstone" - mỗi khi xoá 1 task, lưu lại id đó
+ *   (kèm thời điểm xoá) vào 1 key localStorage riêng
+ *   (DELETED_STORAGE_KEY). mergeFromServer() sẽ BỎ QUA mọi id nằm trong
+ *   danh sách tombstone này, dù server có trả về hay không. Tombstone được
+ *   tự động dọn sau DELETED_TTL_MS (90 ngày) để không phình vô hạn.
+ *
+ *   Lưu ý: đây là fix ở phía CLIENT (đủ cho trường hợp dùng 1 thiết bị/1
+ *   tab). Nếu dùng nhiều thiết bị/nhiều tab đồng thời, thiết bị/tab KHÁC
+ *   (chưa biết task đã bị xoá) vẫn có thể POST đè nguyên danh sách cũ của
+ *   nó lên server và làm task "sống lại" trên server thật sự - trường hợp
+ *   đó cần sửa thêm ở worker (endpoint DELETE riêng + đồng bộ tombstone
+ *   qua server), không nằm trong phạm vi file này.
  */
 const TasksModule = (function () {
   const TASKS_STORAGE_KEY = 'dq_tracker_tasks_v1';
+  const DELETED_STORAGE_KEY = 'dq_tracker_deleted_tasks_v1'; // { [id]: deletedAtTimestamp }
+  const DELETED_TTL_MS = 90 * 24 * 60 * 60 * 1000; // tự dọn tombstone sau 90 ngày
   const CHECK_INTERVAL_MS = 30000;
   const WEEKDAY_LABELS = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+
+  let deletedIds = {};
 
   function getIconSvg(name, extraClass = '') {
     if (typeof Icons !== 'undefined' && Icons[name]) {
@@ -98,6 +124,36 @@ const TasksModule = (function () {
     } catch (err) {
       tasks = [];
     }
+    loadDeletedIds();
+  }
+
+  // ---------- Tombstone (danh sách id đã xoá) ----------
+  function loadDeletedIds() {
+    try {
+      const raw = localStorage.getItem(DELETED_STORAGE_KEY);
+      deletedIds = raw ? JSON.parse(raw) : {};
+    } catch (err) {
+      deletedIds = {};
+    }
+    // Dọn các tombstone quá hạn (90 ngày) để không phình localStorage mãi
+    const now = Date.now();
+    let pruned = false;
+    Object.keys(deletedIds).forEach((id) => {
+      if (now - deletedIds[id] > DELETED_TTL_MS) {
+        delete deletedIds[id];
+        pruned = true;
+      }
+    });
+    if (pruned) persistDeletedIds();
+  }
+
+  function persistDeletedIds() {
+    localStorage.setItem(DELETED_STORAGE_KEY, JSON.stringify(deletedIds));
+  }
+
+  function markDeleted(id) {
+    deletedIds[id] = Date.now();
+    persistDeletedIds();
   }
 
   function persist({ sync = true } = {}) {
@@ -113,6 +169,7 @@ const TasksModule = (function () {
     let changed = false;
     serverTasks.forEach((st) => {
       if (!st || !st.id || localIds.has(st.id)) return;
+      if (deletedIds[st.id]) return; // task này đã bị xoá trước đó -> không hồi sinh
       tasks.push({
         id: st.id,
         title: st.title || '',
@@ -301,6 +358,7 @@ const TasksModule = (function () {
 
   function removeTask(id) {
     tasks = tasks.filter((t) => t.id !== id);
+    markDeleted(id); // ghi tombstone để mergeFromServer không hồi sinh task này
     persist();
   }
 
