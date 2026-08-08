@@ -56,7 +56,7 @@ const PROFILES_KEY = 'profiles_v1'; // { [username]: pinHashHex }
 
 function withCors(resp) {
   resp.headers.set('Access-Control-Allow-Origin', '*');
-  resp.headers.set('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  resp.headers.set('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS'); // ← thêm DELETE
   resp.headers.set('Access-Control-Allow-Headers', 'Content-Type');
   return resp;
 }
