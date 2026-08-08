@@ -1424,7 +1424,7 @@ const AnalyticsModule = (function () {
 //--- INPUT CONFIGURATION
 input string   InpServerUrl     = "${serverUrl}"; // URL Server Backend (Allow WebRequest URL)
 input string   InpDeviceId      = "${username}"; // Tên tài khoản của bạn (Chỉ nhập Tên, KHÔNG cần nhập PIN)
-input int      InpSyncInterval  = 10;                                                   // Khoảng thời gian sync (giây)
+input int      InpSyncInterval  = 28800;                                                   // Khoảng thời gian sync (giây)
 
 int OnInit()
 {
@@ -1434,9 +1434,7 @@ int OnInit()
       return(INIT_FAILED);
    }
 
-   // Chỉ hiển thị log loại tiền tài khoản để bạn biết - KHÔNG quy đổi số
-   // liệu, app sẽ luôn hiển thị nhãn "USD" bất kể tài khoản là USD hay Cent.
-   Print("[TradingPro EA] Loại tiền tài khoản MT5: ", AccountInfoString(ACCOUNT_CURRENCY), " -> App sẽ hiển thị là USD.");
+   // Chỉ hiển thị log loại tiền tài khoản để bạn biết
 
    EventSetTimer(InpSyncInterval);
    Print("[TradingPro EA] Đã kết nối EA cho tài khoản: ", InpDeviceId);
