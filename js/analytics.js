@@ -16,6 +16,10 @@
  * 5. Biểu đồ đường Lợi nhuận Tích lũy (Cumulative PnL / Equity Curve Canvas 2D interactive).
  * 6. Mã nguồn MQL5 EA MT5 chuẩn chỉnh + Hướng dẫn kết nối VPS MT5 chi tiết.
  * 7. Tối ưu phân trang & mượt mà 60fps khi lưu hàng nghìn lệnh giao dịch.
+ * 8. Xóa nhật ký lệnh AN TOÀN: chờ xác nhận thật sự từ Server trước khi báo
+ *    thành công, tránh tình trạng lệnh cũ "tự hồi sinh" do request DELETE
+ *    lên server âm thầm thất bại (mất mạng / lỗi Worker / lỗi 404...).
+ * 
  */
 
 const AnalyticsModule = (function () {
@@ -181,19 +185,36 @@ const AnalyticsModule = (function () {
     }
   }
 
-  // Xóa lệnh trên Server (nếu truyền ticket -> xóa 1 lệnh, nếu không -> xóa toàn bộ)
+  // ===== XÓA LỆNH TRÊN SERVER (ĐÃ SỬA: TRẢ VỀ KẾT QUẢ THẬT, KHÔNG "BẮN VÀ QUÊN") =====
+  // Trước đây hàm này không await, không kiểm tra response, không báo lỗi -> nếu
+  // request DELETE thất bại (mất mạng, lỗi CORS, Worker lỗi, route 404...) thì
+  // server VẪN CÒN dữ liệu cũ, nhưng người dùng lại tưởng đã xóa thành công.
+  // Lần mở app sau, pullTradesFromServer() kéo lại dữ liệu cũ đó về -> lệnh
+  // "tự hồi sinh". Giờ hàm này trả về { ok, error } để nơi gọi biết chắc chắn.
   async function deleteTradeOnServer(ticket) {
     const deviceId = getDeviceId();
-    if (!deviceId) return;
+    if (!deviceId) {
+      return { ok: false, error: 'Không tìm thấy deviceId (tên tài khoản)' };
+    }
     try {
       const url = getApiTradesUrl();
-      await fetch(url, {
+      const res = await fetch(url, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(ticket ? { deviceId, ticket } : { deviceId })
       });
+
+      if (!res.ok) {
+        let bodyText = '';
+        try { bodyText = await res.text(); } catch (e) { /* ignore */ }
+        console.error('[analytics.js] Server từ chối xóa. Status:', res.status, bodyText);
+        return { ok: false, error: `Server trả về lỗi HTTP ${res.status}${bodyText ? ' - ' + bodyText : ''}` };
+      }
+
+      return { ok: true };
     } catch (err) {
       console.error('[analytics.js] Lỗi xóa lệnh trên server:', err);
+      return { ok: false, error: err && err.message ? err.message : 'Lỗi kết nối mạng tới server' };
     }
   }
 
@@ -1305,20 +1326,64 @@ const AnalyticsModule = (function () {
   }
 
   // ===== XOÁ VÀ XỬ LÝ LỆNH =====
-  function deleteTrade(ticket) {
+
+  // Xóa 1 lệnh: xóa local ngay để UI phản hồi nhanh, nhưng nếu xóa server
+  // thất bại sẽ cảnh báo rõ để tránh lệnh này "tự hồi sinh" ở lần pull sau.
+  async function deleteTrade(ticket) {
     if (!ticket) return;
-    if (confirm(`Bạn có chắc chắn muốn xóa lệnh #${ticket} không?`)) {
-      trades = trades.filter((t) => String(t.ticket) !== String(ticket));
-      persistLocalTrades({ sync: false });
-      deleteTradeOnServer(ticket);
+    if (!confirm(`Bạn có chắc chắn muốn xóa lệnh #${ticket} không?`)) return;
+
+    trades = trades.filter((t) => String(t.ticket) !== String(ticket));
+    persistLocalTrades({ sync: false });
+
+    const result = await deleteTradeOnServer(ticket);
+    if (!result.ok) {
+      alert(`⚠️ Đã xóa khỏi màn hình, nhưng xóa trên SERVER thất bại (${result.error}).\n\nLệnh #${ticket} có thể tự động hiện lại ở lần mở app sau. Vui lòng kiểm tra kết nối server rồi thử xóa lại.`);
     }
   }
 
-  function clearAllTrades() {
-    if (confirm('Bạn có chắc chắn muốn XOÁ TOÀN BỘ nhật ký lệnh của tài khoản này không?')) {
-      trades = [];
-      persistLocalTrades({ sync: false });
-      deleteTradeOnServer();
+  // ===== XÓA TOÀN BỘ NHẬT KÝ - ĐÃ SỬA: CHỜ SERVER XÁC NHẬN THẬT SỰ =====
+  // Trước đây: xóa local xong gọi deleteTradeOnServer() không await -> nếu
+  // server lỗi/mất mạng thì dữ liệu cũ vẫn còn nguyên trên server, và
+  // pullTradesFromServer() ở lần mở app kế tiếp sẽ tự động kéo nó về lại,
+  // khiến người dùng thấy lệnh cũ "tự hồi sinh" dù đã bấm Xóa.
+  // Giờ hàm này AWAIT kết quả xóa server trước, báo lỗi rõ ràng nếu thất
+  // bại, và chỉ khi đó người dùng mới biết cần kiểm tra lại server/Worker.
+  async function clearAllTrades() {
+    if (!confirm(
+      'Bạn có chắc chắn muốn XOÁ TOÀN BỘ nhật ký lệnh của tài khoản này không?\n\n' +
+      'Lưu ý: Nếu EA vẫn đang chạy trên VPS (kể cả trên chart khác), EA sẽ tự động gửi lại toàn bộ lịch sử cũ lên server ngay khi khởi động lại. Hãy gỡ EA khỏi TẤT CẢ các chart trước khi xóa.'
+    )) {
+      return;
+    }
+
+    const btn = document.getElementById('anClearTradesBtn');
+    const originalHtml = btn ? btn.innerHTML : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = 'Đang xóa trên server...';
+    }
+
+    // Xóa trên SERVER TRƯỚC, chờ kết quả thật sự
+    const result = await deleteTradeOnServer();
+
+    // Chỉ sau khi biết chắc kết quả server mới xóa local + báo người dùng
+    trades = [];
+    persistLocalTrades({ sync: false });
+
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+    }
+
+    if (!result.ok) {
+      alert(
+        `❌ XÓA TRÊN SERVER THẤT BẠI: ${result.error}\n\n` +
+        'Dữ liệu trên màn hình đã được xóa, NHƯNG dữ liệu cũ vẫn còn trên server và sẽ tự động hiện lại khi app kết nối lại.\n\n' +
+        'Cách khắc phục: kiểm tra kết nối mạng, kiểm tra route DELETE /api/trades trên Cloudflare Worker (có thể cần "npx wrangler deploy" lại), rồi bấm Xóa nhật ký lần nữa.'
+      );
+    } else {
+      alert('✅ Đã xóa toàn bộ nhật ký lệnh - đã xác nhận xóa thành công trên cả server. Bạn có thể gắn lại EA mới an toàn.');
     }
   }
 
@@ -1452,50 +1517,158 @@ void OnTimer()
    SyncHistoryTrades();
 }
 
+//--- Struct lưu thông tin Position gốc (gom từ các deal ENTRY_IN)
+struct PositionInfo
+{
+   long     positionId;
+   string   symbol;
+   int      type;         // DEAL_TYPE_BUY / DEAL_TYPE_SELL của deal VÀO lệnh (chiều gốc)
+   double   volumeIn;      // tổng khối lượng đã vào (cộng dồn qua scale-in)
+   double   weightedPrice; // giá vào trung bình gia quyền
+   datetime openTime;      // thời gian vào lệnh ĐẦU TIÊN
+   long     magic;
+   string   comment;
+};
+
+long         g_posIds[];
+PositionInfo g_posInfo[];
+
+int FindOrCreatePosInfo(long posId)
+{
+   int total = ArraySize(g_posIds);
+   for(int i = 0; i < total; i++)
+      if(g_posIds[i] == posId) return i;
+
+   ArrayResize(g_posIds, total + 1);
+   ArrayResize(g_posInfo, total + 1);
+   g_posIds[total] = posId;
+   g_posInfo[total].positionId  = posId;
+   g_posInfo[total].volumeIn    = 0;
+   g_posInfo[total].weightedPrice = 0;
+   return total;
+}
+
 void SyncHistoryTrades()
 {
    if(!HistorySelect(0, TimeCurrent() + 86400)) return;
-   
+
    int totalDeals = HistoryDealsTotal();
    if(totalDeals <= 0) return;
 
+   ArrayResize(g_posIds, 0);
+   ArrayResize(g_posInfo, 0);
+
+   //===== PASS 1: Gom deal ENTRY_IN theo POSITION_ID =====
+   // Xử lý Scale-in: nếu 1 Position có nhiều lần vào lệnh, tính giá vào
+   // trung bình gia quyền theo khối lượng, giữ nguyên OpenTime của lần vào ĐẦU TIÊN.
+   for(int i = 0; i < totalDeals; i++)
+   {
+      ulong dealTicket = HistoryDealGetTicket(i);
+      if(dealTicket <= 0) continue;
+
+      long entry = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_IN) continue;
+
+      long dealType = HistoryDealGetInteger(dealTicket, DEAL_TYPE);
+      if(dealType != DEAL_TYPE_BUY && dealType != DEAL_TYPE_SELL) continue;
+
+      long posId   = (long)HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+      double vol   = HistoryDealGetDouble(dealTicket, DEAL_VOLUME);
+      double price = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+      datetime dT  = (datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME);
+
+      int idx = FindOrCreatePosInfo(posId);
+
+      if(g_posInfo[idx].volumeIn <= 0)
+      {
+         g_posInfo[idx].symbol   = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
+         g_posInfo[idx].type     = (int)dealType;   // chiều lệnh GỐC lấy từ đây
+         g_posInfo[idx].openTime = dT;
+         g_posInfo[idx].magic    = HistoryDealGetInteger(dealTicket, DEAL_MAGIC);
+         g_posInfo[idx].comment  = HistoryDealGetString(dealTicket, DEAL_COMMENT);
+      }
+
+      g_posInfo[idx].weightedPrice =
+         (g_posInfo[idx].weightedPrice * g_posInfo[idx].volumeIn + price * vol)
+         / (g_posInfo[idx].volumeIn + vol);
+      g_posInfo[idx].volumeIn += vol;
+   }
+
+   //===== PASS 2: Duyệt deal ENTRY_OUT / ENTRY_INOUT -> ghép với PositionInfo =====
+   // Mỗi lần đóng/đóng từng phần (Scale-out) = 1 bản ghi lệnh riêng,
+   // nhưng type/openPrice/openTime lấy đúng từ Position gốc ở Pass 1.
    string jsonTrades = "[";
    int count = 0;
 
    for(int i = 0; i < totalDeals; i++)
    {
-      ulong ticket = HistoryDealGetTicket(i);
-      if(ticket <= 0) continue;
+      ulong dealTicket = HistoryDealGetTicket(i);
+      if(dealTicket <= 0) continue;
 
-      long entry = HistoryDealGetInteger(ticket, DEAL_ENTRY);
+      long entry = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
       if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_INOUT) continue;
 
-      long dealType = HistoryDealGetInteger(ticket, DEAL_TYPE);
+      long dealType = HistoryDealGetInteger(dealTicket, DEAL_TYPE);
       if(dealType != DEAL_TYPE_BUY && dealType != DEAL_TYPE_SELL) continue;
 
-      string rawSymbol = HistoryDealGetString(ticket, DEAL_SYMBOL);
-      string symbol = NormalizeSymbol(rawSymbol);
-      
-      double lots = HistoryDealGetDouble(ticket, DEAL_VOLUME);
-      double price = HistoryDealGetDouble(ticket, DEAL_PRICE);
-      double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
-      double comm = HistoryDealGetDouble(ticket, DEAL_COMMISSION);
-      double swap = HistoryDealGetDouble(ticket, DEAL_SWAP);
-      datetime dealTime = (datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
-      long magic = HistoryDealGetInteger(ticket, DEAL_MAGIC);
-      string comment = HistoryDealGetString(ticket, DEAL_COMMENT);
+      long posId = (long)HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
 
-      string typeStr = (dealType == DEAL_TYPE_BUY) ? "BUY" : "SELL";
-      
+      int idx = -1;
+      int totalPos = ArraySize(g_posIds);
+      for(int p = 0; p < totalPos; p++)
+      {
+         if(g_posIds[p] == posId) { idx = p; break; }
+      }
+
+      string  rawSymbol   = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
+      string  symbol      = NormalizeSymbol(rawSymbol);
+      double  closeVolume = HistoryDealGetDouble(dealTicket, DEAL_VOLUME);
+      double  closePrice  = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+      double  profit      = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
+      double  comm        = HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+      double  swap        = HistoryDealGetDouble(dealTicket, DEAL_SWAP);
+      datetime closeTime  = (datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME);
+      long    dealMagic   = HistoryDealGetInteger(dealTicket, DEAL_MAGIC);
+      string  dealComment = HistoryDealGetString(dealTicket, DEAL_COMMENT);
+
+      string   typeStr;
+      double   openPrice;
+      datetime openTime;
+      long     magic;
+      string   comment;
+
+      if(idx >= 0 && g_posInfo[idx].volumeIn > 0)
+      {
+         // Trường hợp chuẩn: tìm được deal vào lệnh gốc
+         typeStr   = (g_posInfo[idx].type == DEAL_TYPE_BUY) ? "BUY" : "SELL";
+         openPrice = g_posInfo[idx].weightedPrice;
+         openTime  = g_posInfo[idx].openTime;
+         magic     = g_posInfo[idx].magic;
+         comment   = g_posInfo[idx].comment;
+      }
+      else
+      {
+         // Fallback hiếm gặp: lệnh mở trước khi Terminal tải đủ lịch sử
+         // -> suy ra chiều lệnh gốc ngược với deal đóng
+         typeStr   = (dealType == DEAL_TYPE_SELL) ? "BUY" : "SELL";
+         openPrice = 0;
+         openTime  = closeTime;
+         magic     = dealMagic;
+         comment   = dealComment;
+      }
+
       if(count > 0) jsonTrades += ",";
-      
+
       jsonTrades += "{";
-      jsonTrades += "\\"ticket\\":\\"" + IntegerToString(ticket) + "\\",";
+      jsonTrades += "\\"ticket\\":\\"" + IntegerToString(posId) + "_" + IntegerToString(dealTicket) + "\\",";
+      jsonTrades += "\\"positionId\\":\\"" + IntegerToString(posId) + "\\",";
       jsonTrades += "\\"symbol\\":\\"" + symbol + "\\",";
       jsonTrades += "\\"type\\":\\"" + typeStr + "\\",";
-      jsonTrades += "\\"lots\\":" + DoubleToString(lots, 2) + ",";
-      jsonTrades += "\\"closePrice\\":" + DoubleToString(price, 5) + ",";
-      jsonTrades += "\\"closeTime\\":\\"" + TimeToString(dealTime, TIME_DATE|TIME_SECONDS) + "\\",";
+      jsonTrades += "\\"lots\\":" + DoubleToString(closeVolume, 2) + ",";
+      jsonTrades += "\\"openPrice\\":" + DoubleToString(openPrice, 5) + ",";
+      jsonTrades += "\\"closePrice\\":" + DoubleToString(closePrice, 5) + ",";
+      jsonTrades += "\\"openTime\\":\\"" + TimeToString(openTime, TIME_DATE|TIME_SECONDS) + "\\",";
+      jsonTrades += "\\"closeTime\\":\\"" + TimeToString(closeTime, TIME_DATE|TIME_SECONDS) + "\\",";
       // Gửi nguyên số PnL/Commission/Swap của tài khoản (KHÔNG chia 100
       // dù tài khoản là USD hay Cent/USC) - app hiển thị nhãn "USD" cố
       // định, chỉ đổi tên đơn vị hiển thị chứ không quy đổi giá trị.
