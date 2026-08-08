@@ -12,7 +12,7 @@
  * 3. Phân biệt Lệnh Bot (EA) vs Lệnh Tay (Manual) dựa trên magic number / comment.
  * 4. Chuẩn hóa Symbol & PnL:
  *    - Symbol: XAUUSDc -> XAUUSD, BTCUSDc -> BTCUSD (luôn bỏ đuôi 'c')
- *    - PnL: Mặc định tự động quy đổi từ tài khoản USC (cent) sang USD (PnL_USD = PnL_USC / 100).
+ *    - PnL: Giữ nguyên số gốc từ MT5 (KHÔNG chia 100), chỉ hiển thị nhãn đơn vị là "USD" dù tài khoản là USD hay Cent/USC.
  * 5. Biểu đồ đường Lợi nhuận Tích lũy (Cumulative PnL / Equity Curve Canvas 2D interactive).
  * 6. Mã nguồn MQL5 EA MT5 chuẩn chỉnh + Hướng dẫn kết nối VPS MT5 chi tiết.
  * 7. Tối ưu phân trang & mượt mà 60fps khi lưu hàng nghìn lệnh giao dịch.
@@ -20,8 +20,14 @@
 
 const AnalyticsModule = (function () {
   const TRADES_STORAGE_KEY = 'dq_tracker_trades_v1';
+  const CAPITAL_STORAGE_KEY = 'dq_tracker_initial_capital_v1';
+  const DEFAULT_INITIAL_CAPITAL = 1000;
 
   let trades = [];
+  // Vốn ban đầu (USD) do người dùng tự nhập - dùng để tính Max Drawdown %
+  // và Calmar Ratio chính xác theo đúng số vốn thật, thay vì giả định cứng
+  // $1,000 như trước (đây chính là nguồn gây nghi ngờ số liệu sai).
+  let initialCapital = DEFAULT_INITIAL_CAPITAL;
   let currentView = 'chart'; // 'chart' | 'tasks' | 'analytics'
 
   // Bộ lọc
@@ -48,6 +54,31 @@ const AnalyticsModule = (function () {
       return localStorage.getItem('dq_tracker_device_id_v1') || 'default_user';
     } catch (e) {
       return 'default_user';
+    }
+  }
+
+  // Tải vốn ban đầu đã lưu (nếu chưa có thì dùng mặc định)
+  function loadInitialCapital() {
+    try {
+      const raw = localStorage.getItem(CAPITAL_STORAGE_KEY);
+      const val = raw !== null ? parseFloat(raw) : NaN;
+      initialCapital = (!isNaN(val) && val > 0) ? val : DEFAULT_INITIAL_CAPITAL;
+    } catch (e) {
+      initialCapital = DEFAULT_INITIAL_CAPITAL;
+    }
+  }
+
+  // Lưu vốn ban đầu do người dùng nhập & render lại toàn bộ chỉ số
+  function saveInitialCapital(rawVal) {
+    const num = parseFloat(rawVal);
+    initialCapital = (!isNaN(num) && num > 0) ? num : DEFAULT_INITIAL_CAPITAL;
+    try {
+      localStorage.setItem(CAPITAL_STORAGE_KEY, String(initialCapital));
+    } catch (e) {
+      console.error('[analytics.js] Lỗi lưu vốn ban đầu:', e);
+    }
+    if (currentView === 'analytics') {
+      renderMainView();
     }
   }
 
@@ -301,8 +332,8 @@ const AnalyticsModule = (function () {
       if (ddUSD > maxDrawdownUSD) {
         maxDrawdownUSD = ddUSD;
       }
-      // Giả định vốn cơ sở là $1,000 + peakEquity
-      const baseCapital = 1000 + Math.max(0, peakEquity);
+      // Vốn cơ sở = Vốn ban đầu người dùng nhập + lợi nhuận tích lũy tại đỉnh
+      const baseCapital = initialCapital + Math.max(0, peakEquity);
       const ddPct = (ddUSD / baseCapital) * 100;
       if (ddPct > maxDrawdownPercent) {
         maxDrawdownPercent = ddPct;
@@ -333,7 +364,7 @@ const AnalyticsModule = (function () {
     const recoveryFactor = maxDrawdownUSD > 0 ? netProfitUSD / maxDrawdownUSD : (netProfitUSD > 0 ? 99 : 0);
 
     // Calmar Ratio
-    const calmarRatio = maxDrawdownPercent > 0 ? (netProfitUSD / 1000 * 100) / maxDrawdownPercent : 0;
+    const calmarRatio = maxDrawdownPercent > 0 ? (netProfitUSD / initialCapital * 100) / maxDrawdownPercent : 0;
 
     return {
       totalTrades, winCount, lossCount, evenCount, winRate,
@@ -385,7 +416,7 @@ const AnalyticsModule = (function () {
           <div class="an-header-title-box">
             <h2 class="an-title">${getIconSvg('tabAnalytics', 'margin-right:6px;')} Phân Tích Nhật Ký Lệnh Trading (Quant Analytics)</h2>
             <div class="an-subtitle">
-              Tài khoản: <strong>${escapeHtml(username)}</strong> &bull; Tự động đồng bộ từ EA MQL5 &bull; Đơn vị hiển thị: <strong>USD</strong>
+              Tài khoản: <strong>${escapeHtml(username)}</strong> &bull; Vốn ban đầu: <strong>${fmtUSD(initialCapital)}</strong> &bull; Tự động đồng bộ từ EA MQL5 &bull; Tác Giả: <strong>DangQuoc</strong>
             </div>
           </div>
           <div class="an-header-actions">
@@ -397,6 +428,14 @@ const AnalyticsModule = (function () {
 
         <!-- Bộ Lọc (Filters Bar) -->
         <div class="an-filters-card">
+          <div class="an-filter-group">
+            <label>Vốn ban đầu ($):</label>
+            <input type="number" id="anInitialCapitalInput" value="${initialCapital}" step="50" min="1"
+              style="width:110px; background:var(--bg-main); border:1px solid var(--border-color); color:var(--text-primary); border-radius:var(--radius-sm); padding:5px 8px; font-size:12px; outline:none;"
+              title="Nhập đúng số vốn nạp ban đầu của tài khoản để tính Max Drawdown % và Calmar Ratio chính xác">
+            <button type="button" class="an-btn-sm" id="anSaveCapitalBtn">Lưu</button>
+          </div>
+
           <div class="an-filter-group">
             <label>Nguồn lệnh:</label>
             <div class="an-segmented">
@@ -530,7 +569,7 @@ const AnalyticsModule = (function () {
             <div class="an-mc-controls">
               <div class="an-mc-input-group">
                 <label>Vốn ban đầu ($):</label>
-                <input type="number" id="anMcCapital" value="10000" step="500" min="100" style="width:90px;">
+                <input type="number" id="anMcCapital" value="${initialCapital}" step="500" min="100" style="width:90px;">
               </div>
               <div class="an-mc-input-group">
                 <label>Số lần chạy:</label>
@@ -628,6 +667,17 @@ const AnalyticsModule = (function () {
       if (currentPage < totalPages) { currentPage++; renderMainView(); }
     });
 
+    // Vốn ban đầu: Lưu bằng nút bấm hoặc phím Enter
+    container.querySelector('#anSaveCapitalBtn')?.addEventListener('click', () => {
+      const inp = document.getElementById('anInitialCapitalInput');
+      saveInitialCapital(inp?.value);
+    });
+    container.querySelector('#anInitialCapitalInput')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        saveInitialCapital(e.target.value);
+      }
+    });
+
     // Action buttons
     container.querySelector('#anOpenEaModalBtn')?.addEventListener('click', openEaModal);
     container.querySelector('#anAddManualTradeBtn')?.addEventListener('click', openManualTradeModal);
@@ -637,7 +687,7 @@ const AnalyticsModule = (function () {
     container.querySelector('#anRunMcBtn')?.addEventListener('click', () => {
       const capInput = document.getElementById('anMcCapital');
       const simSelect = document.getElementById('anMcSims');
-      const capital = parseFloat(capInput?.value) || 10000;
+      const capital = parseFloat(capInput?.value) || initialCapital;
       const sims = parseInt(simSelect?.value) || 1000;
       runAndRenderMonteCarlo(getFilteredTrades(), capital, sims);
     });
@@ -655,7 +705,7 @@ const AnalyticsModule = (function () {
       drawEquityCurve(metrics.sortedChronological);
       const capInput = document.getElementById('anMcCapital');
       const simSelect = document.getElementById('anMcSims');
-      const capital = parseFloat(capInput?.value) || 10000;
+      const capital = parseFloat(capInput?.value) || initialCapital;
       const sims = parseInt(simSelect?.value) || 1000;
       runAndRenderMonteCarlo(filteredList, capital, sims);
     });
@@ -808,12 +858,58 @@ const AnalyticsModule = (function () {
     };
   }
 
+  // ===== KIỂM TRA ĐỘ BỀN VỮNG CHIẾN LƯỢC (TAIL ROBUSTNESS / EDGE CHECK) =====
+  // Ý tưởng: loại bỏ nhóm lệnh thắng lớn nhất (top 0.5% tổng số lệnh - các
+  // "sự kiện đuôi thuận lợi" hiếm khi lặp lại) ra khỏi lịch sử, rồi tính lại
+  // lợi nhuận ròng & Profit Factor trên phần còn lại. Nếu chiến lược VẪN có
+  // lãi sau khi loại bỏ few lệnh ăn may lớn nhất -> lợi thế (edge) là thật,
+  // không phụ thuộc vào vài lệnh may mắn. Đây là kỹ thuật stress-test phổ
+  // biến trong quant trading (tương tự "remove best trade" test).
+  function computeTailRobustness(tradesList) {
+    if (!Array.isArray(tradesList) || tradesList.length === 0) return null;
+
+    const totalTrades = tradesList.length;
+    // Top 0.5% lệnh thắng lớn nhất, tối thiểu lấy 1 lệnh để luôn có ý nghĩa
+    const tailCount = Math.max(1, Math.round(totalTrades * 0.005));
+
+    const sortedByPnlDesc = [...tradesList].sort((a, b) => b.pnlUSD - a.pnlUSD);
+    const tailTrades = sortedByPnlDesc.slice(0, tailCount);
+    const tailProfitSum = tailTrades.reduce((acc, t) => acc + t.pnlUSD, 0);
+
+    const totalNetProfit = tradesList.reduce((acc, t) => acc + t.pnlUSD, 0);
+    const netProfitWithoutTail = totalNetProfit - tailProfitSum;
+    const tailContributionPct = totalNetProfit !== 0 ? (tailProfitSum / totalNetProfit) * 100 : 0;
+
+    // Profit Factor tính lại trên phần còn lại (sau khi bỏ nhóm đuôi)
+    const remainingTrades = sortedByPnlDesc.slice(tailCount);
+    let grossProfit = 0, grossLoss = 0;
+    remainingTrades.forEach((t) => {
+      if (t.pnlUSD > 0) grossProfit += t.pnlUSD;
+      else if (t.pnlUSD < 0) grossLoss += Math.abs(t.pnlUSD);
+    });
+    const profitFactorWithoutTail = grossLoss > 0 ? grossProfit / grossLoss : (grossProfit > 0 ? 99 : 0);
+
+    return {
+      totalTrades,
+      tailCount,
+      tailProfitSum,
+      totalNetProfit,
+      netProfitWithoutTail,
+      tailContributionPct,
+      profitFactorWithoutTail,
+      stillProfitable: netProfitWithoutTail > 0,
+      hasEnoughData: totalTrades >= 20
+    };
+  }
+
   function runAndRenderMonteCarlo(tradesList, initialCapital = 10000, numSims = 1000) {
     const area = document.getElementById('anMcResultsArea');
     if (!area) return;
 
     const mcData = runMonteCarloSimulation(tradesList, initialCapital, numSims);
     if (!mcData) return;
+
+    const robust = mcData.hasRealTrades ? computeTailRobustness(tradesList) : null;
 
     area.innerHTML = `
       ${!mcData.hasRealTrades ? `
@@ -852,6 +948,16 @@ const AnalyticsModule = (function () {
           </div>
           <div class="an-card-sub">95% kịch bản không quá ${mcData.p95LossStreak} thua liền</div>
         </div>
+
+        ${robust ? `
+        <div class="an-card">
+          <div class="an-card-label">Độ Bền Vững (Bỏ Top 0.5% Lệnh Thắng)</div>
+          <div class="an-card-value ${robust.hasEnoughData ? (robust.stillProfitable ? 'an-positive' : 'an-negative') : ''}">
+            ${fmtUSD(robust.netProfitWithoutTail, true)}
+          </div>
+          <div class="an-card-sub">${robust.tailCount} lệnh chiếm ${robust.tailContributionPct.toFixed(1)}% lợi nhuận &bull; ${robust.hasEnoughData ? (robust.stillProfitable ? 'Vẫn có lãi' : 'Sẽ lỗ nếu thiếu đuôi') : 'Cần thêm dữ liệu'}</div>
+        </div>
+        ` : ''}
       </div>
 
       <div style="margin-top:14px; position:relative;" id="anMcCanvasWrapper">
@@ -872,6 +978,33 @@ const AnalyticsModule = (function () {
           `).join('')}
         </div>
       </div>
+
+      ${robust ? `
+        <div class="an-mc-advice-box" style="margin-top:14px; border-left-color: ${robust.hasEnoughData ? (robust.stillProfitable ? 'var(--green)' : 'var(--red)') : 'var(--accent-blue)'};">
+          <div class="an-mc-advice-title">${getIconSvg('shield', `color:${robust.hasEnoughData ? (robust.stillProfitable ? 'var(--green)' : 'var(--red)') : 'var(--accent-blue)'};`)} Kiểm Tra Độ Bền Vững Chiến Lược (Loại Bỏ Đuôi Lợi Nhuận Thuận Lợi)</div>
+          <div class="an-mc-advice-list">
+            <div class="an-mc-advice-item">
+              <div class="an-advice-content">
+                Trong tổng số <strong>${robust.totalTrades}</strong> lệnh, <strong>${robust.tailCount}</strong> lệnh thắng lớn nhất (top 0.5%) đóng góp
+                <strong class="${robust.tailContributionPct >= 0 ? 'an-positive' : 'an-negative'}">${fmtUSD(robust.tailProfitSum, true)} (${robust.tailContributionPct.toFixed(1)}% tổng lợi nhuận)</strong>.
+                Giả sử nhóm lệnh "ăn may" hiếm gặp này sẽ <strong>ít xảy ra hơn hoặc không lặp lại</strong> trong tương lai, lợi nhuận ròng còn lại là
+                <strong class="${robust.netProfitWithoutTail >= 0 ? 'an-positive' : 'an-negative'}">${fmtUSD(robust.netProfitWithoutTail, true)}</strong>
+                (so với ${fmtUSD(robust.totalNetProfit, true)} ban đầu), Profit Factor phần còn lại: <strong>${robust.profitFactorWithoutTail > 0 ? robust.profitFactorWithoutTail.toFixed(2) : 'N/A'}</strong>.
+              </div>
+            </div>
+            <div class="an-mc-advice-item">
+              <div class="an-advice-icon">${getIconSvg(robust.stillProfitable ? 'shield' : 'warning', `color:${robust.stillProfitable ? 'var(--green)' : 'var(--red)'};`)}</div>
+              <div class="an-advice-content">
+                ${robust.hasEnoughData
+                  ? (robust.stillProfitable
+                      ? `<strong>Lợi thế (Edge) có vẻ là THẬT</strong>: Chiến lược vẫn có lãi ngay cả khi bớt đi số ít lệnh thắng lớn nhất - không phụ thuộc quá mức vào vài sự kiện đuôi may mắn.`
+                      : `<strong>CẢNH BÁO - Phụ thuộc đuôi thuận lợi (Tail Dependency)</strong>: Nếu không có nhóm lệnh thắng lớn hiếm gặp này, chiến lược thực chất đang LỖ. Lợi nhuận hiện tại chủ yếu đến từ vài lệnh may mắn, không phải lợi thế thống kê ổn định - cần xem lại hệ thống trước khi tăng vốn/khối lượng.`)
+                  : `<strong>Chưa đủ dữ liệu để kết luận chắc chắn</strong>: Hiện chỉ có ${robust.totalTrades} lệnh (khuyến nghị tối thiểu 20 lệnh) để kiểm tra này có ý nghĩa thống kê. Kết quả trên chỉ mang tính tham khảo.`}
+              </div>
+            </div>
+          </div>
+        </div>
+      ` : ''}
     `;
 
     requestAnimationFrame(() => {
@@ -1291,7 +1424,6 @@ const AnalyticsModule = (function () {
 //--- INPUT CONFIGURATION
 input string   InpServerUrl     = "${serverUrl}"; // URL Server Backend (Allow WebRequest URL)
 input string   InpDeviceId      = "${username}"; // Tên tài khoản của bạn (Chỉ nhập Tên, KHÔNG cần nhập PIN)
-input bool     InpIsCentAccount = true;                                                 // Tài khoản Cent (USC)?
 input int      InpSyncInterval  = 10;                                                   // Khoảng thời gian sync (giây)
 
 int OnInit()
@@ -1301,6 +1433,11 @@ int OnInit()
       Print("[TradingPro EA] LỖI: Bạn chưa nhập InpDeviceId!");
       return(INIT_FAILED);
    }
+
+   // Chỉ hiển thị log loại tiền tài khoản để bạn biết - KHÔNG quy đổi số
+   // liệu, app sẽ luôn hiển thị nhãn "USD" bất kể tài khoản là USD hay Cent.
+   Print("[TradingPro EA] Loại tiền tài khoản MT5: ", AccountInfoString(ACCOUNT_CURRENCY), " -> App sẽ hiển thị là USD.");
+
    EventSetTimer(InpSyncInterval);
    Print("[TradingPro EA] Đã kết nối EA cho tài khoản: ", InpDeviceId);
    SyncHistoryTrades();
@@ -1361,6 +1498,9 @@ void SyncHistoryTrades()
       jsonTrades += "\\"lots\\":" + DoubleToString(lots, 2) + ",";
       jsonTrades += "\\"closePrice\\":" + DoubleToString(price, 5) + ",";
       jsonTrades += "\\"closeTime\\":\\"" + TimeToString(dealTime, TIME_DATE|TIME_SECONDS) + "\\",";
+      // Gửi nguyên số PnL/Commission/Swap của tài khoản (KHÔNG chia 100
+      // dù tài khoản là USD hay Cent/USC) - app hiển thị nhãn "USD" cố
+      // định, chỉ đổi tên đơn vị hiển thị chứ không quy đổi giá trị.
       jsonTrades += "\\"pnl\\":" + DoubleToString(profit, 2) + ",";
       jsonTrades += "\\"commission\\":" + DoubleToString(comm, 2) + ",";
       jsonTrades += "\\"swap\\":" + DoubleToString(swap, 2) + ",";
@@ -1584,6 +1724,7 @@ void SendJsonPost(string url, string jsonBody, int itemCount)
 
   function init() {
     loadLocalTrades();
+    loadInitialCapital();
     bindTabs();
     pullTradesFromServer();
   }
