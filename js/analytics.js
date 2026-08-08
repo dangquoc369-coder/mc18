@@ -1609,7 +1609,9 @@ void SyncHistoryTrades()
       if(dealTicket <= 0) continue;
 
       long entry = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
-      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_INOUT) continue;
+      if(entry != DEAL_ENTRY_OUT &&
+      entry != DEAL_ENTRY_INOUT &&
+      entry != DEAL_ENTRY_OUT_BY) continue;
 
       long dealType = HistoryDealGetInteger(dealTicket, DEAL_TYPE);
       if(dealType != DEAL_TYPE_BUY && dealType != DEAL_TYPE_SELL) continue;
