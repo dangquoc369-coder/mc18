@@ -323,9 +323,12 @@ const AnalyticsModule = (function () {
     let maxDrawdownPercent = 0;
 
     sortedChronological.forEach((t) => {
-      const pnl = t.pnlUSD;
-      pnlList.push(pnl);
-      cumulativePnl += pnl;
+  // Dùng PnL ròng thực tế (Profit + Commission + Swap) để khớp đúng
+  // với số dư thật trên MT5, KHÔNG đổi t.pnlUSD gốc nên bảng lệnh
+  // và các nơi khác hiển thị vẫn y nguyên như cũ.
+  const pnl = t.pnlUSD + (t.commission || 0) + (t.swap || 0);
+  pnlList.push(pnl);
+  cumulativePnl += pnl;
 
       if (pnl > 0) {
         winCount++;
