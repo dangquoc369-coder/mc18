@@ -12,29 +12,39 @@
 
 const CountdownModule = (function () {
   const TIMEFRAME_MS = {
-    '1m': 60_000,
-    '5m': 300_000,
-    '15m': 900_000,
-    '30m': 1_800_000,
-    '1h': 3_600_000,
-    '2h': 7_200_000,
-    '4h': 14_400_000,
-    '12h': 43_200_000,
-    '1d': 86_400_000,
-    '3d': 259_200_000,
-    '1w': 604_800_000,
-  };
+  '1m': 60_000,
+  '5m': 300_000,
+  '15m': 900_000,
+  '20m': 1_200_000,   // mới
+  '30m': 1_800_000,
+  '45m': 2_700_000,   // mới
+  '1h': 3_600_000,
+  '2h': 7_200_000,
+  '3h': 10_800_000,   // mới
+  '4h': 14_400_000,
+  '6h': 21_600_000,   // mới
+  '8h': 28_800_000,   // mới
+  '12h': 43_200_000,
+  '1d': 86_400_000,
+  '2d': 172_800_000,  // mới
+  '3d': 259_200_000,
+  '1w': 604_800_000,
+};
 
   /** '1M' (tháng) không có độ dài cố định -> tính theo lịch dương thật. */
   function nextCloseTime(timeframe, now) {
-    if (timeframe === '1M') {
-      const d = new Date(now);
-      const next = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1, 0, 0, 0);
-      return next;
-    }
-    const ms = TIMEFRAME_MS[timeframe] || TIMEFRAME_MS['1h'];
-    return Math.ceil(now / ms) * ms;
+  if (timeframe === '1M') {
+    const d = new Date(now);
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1, 0, 0, 0);
   }
+  if (isSyntheticInterval(timeframe)) {
+    const bucketSeconds = getSyntheticBucketSeconds(timeframe);
+    const bucketMs = bucketSeconds * 1000;
+    return Math.ceil(now / bucketMs) * bucketMs;
+  }
+  const ms = TIMEFRAME_MS[timeframe] || TIMEFRAME_MS['1h'];
+  return Math.ceil(now / ms) * ms;
+}
 
   function formatRemaining(ms) {
     if (ms < 0) ms = 0;

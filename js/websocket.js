@@ -41,6 +41,18 @@
  *       watchdog vì cơ chế polling (setInterval gọi fetchKlines) đã tự lặp
  *       lại độc lập, không có khái niệm "socket zombie" tương tự.
  * ============================================================================
+ *
+ * CẬP NHẬT (hỗ trợ KHUNG THỜI GIAN TỔNG HỢP - synthetic timeframes):
+ *   Với các khung 20m/45m/3h/2d (không native trên Binance - xem
+ *   SYNTHETIC_TIMEFRAMES trong utils.js), luồng WebSocket SUBSCRIBE THEO
+ *   KHUNG BASE nhỏ hơn (vd 20m -> subscribe kline_5m) rồi đưa từng nến base
+ *   nhận được qua bộ gộp createSyntheticAggregator() (utils.js) trước khi
+ *   emit ra ngoài. Bộ gộp này được lưu trong entry.aggregators.KEY và bị
+ *   xoá mỗi khi socket tương ứng bị đóng (các hàm closeKlineSocket,
+ *   closeHigherTFKlineSocket, closeSLKlineSocket, closeTrendRefKlineSocket).
+ *   Mỗi hàm connect và close liên quan đều có comment "MỚI" đánh dấu phần
+ *   thêm cho tổng hợp.
+ * ============================================================================
  */
 
 function getWsUrlForProvider(provider, streamName) {
@@ -79,6 +91,11 @@ function getOrCreateEntry(paneId) {
       // của từng luồng - xem runStaleWatchdog() ở cuối file.
       meta: { kline: null, ticker: null, htf: null, sl: null, trendref: {} },
       lastMessageAt: { kline: null, ticker: null, htf: null, sl: null, trendref: {} },
+
+      // MỚI (khung tổng hợp): bộ gộp nến - chỉ khác null khi interval của
+      // luồng đó là synthetic (20m/45m/3h/2d). Xem createSyntheticAggregator()
+      // trong utils.js.
+      aggregators: { kline: null, htf: null, sl: null, trendref: {} },
     });
   }
   return connections.get(paneId);
@@ -96,8 +113,14 @@ function connectKlineStream(paneId, symbol, interval) {
     return;
   }
 
+  // MỚI (khung tổng hợp): nếu interval không native, subscribe theo khung
+  // base nhỏ hơn và gộp nến qua aggregator trước khi emit.
+  const synthetic = isSyntheticInterval(interval);
+  const wsInterval = synthetic ? getSyntheticInfo(interval).base : interval;
+  entry.aggregators.kline = synthetic ? createSyntheticAggregator(interval) : null;
+
   const cleanSymbol = getCleanSymbol(symbol).toLowerCase();
-  const streamName = `${cleanSymbol}@kline_${interval}`;
+  const streamName = `${cleanSymbol}@kline_${wsInterval}`;
   const wsUrl = getWsUrlForProvider(provider, streamName);
   const socket = new WebSocket(wsUrl);
   entry.klineSocket = socket;
@@ -113,7 +136,7 @@ function connectKlineStream(paneId, symbol, interval) {
     entry.lastMessageAt.kline = Date.now();
     const msg = JSON.parse(event.data);
     const k = msg.k;
-    const candle = {
+    const baseCandle = {
       time: Math.floor(k.t / 1000),
       open: parseFloat(k.o),
       high: parseFloat(k.h),
@@ -122,6 +145,8 @@ function connectKlineStream(paneId, symbol, interval) {
       volume: parseFloat(k.v),
       closed: k.x,
     };
+    // MỚI: nếu là khung tổng hợp, đưa nến base qua bộ gộp trước khi emit.
+    const candle = entry.aggregators.kline ? entry.aggregators.kline.push(baseCandle) : baseCandle;
     EventBus.emit('kline:update', { paneId, candle });
   };
 
@@ -152,8 +177,13 @@ function connectHigherTFKlineStream(paneId, symbol, interval) {
     return;
   }
 
+  // MỚI (khung tổng hợp)
+  const synthetic = isSyntheticInterval(interval);
+  const wsInterval = synthetic ? getSyntheticInfo(interval).base : interval;
+  entry.aggregators.htf = synthetic ? createSyntheticAggregator(interval) : null;
+
   const cleanSymbol = getCleanSymbol(symbol).toLowerCase();
-  const streamName = `${cleanSymbol}@kline_${interval}`;
+  const streamName = `${cleanSymbol}@kline_${wsInterval}`;
   const wsUrl = getWsUrlForProvider(provider, streamName);
   const socket = new WebSocket(wsUrl);
   entry.htfKlineSocket = socket;
@@ -163,7 +193,7 @@ function connectHigherTFKlineStream(paneId, symbol, interval) {
     entry.lastMessageAt.htf = Date.now();
     const msg = JSON.parse(event.data);
     const k = msg.k;
-    const candle = {
+    const baseCandle = {
       time: Math.floor(k.t / 1000),
       open: parseFloat(k.o),
       high: parseFloat(k.h),
@@ -172,6 +202,7 @@ function connectHigherTFKlineStream(paneId, symbol, interval) {
       volume: parseFloat(k.v),
       closed: k.x,
     };
+    const candle = entry.aggregators.htf ? entry.aggregators.htf.push(baseCandle) : baseCandle;
     EventBus.emit('kline:update:htf', { paneId, candle });
   };
 
@@ -197,8 +228,13 @@ function connectSLKlineStream(paneId, symbol, interval) {
     return;
   }
 
+  // MỚI (khung tổng hợp)
+  const synthetic = isSyntheticInterval(interval);
+  const wsInterval = synthetic ? getSyntheticInfo(interval).base : interval;
+  entry.aggregators.sl = synthetic ? createSyntheticAggregator(interval) : null;
+
   const cleanSymbol = getCleanSymbol(symbol).toLowerCase();
-  const streamName = `${cleanSymbol}@kline_${interval}`;
+  const streamName = `${cleanSymbol}@kline_${wsInterval}`;
   const wsUrl = getWsUrlForProvider(provider, streamName);
   const socket = new WebSocket(wsUrl);
   entry.slKlineSocket = socket;
@@ -208,7 +244,7 @@ function connectSLKlineStream(paneId, symbol, interval) {
     entry.lastMessageAt.sl = Date.now();
     const msg = JSON.parse(event.data);
     const k = msg.k;
-    const candle = {
+    const baseCandle = {
       time: Math.floor(k.t / 1000),
       open: parseFloat(k.o),
       high: parseFloat(k.h),
@@ -217,6 +253,7 @@ function connectSLKlineStream(paneId, symbol, interval) {
       volume: parseFloat(k.v),
       closed: k.x,
     };
+    const candle = entry.aggregators.sl ? entry.aggregators.sl.push(baseCandle) : baseCandle;
     EventBus.emit('kline:update:sl', { paneId, candle });
   };
 
@@ -242,8 +279,13 @@ function connectTrendRefKlineStream(paneId, role, symbol, interval) {
     return;
   }
 
+  // MỚI (khung tổng hợp)
+  const synthetic = isSyntheticInterval(interval);
+  const wsInterval = synthetic ? getSyntheticInfo(interval).base : interval;
+  entry.aggregators.trendref[role] = synthetic ? createSyntheticAggregator(interval) : null;
+
   const cleanSymbol = getCleanSymbol(symbol).toLowerCase();
-  const streamName = `${cleanSymbol}@kline_${interval}`;
+  const streamName = `${cleanSymbol}@kline_${wsInterval}`;
   const wsUrl = getWsUrlForProvider(provider, streamName);
   const socket = new WebSocket(wsUrl);
   entry.trendRefSockets[role] = socket;
@@ -253,7 +295,7 @@ function connectTrendRefKlineStream(paneId, role, symbol, interval) {
     entry.lastMessageAt.trendref[role] = Date.now();
     const msg = JSON.parse(event.data);
     const k = msg.k;
-    const candle = {
+    const baseCandle = {
       time: Math.floor(k.t / 1000),
       open: parseFloat(k.o),
       high: parseFloat(k.h),
@@ -262,6 +304,8 @@ function connectTrendRefKlineStream(paneId, role, symbol, interval) {
       volume: parseFloat(k.v),
       closed: k.x,
     };
+    const agg = entry.aggregators.trendref[role];
+    const candle = agg ? agg.push(baseCandle) : baseCandle;
     EventBus.emit('kline:update:trendref', { paneId, role, candle });
   };
 
@@ -313,6 +357,10 @@ function connectTickerStream(paneId, symbol) {
 }
 
 /* ===================== YAHOO POLLING IMPLEMENTATION ===================== */
+/* Lưu ý: Yahoo KHÔNG hỗ trợ khung tổng hợp (20m/45m/3h/2d) - xem ghi chú
+ * trong api.js -> fetchKlines. Các hàm poll dưới đây gọi fetchKlines() với
+ * interval y nguyên như đã chọn; nếu interval đó là synthetic và symbol là
+ * Yahoo, request sẽ lỗi phía server, không phải lỗi ở đây. */
 
 function connectYahooKlineStream(paneId, symbol, interval) {
   const entry = getOrCreateEntry(paneId);
@@ -408,6 +456,7 @@ function closeTrendRefKlineSocket(paneId, role) {
   delete entry.yahooTrendRefTimers[role];
   delete entry.meta.trendref[role];
   delete entry.lastMessageAt.trendref[role];
+  delete entry.aggregators.trendref[role]; // MỚI
 
   const sock = entry.trendRefSockets[role];
   if (sock) {
@@ -434,6 +483,7 @@ function closeKlineSocket(paneId) {
   entry.yahooPollTimer = null;
   entry.meta.kline = null;
   entry.lastMessageAt.kline = null;
+  entry.aggregators.kline = null; // MỚI
 
   if (entry.klineSocket) {
     entry.intentionalClose = true;
@@ -452,6 +502,7 @@ function closeHigherTFKlineSocket(paneId) {
   entry.yahooHtfTimer = null;
   entry.meta.htf = null;
   entry.lastMessageAt.htf = null;
+  entry.aggregators.htf = null; // MỚI
 
   if (entry.htfKlineSocket) {
     entry.intentionalClose = true;
@@ -470,6 +521,7 @@ function closeSLKlineSocket(paneId) {
   entry.yahooSlTimer = null;
   entry.meta.sl = null;
   entry.lastMessageAt.sl = null;
+  entry.aggregators.sl = null; // MỚI
 
   if (entry.slKlineSocket) {
     entry.intentionalClose = true;
@@ -520,6 +572,11 @@ function connectSockets(paneId, symbol, timeframe) {
  * luồng của mọi pane đang mở; luồng nào quá 60 giây không nhận được bất kỳ
  * message nào thì bị coi là "zombie" và được CHỦ ĐỘNG kết nối lại - không
  * cần đợi (và không phụ thuộc vào) sự kiện onclose của trình duyệt.
+ *
+ * LƯU Ý VỚI KHUNG TỔNG HỢP: watchdog theo dõi độ "im lặng" của luồng WS ở
+ * cấp độ nến BASE (vd 20m theo dõi độ im lặng của stream kline_5m bên
+ * dưới), không phải cấp độ bucket tổng hợp - nên ngưỡng cũ (60s/25s) vẫn
+ * áp dụng đúng như bình thường, không cần chỉnh gì thêm.
  * ===================================================================== */
 
 const STALE_THRESHOLD_MS = 60 * 1000; // 60s không có message nào -> coi là bất thường

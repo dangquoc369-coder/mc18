@@ -2,6 +2,16 @@
  * api.js
  * Tất cả các lời gọi REST API tới Binance & Yahoo Finance.
  * Không đụng vào DOM, không đụng vào Store trực tiếp -> chỉ trả dữ liệu đã format sẵn.
+ *
+ * ============================================================================
+ * CẬP NHẬT (hỗ trợ KHUNG THỜI GIAN TỔNG HỢP - synthetic timeframes):
+ *   Binance không hỗ trợ native các khung 20m/45m/3h/2d (xem
+ *   SYNTHETIC_TIMEFRAMES trong utils.js). fetchKlines() giờ kiểm tra nếu
+ *   interval là tổng hợp thì rẽ sang fetchSyntheticKlines() - tải nến
+ *   khung BASE nhỏ hơn rồi gộp lại bằng aggregateCandles() (utils.js).
+ *   CHỈ áp dụng cho Binance spot/futures - Yahoo KHÔNG được hỗ trợ tổng
+ *   hợp (xem ghi chú trong nhánh yahoo bên dưới).
+ * ============================================================================
  */
 
 const BINANCE_REST_BASE = 'https://api.binance.com';
@@ -34,9 +44,27 @@ function getProviderFor(symbol) {
 }
 
 /**
+ * Lấy dữ liệu cho khung TỔNG HỢP (20m/45m/3h/2d): tải nến khung base rồi
+ * gộp bằng aggregateCandles() (utils.js). Chỉ gọi khi provider KHÁC yahoo
+ * (xem điều kiện gọi trong fetchKlines).
+ *
+ * Binance giới hạn tối đa 1000 nến/lần gọi -> tải dư thêm 1 bucket (factor
+ * nến base) để bucket ĐẦU TIÊN không bị thiếu nến do bị cắt bởi giới hạn
+ * limit, sau đó cắt bớt kết quả gộp về đúng số lượng `limit` yêu cầu.
+ */
+async function fetchSyntheticKlines(symbol, interval, limit, endTime) {
+  const info = SYNTHETIC_TIMEFRAMES[interval];
+  const baseLimit = Math.min(1000, (limit + 1) * info.factor);
+  const baseCandles = await fetchKlines(symbol, info.base, baseLimit, endTime);
+  const aggregated = aggregateCandles(baseCandles, interval);
+
+  return aggregated.length > limit ? aggregated.slice(aggregated.length - limit) : aggregated;
+}
+
+/**
  * Lấy dữ liệu nến (klines) từ Binance hoặc Yahoo Finance, format sẵn theo chuẩn Lightweight Charts.
  * @param {string} symbol - vd: BTCUSDT, EURUSD=X, AAPL
- * @param {string} interval - vd: 15m, 1h, 1d
+ * @param {string} interval - vd: 15m, 1h, 1d (hoặc khung tổng hợp: 20m, 45m, 3h, 2d)
  * @param {number} limit - số lượng nến tối đa (Binance cho phép tới 1000)
  * @param {number|null} endTime - mốc thời gian (ms, epoch) - nếu truyền, chỉ
  *   lấy các nến có thời gian ĐÓNG trước mốc này. Dùng để tải lịch sử cũ hơn.
@@ -45,7 +73,16 @@ function getProviderFor(symbol) {
 async function fetchKlines(symbol, interval, limit = 1000, endTime = null) {
   const provider = getProviderFor(symbol);
 
+  // ===== KHUNG TỔNG HỢP (chỉ Binance spot/futures) =====
+  if (provider !== 'yahoo' && isSyntheticInterval(interval)) {
+    return fetchSyntheticKlines(symbol, interval, limit, endTime);
+  }
+
   if (provider === 'yahoo') {
+    // GIỚI HẠN ĐÃ BIẾT: Yahoo không hỗ trợ tổng hợp - nếu interval là
+    // 20m/45m/3h/2d cho 1 symbol Yahoo, request này sẽ gửi thẳng interval
+    // lạ đó tới /api/yahoo/klines và server sẽ trả lỗi. Việc chọn các
+    // khung tổng hợp cho symbol Yahoo nên bị chặn ở tầng UI nếu cần.
     let url = `/api/yahoo/klines?symbol=${encodeURIComponent(symbol)}&interval=${interval}`;
     if (endTime) {
       url += `&endTime=${endTime}`;
