@@ -72,8 +72,7 @@ const LoginModule = (function () {
         position: fixed; inset: 0; z-index: 99999;
         background: rgba(10, 12, 20, 0.92);
         display: flex; align-items: center; justify-content: center;
-        padding: max(16px, env(safe-area-inset-top, 16px)) max(16px, env(safe-area-inset-right, 16px)) max(16px, env(safe-area-inset-bottom, 16px)) max(16px, env(safe-area-inset-left, 16px));
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        padding: 16px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       }
       #loginOverlay .login-box {
         width: 100%; max-width: 320px;

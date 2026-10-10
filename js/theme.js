@@ -59,18 +59,10 @@ const ThemeModule = (function () {
     }
   }
 
-  function updateThemeColorMeta(theme) {
-    const color = theme === 'light' ? '#ffffff' : '#10141c';
-    document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => {
-      meta.setAttribute('content', color);
-    });
-  }
-
   /** Áp dụng 1 theme: đổi attribute trên <html>, lưu lại, báo cho chart.js. */
   function apply(theme) {
     currentTheme = theme === 'light' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', currentTheme);
-    updateThemeColorMeta(currentTheme);
     persist(currentTheme);
     updateButtonLabel();
     EventBus.emit('theme:changed', { theme: currentTheme });
@@ -113,7 +105,6 @@ const ThemeModule = (function () {
     // Đồng bộ lại đúng giá trị đã được đoạn script trong <head> áp trước đó
     // (không set lại attribute ở đây để tránh 1 nhịp "nháy" - chỉ đọc lại).
     currentTheme = readSavedTheme();
-    updateThemeColorMeta(currentTheme);
 
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', mountButton);

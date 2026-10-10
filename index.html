@@ -2,31 +2,27 @@
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>DangQuoc Tracker Pro</title>
-<meta name="description" content="A professional multi-timeframe cryptocurrency tracker utilizing Binance API and Lightweight Charts.">
-<meta property="og:title" content="DangQuoc Tracker Pro">
-<meta property="og:description" content="A professional multi-timeframe cryptocurrency tracker utilizing Binance API and Lightweight Charts.">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>TradingPro</title>
 
-<!-- ===== PWA / "Thêm vào màn hình chính" - Chuẩn Native iOS Standalone ===== -->
+<!-- ===== PWA / "Thêm vào màn hình chính" - ẩn thanh Safari ===== -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="DangQuoc Tracker Pro">
-<meta name="theme-color" content="#10141c" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#10141c" id="appThemeColor">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TradingPro">
+<meta name="theme-color" content="#131722">
 
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="manifest" href="manifest.json">
 
-<!-- ===== CHỐNG "NHÁY" THEME & ĐỒNG BỘ STATUS BAR NGAY LẬP TỨC =====
-     Đọc lựa chọn nền sáng/tối đã lưu và đặt data-theme lên <html> cùng
-     meta theme-color NGAY LẬP TỨC, TRƯỚC khi style.css tải xong và trang
-     vẽ ra - tránh việc trang luôn hiện nền tối mặc định trong 1 nhịp rồi
-     mới "nháy" sang nền sáng. -->
+<!-- ===== CHỐNG "NHÁY" THEME (đợt fix này) =====
+     Đọc lựa chọn nền sáng/tối đã lưu và đặt data-theme lên <html> NGAY LẬP
+     TỨC, TRƯỚC khi style.css tải xong và trang vẽ ra - tránh việc trang
+     luôn hiện nền tối mặc định trong 1 nhịp rồi mới "nháy" sang nền sáng.
+     theme.js (script cuối) chỉ cần đọc lại đúng giá trị này để đồng bộ nút
+     bấm, không set lại attribute nữa. -->
 <script>
   (function () {
     window.addEventListener('error', function (e) {
@@ -43,10 +39,7 @@
 
     try {
       var saved = localStorage.getItem('dq_tracker_theme_v1');
-      var isLight = saved === 'light';
-      document.documentElement.setAttribute('data-theme', isLight ? 'light' : 'dark');
-      var metaTheme = document.getElementById('appThemeColor');
-      if (metaTheme) metaTheme.setAttribute('content', isLight ? '#ffffff' : '#10141c');
+      document.documentElement.setAttribute('data-theme', saved === 'light' ? 'light' : 'dark');
     } catch (err) {
       document.documentElement.setAttribute('data-theme', 'dark');
     }
