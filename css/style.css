@@ -86,12 +86,9 @@ html, body {
   overflow: hidden;
 }
 
-/* Khi chạy dạng PWA (Add to Home Screen): iPad có thể báo safe-area-inset-top = 0
-   dù vẫn có status bar ~24px, nên đặt mức tối thiểu 24px. Trình duyệt thường
-   không rơi vào nhánh này nên không bị thừa khoảng trống. */
-@media (display-mode: standalone) {
-  :root { --safe-top: max(env(safe-area-inset-top, 0px), 24px); }
-}
+/* Status bar kiểu "default" (xem index.html): hệ thống tự vẽ thanh đặc và đặt
+   app bên dưới nên --safe-top thường = 0. Giữ biến để các vị trí cố định phía
+   trên vẫn đúng nếu sau này đổi lại chế độ tràn viền. */
 
 /* body cố định đủ toàn màn hình (không phụ thuộc height:100% - tránh bị hụt
    khoảng trống ở đáy trên iPadOS mới), chừa phần status bar ở trên. */

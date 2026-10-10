@@ -2,14 +2,15 @@
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
-<!-- viewport-fit=cover: cho phép app dùng env(safe-area-inset-*) để tự chừa vùng status bar -->
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<!-- Không dùng viewport-fit=cover: để iPadOS tự chừa và tự vẽ thanh status bar ĐẶC phía trên, app bắt đầu bên dưới nó (giống MetaTrader 5) -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>TradingPro</title>
 
 <!-- ===== PWA / "Thêm vào màn hình chính" - ẩn thanh Safari ===== -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<!-- "default" = status bar ĐẶC, nội dung nằm dưới nó. Trước đây "black-translucent" cho nội dung tràn lên dưới status bar nên iPadOS mới phủ lớp blur/fade lên header. -->
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="TradingPro">
 <!-- id="metaThemeColor": script bên dưới và theme.js đổi giá trị này theo nền sáng/tối -->
 <meta name="theme-color" id="metaThemeColor" content="#10141c">
@@ -55,7 +56,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/style.css?v=20261010a">
 </head>
 <body>
 
@@ -243,7 +244,7 @@
   <!-- theme.js PHẢI nằm TRƯỚC chart.js: chart.js đọc ThemeModule.getTheme()
        ngay lúc khởi tạo mỗi pane (initChart) để tô màu chart lần đầu đúng
        theme, không phải chờ tới lần đổi theme kế tiếp. -->
-  <script src="js/theme.js"></script>
+  <script src="js/theme.js?v=20261010a"></script>
   <script src="js/chart.js"></script>
   <script src="js/layout.js"></script>
   <script src="js/ui.js"></script>
