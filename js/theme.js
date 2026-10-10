@@ -59,13 +59,31 @@ const ThemeModule = (function () {
     }
   }
 
+  /**
+   * Đổi màu thanh status bar theo theme. iOS/iPadOS thường KHÔNG áp dụng lại khi
+   * chỉ đổi thuộc tính content của thẻ <meta theme-color> đang có, nên xoá thẻ cũ
+   * và chèn thẻ mới (cách này được Safari nhận lại ngay). Màu khớp --bg-panel.
+   */
+  function setStatusBarColor(theme) {
+    const color = theme === 'light' ? '#ffffff' : '#10141c';
+    try {
+      document.querySelectorAll('meta[name="theme-color"]').forEach(function (m) { m.remove(); });
+      const meta = document.createElement('meta');
+      meta.name = 'theme-color';
+      meta.id = 'metaThemeColor';
+      meta.content = color;
+      document.head.appendChild(meta);
+    } catch (err) {
+      console.error('Không đổi được theme-color:', err);
+    }
+  }
+
   /** Áp dụng 1 theme: đổi attribute trên <html>, lưu lại, báo cho chart.js. */
   function apply(theme) {
     currentTheme = theme === 'light' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', currentTheme);
     // Đồng bộ màu status bar (theme-color) với --bg-panel của theme vừa chọn
-    const meta = document.getElementById('metaThemeColor');
-    if (meta) meta.setAttribute('content', currentTheme === 'light' ? '#ffffff' : '#10141c');
+    setStatusBarColor(currentTheme);
     persist(currentTheme);
     updateButtonLabel();
     EventBus.emit('theme:changed', { theme: currentTheme });
@@ -108,6 +126,7 @@ const ThemeModule = (function () {
     // Đồng bộ lại đúng giá trị đã được đoạn script trong <head> áp trước đó
     // (không set lại attribute ở đây để tránh 1 nhịp "nháy" - chỉ đọc lại).
     currentTheme = readSavedTheme();
+    setStatusBarColor(currentTheme);
 
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', mountButton);
