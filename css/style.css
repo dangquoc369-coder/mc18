@@ -47,10 +47,13 @@
   --sidebar-width: 260px; /* đổi runtime bởi sidebar-resize.js khi kéo/thu gọn */
   --safe-top: env(safe-area-inset-top, 0px); /* chừa vùng status bar (iPadOS/iOS mới) */
   --status-bar-bg: var(--bg-panel);
-  color-scheme: dark;
+  /* Gốc (html) để "light dark" => thanh status bar/hệ thống theo chế độ sáng/tối của iPad.
+     Màu bên trong app vẫn theo nút đổi nền (xem body bên dưới). */
+  color-scheme: light dark;
 }
 
 /* ===== NỀN SÁNG (light theme) - xem theme.js ===== */
+:root[data-theme="light"] body { color-scheme: light; }
 :root[data-theme="light"] {
   --bg-main: #f8f9fb;
   --bg-panel: #ffffff;
@@ -72,7 +75,6 @@
   --shadow-md: 0 10px 28px rgba(20, 24, 40, 0.14);
   --scrollbar-thumb: #d7dbe6;
   --on-accent: #ffffff;
-  color-scheme: light;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -93,6 +95,7 @@ html, body {
 /* body cố định đủ toàn màn hình (không phụ thuộc height:100% - tránh bị hụt
    khoảng trống ở đáy trên iPadOS mới), chừa phần status bar ở trên. */
 body {
+  color-scheme: dark; /* ô nhập/thanh cuộn trong app theo nền tối của app */
   position: fixed;
   top: 0;
   left: 0;

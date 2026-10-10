@@ -12,8 +12,8 @@
 <!-- "default" = status bar ĐẶC, nội dung nằm dưới nó. Trước đây "black-translucent" cho nội dung tràn lên dưới status bar nên iPadOS mới phủ lớp blur/fade lên header. -->
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="TradingPro">
-<!-- id="metaThemeColor": script bên dưới và theme.js đổi giá trị này theo nền sáng/tối -->
-<meta name="theme-color" id="metaThemeColor" content="#10141c">
+<!-- Không đặt theme-color: để thanh status bar tự theo chế độ sáng/tối của iPad (giống MetaTrader 5). -->
+<meta name="color-scheme" content="light dark">
 
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
@@ -45,8 +45,6 @@
       var saved = localStorage.getItem('dq_tracker_theme_v1');
       var t = saved === 'light' ? 'light' : 'dark';
       document.documentElement.setAttribute('data-theme', t);
-      var m = document.getElementById('metaThemeColor');
-      if (m) m.setAttribute('content', t === 'light' ? '#ffffff' : '#10141c');
     } catch (err) {
       document.documentElement.setAttribute('data-theme', 'dark');
     }
@@ -56,7 +54,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/style.css?v=20261010a">
+<link rel="stylesheet" href="css/style.css?v=20261010c">
 </head>
 <body>
 
@@ -244,7 +242,7 @@
   <!-- theme.js PHẢI nằm TRƯỚC chart.js: chart.js đọc ThemeModule.getTheme()
        ngay lúc khởi tạo mỗi pane (initChart) để tô màu chart lần đầu đúng
        theme, không phải chờ tới lần đổi theme kế tiếp. -->
-  <script src="js/theme.js?v=20261010b"></script>
+  <script src="js/theme.js?v=20261010c"></script>
   <script src="js/chart.js"></script>
   <script src="js/layout.js"></script>
   <script src="js/ui.js"></script>
