@@ -46,6 +46,7 @@
   --radius-lg: 8px;
   --sidebar-width: 260px; /* đổi runtime bởi sidebar-resize.js khi kéo/thu gọn */
   --safe-top: env(safe-area-inset-top, 0px); /* chừa vùng status bar (iPadOS/iOS mới) */
+  --status-bar-bg: var(--bg-panel);
   color-scheme: dark;
 }
 
@@ -85,10 +86,38 @@ html, body {
   overflow: hidden;
 }
 
-/* Đẩy toàn bộ app xuống dưới status bar: không còn nội dung nào chui dưới
-   status bar nên iPadOS/iOS mới không có gì để phủ lớp blur/fade lên. */
+/* Khi chạy dạng PWA (Add to Home Screen): iPad có thể báo safe-area-inset-top = 0
+   dù vẫn có status bar ~24px, nên đặt mức tối thiểu 24px. Trình duyệt thường
+   không rơi vào nhánh này nên không bị thừa khoảng trống. */
+@media (display-mode: standalone) {
+  :root { --safe-top: max(env(safe-area-inset-top, 0px), 24px); }
+}
+
+/* body cố định đủ toàn màn hình (không phụ thuộc height:100% - tránh bị hụt
+   khoảng trống ở đáy trên iPadOS mới), chừa phần status bar ở trên. */
 body {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: auto;
   padding-top: var(--safe-top);
+}
+
+/* THANH ĐẶC phía trên cùng (giống MetaTrader 5): phủ kín vùng status bar bằng
+   màu header, nằm trên mọi nội dung -> lớp blur/trong suốt của hệ thống chỉ còn
+   thấy một mảng màu đặc, không thấy chữ/nút của app bị mờ. */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--safe-top);
+  background: var(--status-bar-bg);
+  z-index: 2147483000;
+  pointer-events: none;
 }
 
 /* Đổi theme mượt thay vì "giật" đổi màu tức thì - áp dụng cho các mảng nền/
