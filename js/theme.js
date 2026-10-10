@@ -63,6 +63,9 @@ const ThemeModule = (function () {
   function apply(theme) {
     currentTheme = theme === 'light' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', currentTheme);
+    // Đồng bộ màu status bar (theme-color) với --bg-panel của theme vừa chọn
+    const meta = document.getElementById('metaThemeColor');
+    if (meta) meta.setAttribute('content', currentTheme === 'light' ? '#ffffff' : '#10141c');
     persist(currentTheme);
     updateButtonLabel();
     EventBus.emit('theme:changed', { theme: currentTheme });

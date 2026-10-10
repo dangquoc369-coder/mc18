@@ -45,6 +45,7 @@
   --radius-md: 6px;
   --radius-lg: 8px;
   --sidebar-width: 260px; /* đổi runtime bởi sidebar-resize.js khi kéo/thu gọn */
+  --safe-top: env(safe-area-inset-top, 0px); /* chừa vùng status bar (iPadOS/iOS mới) */
   color-scheme: dark;
 }
 
@@ -77,11 +78,17 @@
 
 html, body {
   height: 100%;
-  background: var(--bg-main);
+  background: var(--bg-panel); /* vùng status bar = màu header, không bị blur/trong suốt */
   color: var(--text-primary);
   font-family: var(--font);
   font-size: 13px;
   overflow: hidden;
+}
+
+/* Đẩy toàn bộ app xuống dưới status bar: không còn nội dung nào chui dưới
+   status bar nên iPadOS/iOS mới không có gì để phủ lớp blur/fade lên. */
+body {
+  padding-top: var(--safe-top);
 }
 
 /* Đổi theme mượt thay vì "giật" đổi màu tức thì - áp dụng cho các mảng nền/
@@ -97,8 +104,9 @@ body,
 #app {
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-  height: 100vh;
-  width: 100vw;
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+  width: 100%;
   overflow: hidden;
 }
 
@@ -400,7 +408,7 @@ button .icon-svg-inline,
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  height: 100vh;
+  height: 100%;
   overflow: hidden;
 }
 
@@ -1265,7 +1273,7 @@ button .icon-svg-inline,
 
 #mobileSidebarToggle {
   position: fixed;
-  top: 10px;
+  top: calc(10px + var(--safe-top));
   left: 10px;
   z-index: 200;
   width: 38px;
@@ -1303,6 +1311,7 @@ button .icon-svg-inline,
     bottom: 0;
     width: min(80vw, 300px) !important;
     max-width: 300px;
+    padding-top: var(--safe-top);
     z-index: 150;
     box-shadow: var(--shadow-md);
     transform: translateX(-100%);
@@ -1414,7 +1423,7 @@ button .icon-svg-inline,
    tín hiệu accent ở mọi nơi khác trong app. */
 .ms-panel {
   position: fixed;
-  top: 60px;
+  top: calc(60px + var(--safe-top));
   right: 20px;
   width: 300px;
   max-width: calc(100vw - 24px);
@@ -1563,9 +1572,12 @@ body.app-fullscreen #mobileSidebarToggle {
 
 body.app-fullscreen #chartArea {
   position: fixed;
-  inset: 0;
+  top: var(--safe-top);
+  left: 0;
+  right: 0;
+  bottom: 0;
   width: 100vw;
-  height: 100vh;
+  height: auto;
   z-index: 900;
 }
 

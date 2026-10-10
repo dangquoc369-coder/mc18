@@ -2,7 +2,8 @@
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<!-- viewport-fit=cover: cho phép app dùng env(safe-area-inset-*) để tự chừa vùng status bar -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>TradingPro</title>
 
 <!-- ===== PWA / "Thêm vào màn hình chính" - ẩn thanh Safari ===== -->
@@ -10,7 +11,8 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="TradingPro">
-<meta name="theme-color" content="#131722">
+<!-- id="metaThemeColor": script bên dưới và theme.js đổi giá trị này theo nền sáng/tối -->
+<meta name="theme-color" id="metaThemeColor" content="#10141c">
 
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
@@ -22,7 +24,8 @@
      TỨC, TRƯỚC khi style.css tải xong và trang vẽ ra - tránh việc trang
      luôn hiện nền tối mặc định trong 1 nhịp rồi mới "nháy" sang nền sáng.
      theme.js (script cuối) chỉ cần đọc lại đúng giá trị này để đồng bộ nút
-     bấm, không set lại attribute nữa. -->
+     bấm, không set lại attribute nữa.
+     CẬP NHẬT: đồng thời đặt luôn theme-color khớp --bg-panel của theme. -->
 <script>
   (function () {
     window.addEventListener('error', function (e) {
@@ -39,7 +42,10 @@
 
     try {
       var saved = localStorage.getItem('dq_tracker_theme_v1');
-      document.documentElement.setAttribute('data-theme', saved === 'light' ? 'light' : 'dark');
+      var t = saved === 'light' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+      var m = document.getElementById('metaThemeColor');
+      if (m) m.setAttribute('content', t === 'light' ? '#ffffff' : '#10141c');
     } catch (err) {
       document.documentElement.setAttribute('data-theme', 'dark');
     }
