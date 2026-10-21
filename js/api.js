@@ -15,6 +15,14 @@
  */
 
 const BINANCE_REST_BASE = 'https://api.binance.com';
+const WORKER_FALLBACK_URL = 'https://dq-tracker-push.quocngyendanght.workers.dev';
+
+function getBackendBaseUrl() {
+  if (typeof window !== 'undefined' && window.location.hostname && window.location.hostname.endsWith('github.io')) {
+    return WORKER_FALLBACK_URL;
+  }
+  return '';
+}
 
 /**
  * Loại bỏ hậu tố _PERP nếu có để gửi symbol sạch lên Binance.
@@ -84,29 +92,36 @@ async function fetchKlines(symbol, interval, limit = 1000, endTime = null) {
   }
 
   if (provider === 'oanda') {
-    let url = `/api/oanda/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`;
+    const base = getBackendBaseUrl();
+    let url = `${base}/api/oanda/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`;
     if (endTime) {
       url += `&endTime=${endTime}`;
     }
-    const res = await fetch(url);
-    if (!res.ok) {
-      throw new Error(`fetchKlines OANDA lỗi: ${res.status} ${res.statusText}`);
+    let res = await fetch(url).catch(() => null);
+    if (!res || !res.ok) {
+      // Fallback nếu máy chủ local không chạy hoặc host tĩnh
+      const fallbackUrl = `${WORKER_FALLBACK_URL}/api/oanda/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}${endTime ? `&endTime=${endTime}` : ''}`;
+      res = await fetch(fallbackUrl).catch(() => null);
+    }
+    if (!res || !res.ok) {
+      throw new Error(`fetchKlines OANDA lỗi: ${res ? res.status : 'network error'}`);
     }
     return await res.json();
   }
 
   if (provider === 'yahoo') {
-    // GIỚI HẠN ĐÃ BIẾT: Yahoo không hỗ trợ tổng hợp - nếu interval là
-    // 20m/45m/3h/2d cho 1 symbol Yahoo, request này sẽ gửi thẳng interval
-    // lạ đó tới /api/yahoo/klines và server sẽ trả lỗi. Việc chọn các
-    // khung tổng hợp cho symbol Yahoo nên bị chặn ở tầng UI nếu cần.
-    let url = `/api/yahoo/klines?symbol=${encodeURIComponent(symbol)}&interval=${interval}`;
+    const base = getBackendBaseUrl();
+    let url = `${base}/api/yahoo/klines?symbol=${encodeURIComponent(symbol)}&interval=${interval}`;
     if (endTime) {
       url += `&endTime=${endTime}`;
     }
-    const res = await fetch(url);
-    if (!res.ok) {
-      throw new Error(`fetchKlines Yahoo lỗi: ${res.status} ${res.statusText}`);
+    let res = await fetch(url).catch(() => null);
+    if (!res || !res.ok) {
+      const fallbackUrl = `${WORKER_FALLBACK_URL}/api/yahoo/klines?symbol=${encodeURIComponent(symbol)}&interval=${interval}${endTime ? `&endTime=${endTime}` : ''}`;
+      res = await fetch(fallbackUrl).catch(() => null);
+    }
+    if (!res || !res.ok) {
+      throw new Error(`fetchKlines Yahoo lỗi: ${res ? res.status : 'network error'}`);
     }
     return await res.json();
   }
@@ -144,9 +159,13 @@ async function fetch24hTicker(symbol) {
   const provider = getProviderFor(symbol);
 
   if (provider === 'oanda') {
-    const res = await fetch(`/api/oanda/ticker?symbol=${encodeURIComponent(symbol)}`);
-    if (!res.ok) {
-      throw new Error(`fetch24hTicker OANDA lỗi: ${res.status} ${res.statusText}`);
+    const base = getBackendBaseUrl();
+    let res = await fetch(`${base}/api/oanda/ticker?symbol=${encodeURIComponent(symbol)}`).catch(() => null);
+    if (!res || !res.ok) {
+      res = await fetch(`${WORKER_FALLBACK_URL}/api/oanda/ticker?symbol=${encodeURIComponent(symbol)}`).catch(() => null);
+    }
+    if (!res || !res.ok) {
+      throw new Error(`fetch24hTicker OANDA lỗi`);
     }
     const data = await res.json();
     return {
@@ -160,9 +179,13 @@ async function fetch24hTicker(symbol) {
   }
 
   if (provider === 'yahoo') {
-    const res = await fetch(`/api/yahoo/ticker?symbol=${encodeURIComponent(symbol)}`);
-    if (!res.ok) {
-      throw new Error(`fetch24hTicker Yahoo lỗi: ${res.status} ${res.statusText}`);
+    const base = getBackendBaseUrl();
+    let res = await fetch(`${base}/api/yahoo/ticker?symbol=${encodeURIComponent(symbol)}`).catch(() => null);
+    if (!res || !res.ok) {
+      res = await fetch(`${WORKER_FALLBACK_URL}/api/yahoo/ticker?symbol=${encodeURIComponent(symbol)}`).catch(() => null);
+    }
+    if (!res || !res.ok) {
+      throw new Error(`fetch24hTicker Yahoo lỗi`);
     }
     return await res.json();
   }
@@ -228,8 +251,9 @@ async function fetchAllSymbols() {
 async function searchYahooSymbols(query) {
   if (!query) return [];
   try {
-    const res = await fetch(`/api/yahoo/search?query=${encodeURIComponent(query)}`);
-    if (!res.ok) throw new Error(`Yahoo Search HTTP error ${res.status}`);
+    const base = getBackendBaseUrl();
+    let res = await fetch(`${base}/api/yahoo/search?query=${encodeURIComponent(query)}`).catch(() => null);
+    if (!res || !res.ok) return [];
     return await res.json();
   } catch (err) {
     console.error('Lỗi tìm kiếm Yahoo:', err);
@@ -243,8 +267,21 @@ async function searchYahooSymbols(query) {
 async function searchOandaSymbols(query) {
   if (!query) return [];
   try {
-    const res = await fetch(`/api/oanda/search?query=${encodeURIComponent(query)}`);
-    if (!res.ok) throw new Error(`OANDA Search HTTP error ${res.status}`);
+    const base = getBackendBaseUrl();
+    let res = await fetch(`${base}/api/oanda/search?query=${encodeURIComponent(query)}`).catch(() => null);
+    if (!res || !res.ok) {
+      // Trên static host, luôn cung cấp ít nhất OANDA:XAUUSD
+      const q = query.trim().toUpperCase();
+      if (['XAU', 'GOLD', 'VÀNG', 'VANG'].some((k) => q.includes(k))) {
+        return [{
+          id: 'OANDA:XAUUSD',
+          symbol: 'XAUUSD',
+          description: 'Gold (OANDA CFD)',
+          exchange: 'OANDA',
+        }];
+      }
+      return [];
+    }
     return await res.json();
   } catch (err) {
     console.error('Lỗi tìm kiếm OANDA:', err);

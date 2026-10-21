@@ -512,6 +512,133 @@ export default {
       return withCors(Response.json({ ok: true, count: merged.length }));
     }
 
+    // ===== PROXY OANDA & YAHOO CHO FRONTEND (hỗ trợ khi deploy GitHub Pages) =====
+    if (url.pathname === '/api/oanda/klines' || url.pathname === '/api/yahoo/klines') {
+      const symbol = url.searchParams.get('symbol') || 'XAUUSD';
+      const interval = url.searchParams.get('interval') || '15m';
+      const limit = parseInt(url.searchParams.get('limit') || '300', 10);
+      const endTime = url.searchParams.get('endTime');
+
+      let yahooSymbol = symbol;
+      if (symbol === 'XAUUSD' || symbol === 'GOLD' || symbol.includes('XAUUSD')) {
+        yahooSymbol = 'GC=F';
+      }
+
+      const INTERVAL_MAP = {
+        '1m': { interval: '1m', range: '5d', secs: 60, multiplier: 0 },
+        '5m': { interval: '5m', range: '30d', secs: 300, multiplier: 0 },
+        '15m': { interval: '15m', range: '30d', secs: 900, multiplier: 0 },
+        '30m': { interval: '30m', range: '30d', secs: 1800, multiplier: 0 },
+        '1h': { interval: '60m', range: '60d', secs: 3600, multiplier: 0 },
+        '2h': { interval: '60m', range: '60d', secs: 3600, multiplier: 7200 },
+        '4h': { interval: '60m', range: '60d', secs: 3600, multiplier: 14400 },
+        '6h': { interval: '60m', range: '60d', secs: 3600, multiplier: 21600 },
+        '8h': { interval: '60m', range: '60d', secs: 3600, multiplier: 28800 },
+        '12h': { interval: '60m', range: '60d', secs: 3600, multiplier: 43200 },
+        '1d': { interval: '1d', range: '1y', secs: 86400, multiplier: 0 },
+        '2d': { interval: '1d', range: '2y', secs: 86400, multiplier: 172800 },
+        '3d': { interval: '1d', range: '2y', secs: 86400, multiplier: 259200 },
+        '1w': { interval: '1wk', range: '5y', secs: 604800, multiplier: 0 },
+        '1M': { interval: '1mo', range: '10y', secs: 2592000, multiplier: 0 },
+      };
+
+      const mapping = INTERVAL_MAP[interval] || INTERVAL_MAP['15m'];
+      let queryUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?`;
+      if (endTime) {
+        const p2 = Math.floor(Number(endTime) / 1000);
+        const windowSecs = 1000 * (mapping.multiplier || mapping.secs);
+        const p1 = p2 - windowSecs;
+        queryUrl += `period1=${p1}&period2=${p2}&interval=${mapping.interval}`;
+      } else {
+        queryUrl += `interval=${mapping.interval}&range=${mapping.range}`;
+      }
+
+      try {
+        const resp = await fetch(queryUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        });
+        if (!resp.ok) return withCors(Response.json([]));
+        const data = await resp.json();
+        const result = data.chart?.result?.[0];
+        if (!result) return withCors(Response.json([]));
+
+        const timestamps = result.timestamp || [];
+        const quote = result.indicators?.quote?.[0] || {};
+        const opens = quote.open || [];
+        const highs = quote.high || [];
+        const lows = quote.low || [];
+        const closes = quote.close || [];
+        const volumes = quote.volume || [];
+
+        let candles = [];
+        for (let i = 0; i < timestamps.length; i++) {
+          if (opens[i] === null || closes[i] === null || Number.isNaN(opens[i])) continue;
+          candles.push({
+            time: timestamps[i],
+            open: Number(opens[i]),
+            high: Number(highs[i] ?? opens[i]),
+            low: Number(lows[i] ?? closes[i]),
+            close: Number(closes[i]),
+            volume: Number(volumes[i] ?? 0),
+          });
+        }
+        if (mapping.multiplier > 0) {
+          const groups = new Map();
+          for (const c of candles) {
+            const bucket = Math.floor(c.time / mapping.multiplier) * mapping.multiplier;
+            if (!groups.has(bucket)) {
+              groups.set(bucket, { time: bucket, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume });
+            } else {
+              const g = groups.get(bucket);
+              g.high = Math.max(g.high, c.high);
+              g.low = Math.min(g.low, c.low);
+              g.close = c.close;
+              g.volume += c.volume;
+            }
+          }
+          candles = Array.from(groups.values()).sort((a, b) => a.time - b.time);
+        }
+        return withCors(Response.json(candles.slice(-limit)));
+      } catch (err) {
+        return withCors(Response.json([]));
+      }
+    }
+
+    if (url.pathname === '/api/oanda/ticker' || url.pathname === '/api/yahoo/ticker') {
+      const symbol = url.searchParams.get('symbol') || 'XAUUSD';
+      let yahooSymbol = symbol;
+      if (symbol === 'XAUUSD' || symbol === 'GOLD' || symbol.includes('XAUUSD')) {
+        yahooSymbol = 'GC=F';
+      }
+      try {
+        const queryUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=1d&range=5d`;
+        const resp = await fetch(queryUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+        });
+        if (!resp.ok) throw new Error('status error');
+        const data = await resp.json();
+        const result = data.chart?.result?.[0];
+        const meta = result?.meta || {};
+        const price = meta.regularMarketPrice || 0;
+        const prevClose = meta.chartPreviousClose || price;
+        const changePercent = prevClose ? ((price - prevClose) / prevClose) * 100 : 0;
+        return withCors(Response.json({
+          lastPrice: price,
+          changePercent,
+          bid: price,
+          ask: price,
+          high: price,
+          low: price,
+          open: price,
+          volume: 0,
+        }));
+      } catch (err) {
+        return withCors(Response.json({ lastPrice: 0, changePercent: 0, bid: 0, ask: 0, high: 0, low: 0, open: 0, volume: 0 }));
+      }
+    }
+
     return withCors(new Response('Not found', { status: 404 }));
   },
 
