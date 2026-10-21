@@ -5,7 +5,19 @@
  * không đổi. Đợt fix NÀY chỉ thêm phần "tài khoản nhẹ" (tên + PIN) để
  * nhiều người dùng chung app không bị lẫn cảnh báo của nhau.)
  *
- * FIX (đợt fix mới nhất - TÀI KHOẢN NHẸ, tên + PIN):
+ * FIX (đợt fix MỚI NHẤT - OANDA XAUUSD REALTIME + NHIỀU LỊCH SỬ):
+ *   Trước đây /api/oanda/* dùng Yahoo "GC=F" (futures vàng, KHÔNG phải spot
+ *   OANDA) -> giá lệch/trễ so với TradingView, và Yahoo giới hạn lịch sử
+ *   intraday (1m: 5d, 15m: 30d...) nên không vẽ thêm nến cũ được.
+ *   Giờ OANDA đi qua TradingView WebSocket (OANDA:XAUUSD):
+ *     - klines: tới 5000 nến/lần, có endTime thì tự xin thêm (request_more_data)
+ *       cho tới khi đủ nến trước mốc đó -> kéo chart về quá khứ được như Binance.
+ *     - ticker: giá realtime + bid/ask/high/low/open qua quote session.
+ *     - Khung tổng hợp (20m/45m/3h/6h/8h/12h/2d/3d) gộp từ khung nhỏ hơn.
+ *     - Nếu TradingView lỗi -> tự rơi về Yahoo cũ làm fallback.
+ *   Xem helper tv* ở cuối file.
+ *
+ * FIX (đợt fix trước - TÀI KHOẢN NHẸ, tên + PIN):
  *   Vấn đề: deviceId trước đây do client TỰ SINH NGẪU NHIÊN
  *   (localStorage, xem push-sync.js) - nghĩa là "tài khoản" thực chất gắn
  *   với TRÌNH DUYỆT, không gắn với NGƯỜI. Nếu 2 người dùng chung 1 trình
@@ -32,7 +44,7 @@
  *     - Hash PIN bằng SHA-256 (Web Crypto có sẵn trong Workers, không cần
  *       cài thêm thư viện) - KHÔNG lưu PIN dạng plain text.
  *
- * FIX (đợt fix mới nhất - TASK ĐÃ XOÁ CỨ QUAY LẠI KHI DÙNG NHIỀU THIẾT BỊ):
+ * FIX (đợt fix trước - TASK ĐÃ XOÁ CỨ QUAY LẠI KHI DÙNG NHIỀU THIẾT BỊ):
  *   Nguyên nhân gốc: /api/tasks POST là kiểu "full sync" - mỗi thiết bị
  *   gửi TOÀN BỘ danh sách task hiện có trên máy nó lên, server GHI ĐÈ
  *   nguyên mảng cho deviceId đó. Nếu người dùng đăng nhập CÙNG 1 tên/PIN
@@ -257,13 +269,13 @@ export default {
     // triggered), tránh race condition với cron gây báo lặp (xem đợt fix
     // trước).
     if (url.pathname === '/api/alerts' && request.method === 'GET') {
-  const deviceId = url.searchParams.get('deviceId');
-  if (!deviceId) {
-    return withCors(new Response('Thiếu deviceId', { status: 400 }));
-  }
-  const allConfig = await readJSON(env.TRACKER_KV, ALERTS_CONFIG_KEY, {});
-  return withCors(Response.json({ ok: true, alerts: allConfig[deviceId] || [] }));
-}
+      const deviceId = url.searchParams.get('deviceId');
+      if (!deviceId) {
+        return withCors(new Response('Thiếu deviceId', { status: 400 }));
+      }
+      const allConfig = await readJSON(env.TRACKER_KV, ALERTS_CONFIG_KEY, {});
+      return withCors(Response.json({ ok: true, alerts: allConfig[deviceId] || [] }));
+    }
     if (url.pathname === '/api/alerts' && request.method === 'POST') {
       let body;
       try {
@@ -513,11 +525,27 @@ export default {
     }
 
     // ===== PROXY OANDA & YAHOO CHO FRONTEND (hỗ trợ khi deploy GitHub Pages) =====
+    // OANDA (XAUUSD/GOLD/OANDA:...) -> TradingView WebSocket (realtime, nhiều nến).
+    // Symbol khác (hoặc TradingView lỗi) -> Yahoo như cũ.
     if (url.pathname === '/api/oanda/klines' || url.pathname === '/api/yahoo/klines') {
       const symbol = url.searchParams.get('symbol') || 'XAUUSD';
       const interval = url.searchParams.get('interval') || '15m';
       const limit = parseInt(url.searchParams.get('limit') || '300', 10);
       const endTime = url.searchParams.get('endTime');
+
+      if (isOandaSymbol(symbol)) {
+        const capped = Math.min(Math.max(limit || 300, 1), 5000);
+        const tvCandles = await fetchOandaKlinesTV(symbol, interval, capped, endTime).catch((e) => {
+          console.log('[oanda-tv] klines lỗi:', e && e.message);
+          return null;
+        });
+        if (tvCandles && tvCandles.length) {
+          const resp = Response.json(tvCandles);
+          resp.headers.set('Cache-Control', 'no-store');
+          return withCors(resp);
+        }
+        console.log('[oanda-tv] không có dữ liệu từ TradingView - fallback Yahoo.');
+      }
 
       let yahooSymbol = symbol;
       if (symbol === 'XAUUSD' || symbol === 'GOLD' || symbol.includes('XAUUSD')) {
@@ -608,6 +636,16 @@ export default {
 
     if (url.pathname === '/api/oanda/ticker' || url.pathname === '/api/yahoo/ticker') {
       const symbol = url.searchParams.get('symbol') || 'XAUUSD';
+
+      if (isOandaSymbol(symbol)) {
+        const t = await fetchOandaTickerTV(symbol).catch(() => null);
+        if (t) {
+          const resp = Response.json(t);
+          resp.headers.set('Cache-Control', 'no-store');
+          return withCors(resp);
+        }
+      }
+
       let yahooSymbol = symbol;
       if (symbol === 'XAUUSD' || symbol === 'GOLD' || symbol.includes('XAUUSD')) {
         yahooSymbol = 'GC=F';
@@ -1232,4 +1270,237 @@ async function checkSignalsAndNotify(env) {
   if (subsChanged) {
     await writeJSON(env.TRACKER_KV, SUBS_KEY, subs);
   }
+}
+
+// =====================================================================
+// OANDA qua TRADINGVIEW WEBSOCKET (realtime + nhiều lịch sử)
+// =====================================================================
+
+const TV_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+// tv: interval của TradingView | secs: độ dài 1 nến tv | mult: nếu có thì gộp lên (giây)
+const TV_INTERVAL_MAP = {
+  '1m':  { tv: '1',   secs: 60 },
+  '3m':  { tv: '3',   secs: 180 },
+  '5m':  { tv: '5',   secs: 300 },
+  '15m': { tv: '15',  secs: 900 },
+  '30m': { tv: '30',  secs: 1800 },
+  '1h':  { tv: '60',  secs: 3600 },
+  '2h':  { tv: '120', secs: 7200 },
+  '4h':  { tv: '240', secs: 14400 },
+  '1d':  { tv: '1D',  secs: 86400 },
+  '1w':  { tv: '1W',  secs: 604800 },
+  '1M':  { tv: '1M',  secs: 2592000 },
+  // khung tổng hợp (gộp từ khung nhỏ hơn)
+  '20m': { tv: '5',   secs: 300,   mult: 1200 },
+  '45m': { tv: '15',  secs: 900,   mult: 2700 },
+  '3h':  { tv: '60',  secs: 3600,  mult: 10800 },
+  '6h':  { tv: '60',  secs: 3600,  mult: 21600 },
+  '8h':  { tv: '60',  secs: 3600,  mult: 28800 },
+  '12h': { tv: '60',  secs: 3600,  mult: 43200 },
+  '2d':  { tv: '1D',  secs: 86400, mult: 172800 },
+  '3d':  { tv: '1D',  secs: 86400, mult: 259200 },
+};
+
+function isOandaSymbol(symbol) {
+  const s = String(symbol || '').trim().toUpperCase();
+  return s === 'XAUUSD' || s === 'GOLD' || s.startsWith('OANDA:') || s.endsWith(':OANDA');
+}
+
+function toTradingViewSymbol(symbol) {
+  const s = String(symbol || 'XAUUSD').trim().toUpperCase();
+  if (s.startsWith('OANDA:')) return s;
+  if (s.endsWith(':OANDA')) return 'OANDA:' + s.replace(':OANDA', '');
+  if (s === 'GOLD') return 'OANDA:XAUUSD';
+  return 'OANDA:' + s;
+}
+
+function tvRand(prefix) {
+  return prefix + '_' + Math.random().toString(36).slice(2, 14);
+}
+function tvFrame(s) { return `~m~${s.length}~m~${s}`; }
+function tvSend(ws, m, p) { ws.send(tvFrame(JSON.stringify({ m, p }))); }
+function tvParseFrames(raw) {
+  const out = [];
+  let i = 0;
+  while (i < raw.length && raw.startsWith('~m~', i)) {
+    const j = raw.indexOf('~m~', i + 3);
+    if (j < 0) break;
+    const len = parseInt(raw.slice(i + 3, j), 10);
+    out.push(raw.slice(j + 3, j + 3 + len));
+    i = j + 3 + len;
+  }
+  return out;
+}
+
+async function tvOpenSocket() {
+  for (const host of ['data', 'prodata']) {
+    try {
+      const r = await fetch(`https://${host}.tradingview.com/socket.io/websocket?from=chart%2F&type=chart`, {
+        headers: { Upgrade: 'websocket', Origin: 'https://www.tradingview.com', 'User-Agent': TV_UA },
+      });
+      if (r.webSocket) {
+        r.webSocket.accept();
+        return r.webSocket;
+      }
+    } catch (e) {
+      console.log(`[tv] mở websocket ${host} lỗi:`, e.message);
+    }
+  }
+  return null;
+}
+
+/**
+ * Lấy nến từ TradingView. Có thể tải nhiều hơn 5000 nến bằng cách xin thêm
+ * (request_more_data) cho tới khi đủ `limit` nến TRƯỚC cutoffSec (nếu có).
+ * Trả về mảng nến tăng dần theo time (giây) hoặc null nếu lỗi.
+ */
+async function tvFetchBars(tvSymbol, tvInterval, limit, cutoffSec) {
+  const ws = await tvOpenSocket();
+  if (!ws) return null;
+
+  return new Promise((resolve) => {
+    const cs = tvRand('cs');
+    const bars = new Map();
+    let rounds = 0;
+    let lastSize = 0;
+    let settled = false;
+    const MAX_ROUNDS = 20;
+
+    const toArr = () => [...bars.values()].sort((a, b) => a.time - b.time);
+    const finish = (v) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { ws.close(); } catch (e) {}
+      resolve(v);
+    };
+    const timer = setTimeout(() => finish(bars.size ? toArr() : null), 12000);
+
+    const enough = () => {
+      const arr = toArr();
+      const usable = cutoffSec ? arr.filter((b) => b.time < cutoffSec).length : arr.length;
+      return usable >= limit;
+    };
+
+    ws.addEventListener('message', (ev) => {
+      for (const msg of tvParseFrames(String(ev.data))) {
+        if (msg.startsWith('~h~')) { ws.send(tvFrame(msg)); continue; } // heartbeat
+        let j;
+        try { j = JSON.parse(msg); } catch (e) { continue; }
+
+        if (j.m === 'timescale_update' || j.m === 'du') {
+          const s = j.p && j.p[1] && j.p[1].sds_1 && j.p[1].sds_1.s;
+          if (Array.isArray(s)) {
+            for (const x of s) {
+              const v = x.v;
+              if (!v || v[1] == null) continue;
+              bars.set(v[0], { time: v[0], open: v[1], high: v[2], low: v[3], close: v[4], volume: v[5] || 0 });
+            }
+          }
+        } else if (j.m === 'series_completed') {
+          if (enough() || bars.size === lastSize || rounds >= MAX_ROUNDS) {
+            finish(toArr());
+          } else {
+            lastSize = bars.size;
+            rounds++;
+            tvSend(ws, 'request_more_data', [cs, 'sds_1', 2000]);
+          }
+        } else if (j.m === 'symbol_error' || j.m === 'critical_error' || j.m === 'series_error') {
+          console.log('[tv] lỗi từ TradingView:', msg.slice(0, 200));
+          finish(bars.size ? toArr() : null);
+        }
+      }
+    });
+    ws.addEventListener('close', () => finish(bars.size ? toArr() : null));
+    ws.addEventListener('error', () => finish(bars.size ? toArr() : null));
+
+    tvSend(ws, 'set_auth_token', ['unauthorized_user_token']);
+    tvSend(ws, 'chart_create_session', [cs, '']);
+    tvSend(ws, 'resolve_symbol', [cs, 'sds_sym_1', '=' + JSON.stringify({ symbol: tvSymbol, adjustment: 'splits', session: 'regular' })]);
+    tvSend(ws, 'create_series', [cs, 'sds_1', 's1', 'sds_sym_1', tvInterval, Math.min(5000, Math.max(50, limit)), '']);
+  });
+}
+
+function tvAggregate(candles, mult) {
+  const groups = new Map();
+  for (const c of candles) {
+    const bucket = Math.floor(c.time / mult) * mult;
+    const g = groups.get(bucket);
+    if (!g) {
+      groups.set(bucket, { time: bucket, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume });
+    } else {
+      g.high = Math.max(g.high, c.high);
+      g.low = Math.min(g.low, c.low);
+      g.close = c.close;
+      g.volume += c.volume;
+    }
+  }
+  return [...groups.values()].sort((a, b) => a.time - b.time);
+}
+
+async function fetchOandaKlinesTV(symbol, interval, limit, endTimeMs) {
+  const m = TV_INTERVAL_MAP[interval] || TV_INTERVAL_MAP['15m'];
+  const cutoffSec = endTimeMs ? Math.floor(Number(endTimeMs) / 1000) : null;
+  const factor = m.mult ? Math.ceil(m.mult / m.secs) : 1;
+  const needBase = (limit + 1) * factor;
+
+  let bars = await tvFetchBars(toTradingViewSymbol(symbol), m.tv, needBase, cutoffSec);
+  if (!bars || bars.length === 0) return null;
+
+  if (cutoffSec) bars = bars.filter((b) => b.time < cutoffSec);
+  if (m.mult) bars = tvAggregate(bars, m.mult);
+  return bars.slice(-limit);
+}
+
+/** Giá realtime + thống kê ngày qua quote session của TradingView. */
+async function fetchOandaTickerTV(symbol) {
+  const ws = await tvOpenSocket();
+  if (!ws) return null;
+
+  return new Promise((resolve) => {
+    const qs = tvRand('qs');
+    const tvSymbol = toTradingViewSymbol(symbol);
+    const acc = {};
+    let settled = false;
+    const finish = (v) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { ws.close(); } catch (e) {}
+      resolve(v);
+    };
+    const build = () => (acc.lp == null ? null : {
+      lastPrice: acc.lp,
+      changePercent: acc.chp || 0,
+      bid: acc.bid ?? acc.lp,
+      ask: acc.ask ?? acc.lp,
+      high: acc.high_price ?? acc.lp,
+      low: acc.low_price ?? acc.lp,
+      open: acc.open_price ?? acc.lp,
+      volume: acc.volume || 0,
+    });
+    const timer = setTimeout(() => finish(build()), 6000);
+
+    ws.addEventListener('message', (ev) => {
+      for (const msg of tvParseFrames(String(ev.data))) {
+        if (msg.startsWith('~h~')) { ws.send(tvFrame(msg)); continue; }
+        let j;
+        try { j = JSON.parse(msg); } catch (e) { continue; }
+        if (j.m === 'qsd' && j.p && j.p[1] && j.p[1].v) {
+          Object.assign(acc, j.p[1].v);
+          if (acc.lp != null && acc.chp != null) finish(build());
+        } else if (j.m === 'quote_completed') {
+          finish(build());
+        }
+      }
+    });
+    ws.addEventListener('close', () => finish(build()));
+    ws.addEventListener('error', () => finish(build()));
+
+    tvSend(ws, 'set_auth_token', ['unauthorized_user_token']);
+    tvSend(ws, 'quote_create_session', [qs]);
+    tvSend(ws, 'quote_set_fields', [qs, 'lp', 'ch', 'chp', 'bid', 'ask', 'high_price', 'low_price', 'open_price', 'volume']);
+    tvSend(ws, 'quote_add_symbols', [qs, tvSymbol]);
+  });
 }
