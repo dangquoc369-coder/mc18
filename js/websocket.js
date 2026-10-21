@@ -85,6 +85,13 @@ function getOrCreateEntry(paneId) {
       yahooSlTimer: null,
       yahooTrendRefTimers: {},       // role -> timer
 
+      // OANDA Polling Timers
+      oandaPollTimer: null,
+      oandaHtfTimer: null,
+      oandaSlTimer: null,
+      oandaTrendRefTimers: {},       // role -> timer
+      oandaTickerTimer: null,
+
       // ĐỢT FIX (watchdog chống "socket zombie"): meta lưu đủ thông tin để
       // tự gọi lại đúng hàm connect tương ứng khi phát hiện luồng im lặng
       // bất thường; lastMessageAt lưu mốc thời gian NHẬN MESSAGE gần nhất
@@ -107,6 +114,11 @@ function connectKlineStream(paneId, symbol, interval) {
 
   const provider = getProviderFor(symbol);
   entry.meta.kline = { symbol, interval, provider };
+
+  if (provider === 'oanda') {
+    connectOandaKlineStream(paneId, symbol, interval);
+    return;
+  }
 
   if (provider === 'yahoo') {
     connectYahooKlineStream(paneId, symbol, interval);
@@ -172,6 +184,11 @@ function connectHigherTFKlineStream(paneId, symbol, interval) {
   const provider = getProviderFor(symbol);
   entry.meta.htf = { symbol, interval, provider };
 
+  if (provider === 'oanda') {
+    connectOandaHigherTF(paneId, symbol, interval);
+    return;
+  }
+
   if (provider === 'yahoo') {
     connectYahooHigherTF(paneId, symbol, interval);
     return;
@@ -222,6 +239,11 @@ function connectSLKlineStream(paneId, symbol, interval) {
 
   const provider = getProviderFor(symbol);
   entry.meta.sl = { symbol, interval, provider };
+
+  if (provider === 'oanda') {
+    connectOandaSLTF(paneId, symbol, interval);
+    return;
+  }
 
   if (provider === 'yahoo') {
     connectYahooSLTF(paneId, symbol, interval);
@@ -274,6 +296,11 @@ function connectTrendRefKlineStream(paneId, role, symbol, interval) {
   const provider = getProviderFor(symbol);
   entry.meta.trendref[role] = { symbol, interval, provider };
 
+  if (provider === 'oanda') {
+    connectOandaTrendRef(paneId, role, symbol, interval);
+    return;
+  }
+
   if (provider === 'yahoo') {
     connectYahooTrendRef(paneId, role, symbol, interval);
     return;
@@ -325,6 +352,11 @@ function connectTickerStream(paneId, symbol) {
 
   const provider = getProviderFor(symbol);
   entry.meta.ticker = { symbol, provider };
+
+  if (provider === 'oanda') {
+    connectOandaTickerStream(paneId, symbol);
+    return;
+  }
 
   if (provider === 'yahoo') {
     // Yahoo uses the primary kline polling loop to emit ticker events, so we do nothing here.
@@ -446,6 +478,127 @@ function connectYahooTrendRef(paneId, role, symbol, interval) {
   entry.yahooTrendRefTimers[role] = setInterval(poll, 15000);
 }
 
+/* ===================== OANDA POLLING IMPLEMENTATION ===================== */
+
+function connectOandaKlineStream(paneId, symbol, interval) {
+  const entry = getOrCreateEntry(paneId);
+  clearInterval(entry.oandaPollTimer);
+  entry.oandaPollTimer = null;
+
+  const poll = async () => {
+    try {
+      const candles = await fetchKlines(symbol, interval, 5);
+      if (candles && candles.length > 0) {
+        const liveCandle = candles[candles.length - 1];
+        // Emit Kline update
+        EventBus.emit('kline:update', { paneId, candle: liveCandle });
+        // Emit price update
+        EventBus.emit('price:update', {
+          paneId,
+          price: liveCandle.close,
+          changePercent: null,
+        });
+        EventBus.emit('ws:status', { paneId, status: 'connected' });
+      }
+    } catch (err) {
+      console.warn(`OANDA poll kline error (${paneId}):`, err);
+      EventBus.emit('ws:status', { paneId, status: 'disconnected' });
+    }
+  };
+
+  poll();
+  entry.oandaPollTimer = setInterval(poll, 3000);
+  EventBus.emit('ws:status', { paneId, status: 'connected' });
+}
+
+function connectOandaHigherTF(paneId, symbol, interval) {
+  const entry = getOrCreateEntry(paneId);
+  clearInterval(entry.oandaHtfTimer);
+  entry.oandaHtfTimer = null;
+
+  const poll = async () => {
+    try {
+      const candles = await fetchKlines(symbol, interval, 5);
+      if (candles && candles.length > 0) {
+        EventBus.emit('kline:update:htf', { paneId, candle: candles[candles.length - 1] });
+      }
+    } catch (err) {
+      console.warn(`OANDA poll HTF error (${paneId}):`, err);
+    }
+  };
+
+  poll();
+  entry.oandaHtfTimer = setInterval(poll, 8000);
+}
+
+function connectOandaSLTF(paneId, symbol, interval) {
+  const entry = getOrCreateEntry(paneId);
+  clearInterval(entry.oandaSlTimer);
+  entry.oandaSlTimer = null;
+
+  const poll = async () => {
+    try {
+      const candles = await fetchKlines(symbol, interval, 5);
+      if (candles && candles.length > 0) {
+        EventBus.emit('kline:update:sl', { paneId, candle: candles[candles.length - 1] });
+      }
+    } catch (err) {
+      console.warn(`OANDA poll SL error (${paneId}):`, err);
+    }
+  };
+
+  poll();
+  entry.oandaSlTimer = setInterval(poll, 8000);
+}
+
+function connectOandaTrendRef(paneId, role, symbol, interval) {
+  const entry = getOrCreateEntry(paneId);
+  if (entry.oandaTrendRefTimers[role]) {
+    clearInterval(entry.oandaTrendRefTimers[role]);
+    delete entry.oandaTrendRefTimers[role];
+  }
+
+  const poll = async () => {
+    try {
+      const candles = await fetchKlines(symbol, interval, 5);
+      if (candles && candles.length > 0) {
+        EventBus.emit('kline:update:trendref', { paneId, role, candle: candles[candles.length - 1] });
+      }
+    } catch (err) {
+      console.warn(`OANDA poll TrendRef ${role} error (${paneId}):`, err);
+    }
+  };
+
+  poll();
+  entry.oandaTrendRefTimers[role] = setInterval(poll, 10000);
+}
+
+function connectOandaTickerStream(paneId, symbol) {
+  const entry = getOrCreateEntry(paneId);
+  clearInterval(entry.oandaTickerTimer);
+  entry.oandaTickerTimer = null;
+
+  const poll = async () => {
+    try {
+      const ticker = await fetch24hTicker(symbol);
+      if (ticker && typeof ticker.lastPrice === 'number') {
+        EventBus.emit('price:update', {
+          paneId,
+          price: ticker.lastPrice,
+          changePercent: ticker.changePercent,
+          bid: ticker.bid,
+          ask: ticker.ask,
+        });
+      }
+    } catch (err) {
+      console.warn(`OANDA ticker poll error (${paneId}):`, err);
+    }
+  };
+
+  poll();
+  entry.oandaTickerTimer = setInterval(poll, 2500);
+}
+
 /* ===================== TEARDOWN & SOCKET CLOSURES ===================== */
 
 function closeTrendRefKlineSocket(paneId, role) {
@@ -454,6 +607,10 @@ function closeTrendRefKlineSocket(paneId, role) {
   clearTimeout(entry.trendRefReconnectTimers[role]);
   clearInterval(entry.yahooTrendRefTimers[role]);
   delete entry.yahooTrendRefTimers[role];
+  if (entry.oandaTrendRefTimers && entry.oandaTrendRefTimers[role]) {
+    clearInterval(entry.oandaTrendRefTimers[role]);
+    delete entry.oandaTrendRefTimers[role];
+  }
   delete entry.meta.trendref[role];
   delete entry.lastMessageAt.trendref[role];
   delete entry.aggregators.trendref[role]; // MỚI
@@ -473,6 +630,9 @@ function closeAllTrendRefKlineSockets(paneId) {
   if (!entry) return;
   Object.keys(entry.trendRefSockets).forEach((role) => closeTrendRefKlineSocket(paneId, role));
   Object.keys(entry.yahooTrendRefTimers).forEach((role) => closeTrendRefKlineSocket(paneId, role));
+  if (entry.oandaTrendRefTimers) {
+    Object.keys(entry.oandaTrendRefTimers).forEach((role) => closeTrendRefKlineSocket(paneId, role));
+  }
 }
 
 function closeKlineSocket(paneId) {
@@ -481,6 +641,8 @@ function closeKlineSocket(paneId) {
   clearTimeout(entry.klineReconnectTimer);
   clearInterval(entry.yahooPollTimer);
   entry.yahooPollTimer = null;
+  clearInterval(entry.oandaPollTimer);
+  entry.oandaPollTimer = null;
   entry.meta.kline = null;
   entry.lastMessageAt.kline = null;
   entry.aggregators.kline = null; // MỚI
@@ -500,6 +662,8 @@ function closeHigherTFKlineSocket(paneId) {
   clearTimeout(entry.htfReconnectTimer);
   clearInterval(entry.yahooHtfTimer);
   entry.yahooHtfTimer = null;
+  clearInterval(entry.oandaHtfTimer);
+  entry.oandaHtfTimer = null;
   entry.meta.htf = null;
   entry.lastMessageAt.htf = null;
   entry.aggregators.htf = null; // MỚI
@@ -519,6 +683,8 @@ function closeSLKlineSocket(paneId) {
   clearTimeout(entry.slReconnectTimer);
   clearInterval(entry.yahooSlTimer);
   entry.yahooSlTimer = null;
+  clearInterval(entry.oandaSlTimer);
+  entry.oandaSlTimer = null;
   entry.meta.sl = null;
   entry.lastMessageAt.sl = null;
   entry.aggregators.sl = null; // MỚI
@@ -536,6 +702,8 @@ function closeTickerSocket(paneId) {
   const entry = connections.get(paneId);
   if (!entry) return;
   clearTimeout(entry.tickerReconnectTimer);
+  clearInterval(entry.oandaTickerTimer);
+  entry.oandaTickerTimer = null;
   entry.meta.ticker = null;
   entry.lastMessageAt.ticker = null;
 
@@ -614,7 +782,7 @@ function forceReconnectStaleStream(paneId, key) {
 }
 
 function checkStreamStaleness(paneId, key, meta, lastAt, now) {
-  if (!meta || meta.provider === 'yahoo') return;
+  if (!meta || meta.provider === 'yahoo' || meta.provider === 'oanda') return;
   if (!lastAt) return;
   const threshold = getStaleThreshold(key);
   if (now - lastAt > threshold) {

@@ -35,6 +35,12 @@ const AlertsModule = (function () {
   }
 
   function addPriceAlert(symbol, price) {
+    if (typeof LoginModule !== 'undefined' && LoginModule.getStoredUsername && !LoginModule.getStoredUsername()) {
+      if (LoginModule.showLoginOverlay) {
+        LoginModule.showLoginOverlay('Bạn đang ở vai trò Khách. Hãy lập hoặc đăng nhập tài khoản để đặt và nhận cảnh báo riêng.');
+      }
+      return null;
+    }
     const alert = {
       id: uid('alert'),
       symbol,
@@ -57,10 +63,16 @@ const AlertsModule = (function () {
   }
 
   function getAlertsForSymbol(symbol) {
+    if (typeof LoginModule !== 'undefined' && LoginModule.getStoredUsername && !LoginModule.getStoredUsername()) {
+      return [];
+    }
     return alerts.filter((a) => a.symbol === symbol && !a.triggered);
   }
 
   function getAllAlerts() {
+    if (typeof LoginModule !== 'undefined' && LoginModule.getStoredUsername && !LoginModule.getStoredUsername()) {
+      return [];
+    }
     return alerts.slice();
   }
 
@@ -79,6 +91,10 @@ const AlertsModule = (function () {
   }
 
   function checkPrice(symbol, price) {
+    // Vai trò khách: không phát cảnh báo
+    if (typeof LoginModule !== 'undefined' && LoginModule.getStoredUsername && !LoginModule.getStoredUsername()) {
+      return;
+    }
     const prev = lastPriceForSymbol[symbol];
     lastPriceForSymbol[symbol] = price;
     if (prev === undefined || price === null || price === undefined || Number.isNaN(price)) return;
@@ -158,6 +174,38 @@ const AlertsModule = (function () {
   function renderPanel() {
     if (!panelEl) return;
     const body = panelEl.querySelector('#alertsListBody');
+    const isGuest = typeof LoginModule !== 'undefined' && LoginModule.getStoredUsername && !LoginModule.getStoredUsername();
+
+    if (isGuest) {
+      body.innerHTML = `
+        <div style="padding: 16px 14px; text-align: center; background: rgba(79, 124, 255, 0.08); border: 1px solid rgba(79, 124, 255, 0.25); border-radius: 12px; margin-bottom: 12px;">
+          <div style="font-size: 26px; margin-bottom: 8px;">👤</div>
+          <div style="font-size: 14px; font-weight: 600; color: var(--text-primary, #f0f2f8); margin-bottom: 6px;">
+            Bạn đang ở vai trò Khách
+          </div>
+          <div style="font-size: 12.5px; color: var(--text-secondary, #9aa3b8); line-height: 1.55; margin-bottom: 14px;">
+            Vai trò Khách giúp bạn theo dõi biểu đồ thoải mái, không ghi đè dữ liệu lên máy chủ và không có cảnh báo. Hãy lập tài khoản để cài đặt và nhận các <b>cảnh báo riêng</b> (giá, tín hiệu BUY/SELL).
+          </div>
+          <button id="guestPromptLoginBtn" type="button" style="width: 100%; padding: 10px; border-radius: 8px; background: #4f7cff; color: #fff; font-weight: 600; border: none; cursor: pointer; font-size: 13.5px;">
+            Đăng nhập / Lập tài khoản ngay
+          </button>
+        </div>
+        <div class="ms-row ms-muted" style="text-align: center; font-size: 12px;">
+          Chỉ cần Tên + PIN để nhận cảnh báo riêng mà không sợ bị trùng lặp với người khác.
+        </div>
+      `;
+      const btn = body.querySelector('#guestPromptLoginBtn');
+      if (btn) {
+        btn.addEventListener('click', () => {
+          if (panelEl) panelEl.classList.remove('open');
+          if (typeof LoginModule !== 'undefined' && LoginModule.showLoginOverlay) {
+            LoginModule.showLoginOverlay('Lập hoặc đăng nhập tài khoản để bật và nhận cảnh báo riêng của bạn:');
+          }
+        });
+      }
+      return;
+    }
+
     const list = getAllAlerts();
     const enabledTFs = (Store.getEnabledSignalTimeframes() || []).slice();
 

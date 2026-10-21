@@ -28,12 +28,17 @@ function getCleanSymbol(symbol) {
 
 /**
  * Xác định nhà cung cấp dữ liệu cho symbol.
+ * - XAUUSD, GOLD, hoặc prefix OANDA: -> 'oanda' (API OANDA chính thức qua TradingView proxy, miễn phí).
  * - Suffix _PERP hoặc là XAUUSDT -> 'binance_futures'.
  * - crypto Binance chuẩn (vd: BTCUSDT) -> 'binance'.
- * - Các symbol khác (Forex, Cổ phiếu, Chỉ số...) -> 'yahoo'.s
+ * - Các symbol khác (Forex, Cổ phiếu, Chỉ số...) -> 'yahoo'.
  */
 function getProviderFor(symbol) {
-  if (!symbol) return 'yahoo';
+  if (!symbol) return 'oanda';
+  const s = String(symbol).trim().toUpperCase();
+  if (s === 'XAUUSD' || s === 'GOLD' || s.startsWith('OANDA:') || s.endsWith(':OANDA')) {
+    return 'oanda';
+  }
   if (symbol.endsWith('_PERP') || symbol === 'XAUUSDT') {
     return 'binance_futures';
   }
@@ -74,8 +79,20 @@ async function fetchKlines(symbol, interval, limit = 1000, endTime = null) {
   const provider = getProviderFor(symbol);
 
   // ===== KHUNG TỔNG HỢP (chỉ Binance spot/futures) =====
-  if (provider !== 'yahoo' && isSyntheticInterval(interval)) {
+  if (provider !== 'yahoo' && provider !== 'oanda' && isSyntheticInterval(interval)) {
     return fetchSyntheticKlines(symbol, interval, limit, endTime);
+  }
+
+  if (provider === 'oanda') {
+    let url = `/api/oanda/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`;
+    if (endTime) {
+      url += `&endTime=${endTime}`;
+    }
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`fetchKlines OANDA lỗi: ${res.status} ${res.statusText}`);
+    }
+    return await res.json();
   }
 
   if (provider === 'yahoo') {
@@ -125,6 +142,22 @@ async function fetchKlines(symbol, interval, limit = 1000, endTime = null) {
  */
 async function fetch24hTicker(symbol) {
   const provider = getProviderFor(symbol);
+
+  if (provider === 'oanda') {
+    const res = await fetch(`/api/oanda/ticker?symbol=${encodeURIComponent(symbol)}`);
+    if (!res.ok) {
+      throw new Error(`fetch24hTicker OANDA lỗi: ${res.status} ${res.statusText}`);
+    }
+    const data = await res.json();
+    return {
+      lastPrice: parseFloat(data.lastPrice),
+      changePercent: parseFloat(data.changePercent),
+      bid: data.bid,
+      ask: data.ask,
+      high: data.high,
+      low: data.low,
+    };
+  }
 
   if (provider === 'yahoo') {
     const res = await fetch(`/api/yahoo/ticker?symbol=${encodeURIComponent(symbol)}`);
@@ -200,6 +233,21 @@ async function searchYahooSymbols(query) {
     return await res.json();
   } catch (err) {
     console.error('Lỗi tìm kiếm Yahoo:', err);
+    return [];
+  }
+}
+
+/**
+ * Tìm kiếm symbol OANDA (XAUUSD, Forex, Hàng hóa, Chỉ số...).
+ */
+async function searchOandaSymbols(query) {
+  if (!query) return [];
+  try {
+    const res = await fetch(`/api/oanda/search?query=${encodeURIComponent(query)}`);
+    if (!res.ok) throw new Error(`OANDA Search HTTP error ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.error('Lỗi tìm kiếm OANDA:', err);
     return [];
   }
 }

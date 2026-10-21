@@ -269,7 +269,7 @@
     await Promise.all(roles.map(async (role) => {
       const interval = TrendReferenceModule.ROLE_INTERVAL[role];
       try {
-        const candles = await fetchKlines(symbol, interval, KLINES_LIMIT);
+        const candles = await fetchKlines(symbol, interval, 80);
         instance.setCandles(role, candles);
       } catch (err) {
         console.error(`[${paneId}] Lỗi khi tải nến trend tham khảo (${role}):`, err);
@@ -389,6 +389,11 @@
    * pane. Chỉ gửi thông báo nếu pane đó hiển thị BUY/SELL và timeframe nằm trong danh sách được chọn.
    */
   function onPaneNewSignal({ paneId, direction }) {
+    // Vai trò khách: không phát cảnh báo tín hiệu
+    if (typeof LoginModule !== 'undefined' && LoginModule.getStoredUsername && !LoginModule.getStoredUsername()) {
+      return;
+    }
+
     const pane = Store.getPane(paneId);
     if (!pane || !pane.breakoutVisible) return;
 

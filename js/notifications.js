@@ -131,8 +131,12 @@ const NotificationsModule = (function () {
     });
   }
 
-  /** Gửi 1 thông báo cục bộ và phát âm thanh. */
   async function notify(title, body) {
+    // Nếu là vai trò khách (chưa lập tài khoản) -> không phát cảnh báo hay âm thanh
+    if (typeof LoginModule !== 'undefined' && LoginModule.getStoredUsername && !LoginModule.getStoredUsername()) {
+      return;
+    }
+
     // Luôn phát âm thanh khi có thông báo
     playSound();
 
@@ -203,8 +207,14 @@ const NotificationsModule = (function () {
 
     registerServiceWorker();
     if (isSupported() && Notification.permission === 'default') {
-      // Delay nhẹ để không hỏi ngay khi trang vừa mở, đỡ gây khó chịu.
-      setTimeout(showBanner, 1500);
+      // Chỉ hiện banner xin quyền thông báo nếu ĐÃ lập/đăng nhập tài khoản.
+      // Vai trò Khách không dùng cảnh báo riêng nên không làm phiền khi mở app.
+      setTimeout(() => {
+        const hasAccount = typeof LoginModule !== 'undefined' && LoginModule.getStoredUsername && LoginModule.getStoredUsername();
+        if (hasAccount) {
+          showBanner();
+        }
+      }, 1500);
     }
   }
 

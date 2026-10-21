@@ -131,7 +131,13 @@ const UI = (function () {
       li.dataset.symbol = symbol;
       li.className = symbol === activeSymbol ? 'active' : '';
       const isFutures = symbol.endsWith('_PERP');
-      const displayName = isFutures ? symbol.replace('_PERP', ' (Futures)') : symbol;
+      const isOanda = symbol === 'XAUUSD' || symbol.startsWith('OANDA:');
+      let displayName = symbol;
+      if (isFutures) {
+        displayName = symbol.replace('_PERP', ' (Futures)');
+      } else if (isOanda) {
+        displayName = symbol.replace('OANDA:', '') + ' (OANDA)';
+      }
       li.innerHTML = `
         <span class="sym-name">${displayName}</span>
         <span class="sym-price" data-symbol-price="${symbol}">--</span>
@@ -185,6 +191,35 @@ const UI = (function () {
       }
     }
 
+    let oandaMatches = [];
+    try {
+      const oandaResults = await searchOandaSymbols(query);
+      oandaMatches = (oandaResults || []).map((item) => ({
+        symbol: item.id || `OANDA:${item.symbol}`,
+        display: item.symbol || item.id,
+        name: item.description || item.name || '',
+        source: 'OANDA',
+      }));
+    } catch (err) {
+      console.error('OANDA search error:', err);
+    }
+
+    // Đảm bảo XAUUSD OANDA luôn hiển thị khi tìm vàng/gold/xau
+    const qUpper = query.trim().toUpperCase();
+    if (['XAU', 'GOLD', 'VÀNG', 'VANG'].some((k) => qUpper.includes(k))) {
+      const hasXAU = oandaMatches.some(
+        (m) => m.display === 'XAUUSD' || m.symbol === 'XAUUSD' || m.symbol === 'OANDA:XAUUSD'
+      );
+      if (!hasXAU) {
+        oandaMatches.unshift({
+          symbol: 'XAUUSD',
+          display: 'XAUUSD',
+          name: 'Vàng (Gold CFD - OANDA)',
+          source: 'OANDA',
+        });
+      }
+    }
+
     const binanceMatches = state.allSymbols
       .filter((s) => s.includes(query))
       .slice(0, 8)
@@ -211,7 +246,7 @@ const UI = (function () {
       console.error('Yahoo search error:', err);
     }
 
-    return [...binanceMatches, ...yahooMatches].slice(0, 20);
+    return [...oandaMatches, ...binanceMatches, ...yahooMatches].slice(0, 20);
   }
 
   function renderSearchResults(matches, resultsEl) {

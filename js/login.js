@@ -70,26 +70,41 @@ const LoginModule = (function () {
     style.textContent = `
       #loginOverlay {
         position: fixed; inset: 0; z-index: 99999;
-        background: rgba(10, 12, 20, 0.92);
+        background: rgba(10, 12, 20, 0.88);
+        backdrop-filter: blur(4px);
         display: flex; align-items: center; justify-content: center;
         padding: 16px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       }
       #loginOverlay .login-box {
-        width: 100%; max-width: 320px;
+        width: 100%; max-width: 330px;
         background: #1b1f2b; border: 1px solid #2c3244; border-radius: 14px;
-        padding: 24px 20px; box-sizing: border-box;
-        box-shadow: 0 12px 40px rgba(0,0,0,0.4);
+        padding: 22px 20px; box-sizing: border-box;
+        box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+        position: relative;
+      }
+      #loginOverlay .login-header {
+        display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;
       }
       #loginOverlay .login-title {
-        color: #f0f2f8; font-size: 18px; font-weight: 600; margin-bottom: 6px; text-align: center;
+        color: #f0f2f8; font-size: 17.5px; font-weight: 600;
       }
+      #loginOverlay .login-close-btn {
+        background: none; border: none; color: #9aa3b8; font-size: 20px;
+        line-height: 1; cursor: pointer; padding: 4px 6px; border-radius: 6px;
+      }
+      #loginOverlay .login-close-btn:hover { color: #fff; background: rgba(255,255,255,0.08); }
       #loginOverlay .login-sub {
-        color: #9aa3b8; font-size: 12.5px; line-height: 1.5; margin-bottom: 18px; text-align: center;
+        color: #9aa3b8; font-size: 12.5px; line-height: 1.5; margin-bottom: 16px;
+      }
+      #loginOverlay .login-notice {
+        padding: 8px 10px; background: rgba(79, 124, 255, 0.12);
+        border: 1px solid rgba(79, 124, 255, 0.28); border-radius: 8px;
+        color: #b8c8ff; font-size: 12px; margin-bottom: 12px; line-height: 1.45;
       }
       #loginOverlay input {
         width: 100%; box-sizing: border-box; padding: 11px 12px; margin-bottom: 10px;
         border-radius: 8px; border: 1px solid #333a4d; background: #12151f; color: #f0f2f8;
-        font-size: 15px; outline: none;
+        font-size: 14.5px; outline: none;
       }
       #loginOverlay input:focus { border-color: #4f7cff; }
       #loginOverlay .login-error {
@@ -97,18 +112,26 @@ const LoginModule = (function () {
       }
       #loginOverlay button#loginSubmitBtn {
         width: 100%; padding: 11px; border: none; border-radius: 8px;
-        background: #4f7cff; color: #fff; font-size: 15px; font-weight: 600;
-        cursor: pointer;
+        background: #4f7cff; color: #fff; font-size: 14.5px; font-weight: 600;
+        cursor: pointer; margin-top: 2px;
       }
       #loginOverlay button#loginSubmitBtn:disabled { opacity: 0.6; cursor: default; }
+      #loginOverlay button#loginCancelBtn {
+        width: 100%; padding: 9px; margin-top: 8px;
+        border: 1px solid #333a4d; border-radius: 8px;
+        background: transparent; color: #9aa3b8; font-size: 13px;
+        cursor: pointer; transition: all 0.15s;
+      }
+      #loginOverlay button#loginCancelBtn:hover {
+        color: #f0f2f8; border-color: #4f7cff;
+      }
       #profileBadgeBtn .btn-text { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: bottom; }
+      #profileBadgeBtn.is-guest {
+        border: 1px dashed var(--accent-blue, #4f7cff);
+        color: var(--accent-blue, #4f7cff);
+      }
 
-      /* FIX (đợt fix này): nút "👤 tên" trong topbar bị dồn xuống dòng 2
-         trên mobile vì topbar-right đã đủ chật (flex-wrap: wrap) - thừa 1
-         nút là bị đẩy xuống, chiếm thêm hẳn 1 dòng chiều cao. Giải pháp:
-         ẨN hẳn nút này khỏi topbar trên mobile, thay bằng 1 dòng nhỏ trong
-         sidebar-header (nơi có sẵn chỗ trống, chỉ hiện khi người dùng bấm
-         ☰ mở sidebar - không tranh chỗ với topbar nữa). */
+      /* Nút profile trên sidebar cho mobile */
       #profileBadgeSidebar {
         display: none;
         align-items: center;
@@ -124,6 +147,11 @@ const LoginModule = (function () {
         max-width: calc(100% - 24px);
         box-sizing: border-box;
       }
+      #profileBadgeSidebar.is-guest {
+        border: 1px dashed var(--accent-blue, #4f7cff);
+        background: rgba(79, 124, 255, 0.08);
+        color: var(--accent-blue, #4f7cff);
+      }
       #profileBadgeSidebar .pbs-name {
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px;
       }
@@ -135,22 +163,31 @@ const LoginModule = (function () {
     document.head.appendChild(style);
   }
 
-  function buildOverlay() {
+  function buildOverlay(notice = '') {
     injectStyles();
+    const existing = document.getElementById('loginOverlay');
+    if (existing) existing.remove();
+
     const overlay = document.createElement('div');
     overlay.id = 'loginOverlay';
     overlay.innerHTML = `
       <div class="login-box">
-        <div class="login-title">🔐 DQ Tracker</div>
+        <div class="login-header">
+          <div class="login-title">🔐 Tài khoản & Cảnh báo</div>
+          <button type="button" class="login-close-btn" id="loginCloseBtn" title="Đóng (tiếp tục vai trò Khách)">✕</button>
+        </div>
+        ${notice ? `<div class="login-notice">${notice}</div>` : ''}
         <div class="login-sub">
-          Nhập tên bạn muốn dùng + 1 mã PIN (4-6 số).<br>
-          Tên chưa ai dùng → tự tạo hồ sơ mới cho bạn.<br>
-          Tên đã có → nhập đúng PIN cũ để lấy lại cảnh báo của mình.
+          Nhập Tên + mã PIN (4-6 số):<br>
+          • <b>Tên mới</b> → tự lập tài khoản, lưu và nhận cảnh báo riêng.<br>
+          • <b>Tên đã có</b> → nhập đúng PIN để đồng bộ lại cảnh báo riêng.<br>
+          • Hoặc tiếp tục dùng với vai trò <b>Khách</b> (không có cảnh báo riêng).
         </div>
         <input type="text" id="loginUsername" placeholder="Tên của bạn (vd: quoc, chi...)" autocomplete="off">
         <input type="password" id="loginPin" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="PIN (4-6 số)" autocomplete="off">
         <div id="loginError" class="login-error"></div>
-        <button id="loginSubmitBtn" type="button">Vào app</button>
+        <button id="loginSubmitBtn" type="button">Vào tài khoản</button>
+        <button id="loginCancelBtn" type="button">Tiếp tục vai trò Khách</button>
       </div>
     `;
     document.body.appendChild(overlay);
@@ -159,6 +196,7 @@ const LoginModule = (function () {
 
   function showError(overlay, msg) {
     const el = overlay.querySelector('#loginError');
+    if (!el) return;
     el.textContent = msg;
     el.style.display = msg ? 'block' : 'none';
   }
@@ -194,28 +232,35 @@ const LoginModule = (function () {
       if (!res.ok || !data || !data.ok) {
         showError(overlay, (data && data.error) || 'Đăng nhập thất bại, thử lại.');
         btn.disabled = false;
-        btn.textContent = 'Vào app';
+        btn.textContent = 'Vào tài khoản';
         return;
       }
 
       setStoredUsername(data.deviceId);
-      // Reload để push-sync.js (và mọi chỗ khác đọc deviceId) chạy lại từ
-      // đầu với đúng identity vừa đăng nhập - tránh mọi race condition do
-      // đăng nhập giữa chừng lúc các module khác đã chạy.
+      // Reload để push-sync.js và các module khác chạy với tài khoản vừa đăng nhập
       window.location.reload();
     } catch (err) {
       console.error('[login.js] Lỗi khi đăng nhập:', err);
       showError(overlay, 'Không kết nối được máy chủ, kiểm tra mạng rồi thử lại.');
       btn.disabled = false;
-      btn.textContent = 'Vào app';
+      btn.textContent = 'Vào tài khoản';
     }
   }
 
-  function showLoginOverlay() {
-    const overlay = buildOverlay();
+  function showLoginOverlay(notice = '') {
+    const overlay = buildOverlay(notice);
     const btn = overlay.querySelector('#loginSubmitBtn');
+    const cancelBtn = overlay.querySelector('#loginCancelBtn');
+    const closeBtn = overlay.querySelector('#loginCloseBtn');
     const pinInput = overlay.querySelector('#loginPin');
     const usernameInput = overlay.querySelector('#loginUsername');
+
+    const closeHandler = () => overlay.remove();
+    if (cancelBtn) cancelBtn.addEventListener('click', closeHandler);
+    if (closeBtn) closeBtn.addEventListener('click', closeHandler);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeHandler();
+    });
 
     btn.addEventListener('click', () => submitLogin(overlay));
     pinInput.addEventListener('keydown', (e) => {
@@ -229,7 +274,7 @@ const LoginModule = (function () {
 
   function confirmSwitchAccount(username) {
     const confirmed = window.confirm(
-      `Đổi sang tài khoản khác trên máy này?\n\nApp sẽ tải lại và hỏi tên + PIN mới. Tài khoản "${username}" và cảnh báo của nó vẫn còn nguyên trên máy chủ - đăng nhập lại đúng tên + PIN là lấy lại được.`
+      `Tài khoản hiện tại: "${username}"\n\nBạn có muốn đổi sang tài khoản khác hoặc chuyển về vai trò Khách?\n\n- Bấm OK để đăng xuất (dữ liệu & cảnh báo riêng trên máy chủ vẫn còn nguyên).`
     );
     if (confirmed) {
       clearStoredUsername();
@@ -237,37 +282,46 @@ const LoginModule = (function () {
     }
   }
 
-  // FIX (đợt fix này): tạo 2 nút thay vì 1 - nút trong topbar (chỉ hiện ở
-  // desktop) và nút gọn trong sidebar-header (chỉ hiện ở mobile, xem CSS
-  // trong injectStyles). Trên mobile, topbar vốn đã chật (flex-wrap) nên
-  // thêm 1 nút nữa sẽ bị đẩy xuống dòng 2 chiếm thêm chiều cao - đặt nút
-  // trong sidebar-header giải quyết tận gốc vì sidebar có sẵn chỗ trống và
-  // chỉ hiện khi người dùng chủ động bấm ☰ mở ra.
   function buildProfileBadge(username) {
-    // --- Bản topbar (desktop) - giữ nguyên như cũ ---
+    const oldTopbar = document.getElementById('profileBadgeBtn');
+    if (oldTopbar) oldTopbar.remove();
+    const oldSidebar = document.getElementById('profileBadgeSidebar');
+    if (oldSidebar) oldSidebar.remove();
+
+    const isGuest = !username;
+
+    // --- Bản topbar (desktop) ---
     const topbarBtn = document.createElement('button');
     topbarBtn.id = 'profileBadgeBtn';
-    topbarBtn.className = 'topbar-btn';
+    topbarBtn.className = `topbar-btn ${isGuest ? 'is-guest' : ''}`;
     topbarBtn.type = 'button';
-    topbarBtn.innerHTML = `<span class="btn-icon">👤</span><span class="btn-text"> ${username}</span>`;
-    topbarBtn.title = 'Bấm để đổi sang tài khoản khác';
-    topbarBtn.addEventListener('click', () => confirmSwitchAccount(username));
+    if (isGuest) {
+      topbarBtn.innerHTML = `<span class="btn-icon">👤</span><span class="btn-text"> Khách</span>`;
+      topbarBtn.title = 'Bạn đang ở vai trò Khách (không ghi đè, không có cảnh báo). Bấm để đăng nhập hoặc lập tài khoản riêng.';
+      topbarBtn.addEventListener('click', () => showLoginOverlay());
+    } else {
+      topbarBtn.innerHTML = `<span class="btn-icon">👤</span><span class="btn-text"> ${username}</span>`;
+      topbarBtn.title = `Tài khoản: ${username} (bấm để đổi tài khoản hoặc về vai trò Khách)`;
+      topbarBtn.addEventListener('click', () => confirmSwitchAccount(username));
+    }
     const topbarTarget = document.querySelector('.topbar-right') || document.getElementById('topbar');
     if (topbarTarget) {
       topbarTarget.appendChild(topbarBtn);
     }
 
-    // --- Bản sidebar (mobile) - ẩn mặc định, CSS tự hiện khi màn hình hẹp ---
-    // Chèn làm 1 HÀNG RIÊNG ngay sau .sidebar-header (không nhét vào BÊN
-    // TRONG header - header là 1 flex-row đã chật sẵn logo + nút ☰, nhét
-    // thêm vào đó dễ bị tràn/đè lên nhau). #sidebar là flex-column nên 1
-    // phần tử block đặt làm sibling của .sidebar-header sẽ tự chiếm trọn 1
-    // dòng riêng, không ảnh hưởng gì tới bố cục header.
+    // --- Bản sidebar (mobile) ---
     const sidebarBtn = document.createElement('div');
     sidebarBtn.id = 'profileBadgeSidebar';
-    sidebarBtn.innerHTML = `<span>👤</span><span class="pbs-name">${username}</span><span style="margin-left:auto; opacity:0.6;">⇄</span>`;
-    sidebarBtn.title = 'Bấm để đổi sang tài khoản khác';
-    sidebarBtn.addEventListener('click', () => confirmSwitchAccount(username));
+    sidebarBtn.className = isGuest ? 'is-guest' : '';
+    if (isGuest) {
+      sidebarBtn.innerHTML = `<span>👤</span><span class="pbs-name">Khách (Đăng nhập)</span><span style="margin-left:auto; opacity:0.7;">➔</span>`;
+      sidebarBtn.title = 'Bạn đang ở vai trò Khách. Bấm để đăng nhập hoặc lập tài khoản riêng.';
+      sidebarBtn.addEventListener('click', () => showLoginOverlay());
+    } else {
+      sidebarBtn.innerHTML = `<span>👤</span><span class="pbs-name">${username}</span><span style="margin-left:auto; opacity:0.6;">⇄</span>`;
+      sidebarBtn.title = `Tài khoản: ${username} (bấm để đổi tài khoản hoặc về vai trò Khách)`;
+      sidebarBtn.addEventListener('click', () => confirmSwitchAccount(username));
+    }
     const sidebarHeader = document.querySelector('.sidebar-header');
     if (sidebarHeader && sidebarHeader.parentElement) {
       sidebarHeader.insertAdjacentElement('afterend', sidebarBtn);
@@ -275,25 +329,11 @@ const LoginModule = (function () {
   }
 
   function mount() {
-    if (!isConfigured()) {
-      console.warn('[login.js] Chưa cấu hình WORKER_URL - bỏ qua màn hình đăng nhập.');
-      return;
-    }
-    // FIX: injectStyles() trước đây CHỈ được gọi bên trong buildOverlay()
-    // (nhánh "chưa đăng nhập") - nghĩa là người ĐÃ đăng nhập từ trước (đi
-    // thẳng vào buildProfileBadge()) không bao giờ có CSS responsive được
-    // chèn vào trang -> #profileBadgeBtn không bị ẩn trên mobile, và
-    // #profileBadgeSidebar (1 <div> trần, mặc định display:block) cũng
-    // luôn hiện -> cả 2 cùng hiện cùng lúc. Gọi injectStyles() ngay ở đây,
-    // KHÔNG phụ thuộc nhánh nào, để CSS luôn có mặt trước khi tạo bất kỳ
-    // nút nào bên dưới.
     injectStyles();
     const username = getStoredUsername();
-    if (!username) {
-      showLoginOverlay();
-      return;
-    }
+    // Tạo badge hiển thị vai trò hiện tại (Khách hoặc Tên tài khoản)
     buildProfileBadge(username);
+    // KHÔNG tự động bật showLoginOverlay() khi mở app - vào thẳng vai trò Khách thoải mái
   }
 
   if (document.readyState === 'loading') {
@@ -302,5 +342,9 @@ const LoginModule = (function () {
     mount();
   }
 
-  return { getStoredUsername };
+  return {
+    getStoredUsername,
+    isGuest: () => !getStoredUsername(),
+    showLoginOverlay,
+  };
 })();

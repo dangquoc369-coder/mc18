@@ -454,6 +454,15 @@ const IndicatorLegend = (function () {
 
       if (
         selectedTFs.length > 0 &&
+        typeof LoginModule !== 'undefined' &&
+        LoginModule.getStoredUsername &&
+        !LoginModule.getStoredUsername()
+      ) {
+        if (LoginModule.showLoginOverlay) {
+          LoginModule.showLoginOverlay('Bạn đang ở vai trò Khách. Để nhận thông báo tín hiệu BUY/SELL riêng, vui lòng đăng nhập hoặc lập tài khoản.');
+        }
+      } else if (
+        selectedTFs.length > 0 &&
         NotificationsModule.isSupported() &&
         NotificationsModule.getPermission() === 'default'
       ) {

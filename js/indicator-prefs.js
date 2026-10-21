@@ -17,7 +17,7 @@ const IndicatorPrefsModule = (function () {
       typeof LoginModule !== 'undefined' && LoginModule.getStoredUsername
         ? LoginModule.getStoredUsername()
         : null;
-    if (!username) return null;
+    if (!username) return 'dq_tracker_indicator_prefs_v1_guest';
     return `dq_tracker_indicator_prefs_v1_${username}`;
   }
 

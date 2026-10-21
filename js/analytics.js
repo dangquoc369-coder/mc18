@@ -55,9 +55,9 @@ const AnalyticsModule = (function () {
   // Lấy deviceId (tên tài khoản người dùng)
   function getDeviceId() {
     try {
-      return localStorage.getItem('dq_tracker_device_id_v1') || 'default_user';
+      return localStorage.getItem('dq_tracker_device_id_v1') || null;
     } catch (e) {
-      return 'default_user';
+      return null;
     }
   }
 

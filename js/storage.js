@@ -21,9 +21,9 @@
 
 const Store = (function () {
   const DEFAULT_PANE_CONFIG = [
-    { id: 'pane-1', symbol: 'BTCUSDT', timeframe: '15m' },
-    { id: 'pane-2', symbol: 'ETHUSDT', timeframe: '1h' },
-    { id: 'pane-3', symbol: 'BNBUSDT', timeframe: '4h' },
+    { id: 'pane-1', symbol: 'XAUUSD', timeframe: '15m' },
+    { id: 'pane-2', symbol: 'BTCUSDT', timeframe: '1h' },
+    { id: 'pane-3', symbol: 'ETHUSDT', timeframe: '4h' },
     { id: 'pane-4', symbol: 'SOLUSDT', timeframe: '1d' },
   ];
 
@@ -139,7 +139,7 @@ const Store = (function () {
     orientation: 'landscape',
     layoutRatios: {},
     popularSymbols: [
-      'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XAUUSDT'
+      'XAUUSD', 'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XAUUSDT'
     ],
     allSymbols: [],
     enabledSignalTimeframes: loadSavedSignalTimeframes(),
