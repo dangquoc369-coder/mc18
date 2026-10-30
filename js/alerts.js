@@ -142,7 +142,7 @@ const AlertsModule = (function () {
     btn.id = 'alertsListBtn';
     btn.className = 'topbar-btn';
     btn.type = 'button';
-    btn.innerHTML = '<span class="btn-icon">🔔</span><span class="btn-text"> Cảnh báo</span>';
+    btn.innerHTML = btn.innerHTML = `<span class="btn-icon">${iconHTML('bell')}</span><span class="btn-text"> Cảnh báo</span>`;;
     btn.title = 'Xem và quản lý cảnh báo';
     btn.addEventListener('click', () => {
       if (panelEl.classList.contains('open')) {
@@ -161,8 +161,8 @@ const AlertsModule = (function () {
     panel.className = 'ms-panel';
     panel.innerHTML = `
       <div class="ms-header">
-        <span>🔔 Danh sách cảnh báo giá</span>
-        <span class="ms-close">✕</span>
+        <span>${iconInline('bell')} Danh sách cảnh báo giá</span>
+        <span class="ms-close">${iconHTML('close')}</span>
       </div>
       <div id="alertsListBody"></div>
     `;
@@ -179,7 +179,7 @@ const AlertsModule = (function () {
     if (isGuest) {
       body.innerHTML = `
         <div style="padding: 16px 14px; text-align: center; background: rgba(79, 124, 255, 0.08); border: 1px solid rgba(79, 124, 255, 0.25); border-radius: 12px; margin-bottom: 12px;">
-          <div style="font-size: 26px; margin-bottom: 8px;">👤</div>
+          <div style="display:flex; justify-content:center; margin-bottom:8px; color:var(--accent-blue);"><span class="ms-ico" style="width:32px;height:32px;margin:0;">${Icons.account}</span></div>
           <div style="font-size: 14px; font-weight: 600; color: var(--text-primary, #f0f2f8); margin-bottom: 6px;">
             Bạn đang ở vai trò Khách
           </div>
@@ -256,17 +256,17 @@ const AlertsModule = (function () {
 
     body.innerHTML = `
       <div class="ms-row ms-bold" style="display:flex; justify-content:space-between; align-items:center;">
-        <span>🔊 Âm thanh thông báo</span>
+        <span>${iconInline('volume')} Âm thanh thông báo</span>
         <div>
           <button id="testSoundBtn" type="button" class="alert-remove-btn" style="margin-right:6px; background:var(--accent-color, #2962ff); color:#fff; border:none;">Thử chuông</button>
           <button id="toggleSoundBtn" type="button" class="alert-remove-btn">${isSoundOn ? 'Tắt' : 'Bật'}</button>
         </div>
       </div>
       <div class="ms-divider"></div>
-      <div class="ms-row ms-bold">🔔 Cảnh báo giá</div>
+      <div class="ms-row ms-bold">${iconInline('bell')} Cảnh báo giá</div>
       ${priceHTML}
       <div class="ms-divider"></div>
-      <div class="ms-row ms-bold">📊 Thông báo tín hiệu BUY/SELL</div>
+      <div class="ms-row ms-bold">${iconInline('tabChart')} Thông báo tín hiệu BUY/SELL</div>
       ${signalHTML}
     `;
 

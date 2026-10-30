@@ -2,21 +2,13 @@
  * marketstatus.js
  * Nút "Trạng thái thị trường" - CHỈ 1 NÚT DUY NHẤT dùng chung cho cả 4 pane.
  *
- * (Các đợt fix trước: getMarketStatus nhận { entryCandles, higherTFCandles },
- * bỏ injectStyles() cứng màu để theo theme sáng/tối - không đổi, xem comment
- * gốc phía dưới.)
+ * Lịch sử: getMarketStatus nhận { entryCandles, higherTFCandles }; panel bám
+ * theme sáng/tối (không hardcode màu); nút 🔄 làm mới thủ công (đá lại socket
+ * trend tham khảo của pane đang xem qua forceReconnectPaneTrendRef) + dòng
+ * "Cập nhật lúc HH:MM:SS" để biết chắc dữ liệu tính lúc nào.
  *
- * CẬP NHẬT (đợt fix này - NÚT RELOAD THỦ CÔNG + THỜI GIAN CẬP NHẬT):
- *   Vấn đề: TrendReferenceModule đôi khi cập nhật chậm hơn 1 nhịp so với dữ
- *   liệu nến mới nhất (do cách căn chỉnh đa khung/aligner, xem trend-
- *   reference.js) - trước đây muốn chắc ăn phải F5 lại cả trang.
- *   Giải pháp: thêm nút 🔄 ngay trong header của panel - bấm là gọi lại
- *   showStatus() (tính lại toàn bộ, y hệt logic cũ, không cần reload trang).
- *   Đồng thời thêm dòng "Cập nhật lúc HH:MM:SS" - set lại mỗi lần
- *   showStatus() chạy (dù do bấm nút reload, do đổi pane qua
- *   EventBus 'pane:focused', hay mở panel lần đầu) - để luôn biết chắc panel
- *   đang hiển thị dữ liệu tính tại thời điểm nào, không đoán mò "có phải live
- *   không".
+ * CẬP NHẬT: toàn bộ emoji đổi sang icon SVG cùng phong cách app
+ * (icons-ui.js). Logic giữ nguyên.
  */
 
 (function () {
@@ -38,26 +30,26 @@
   }
 
   function labelForSwing(v) {
-    if (v === 'up') return { text: '📈 Tăng', cls: 'ms-trend-up' };
-    if (v === 'down') return { text: '📉 Giảm', cls: 'ms-trend-down' };
-    if (v === 'sideway') return { text: '⏸️ Sideway', cls: 'ms-trend-side' };
-    return { text: '⏳ Đang xác định...', cls: 'ms-muted' };
+    if (v === 'up') return { icon: 'trendUp', text: 'Tăng', cls: 'ms-trend-up' };
+    if (v === 'down') return { icon: 'trendDown', text: 'Giảm', cls: 'ms-trend-down' };
+    if (v === 'sideway') return { icon: 'sideway', text: 'Sideway', cls: 'ms-trend-side' };
+    return { icon: 'clock', text: 'Đang xác định...', cls: 'ms-muted' };
   }
 
   function labelForScalp(v) {
-    if (v === 'up') return { text: '📈 Xu hướng tăng', cls: 'ms-trend-up' };
-    if (v === 'down') return { text: '📉 Xu hướng giảm', cls: 'ms-trend-down' };
-    return { text: '⏳ Đang xác định...', cls: 'ms-muted' };
+    if (v === 'up') return { icon: 'trendUp', text: 'Xu hướng tăng', cls: 'ms-trend-up' };
+    if (v === 'down') return { icon: 'trendDown', text: 'Xu hướng giảm', cls: 'ms-trend-down' };
+    return { icon: 'clock', text: 'Đang xác định...', cls: 'ms-muted' };
   }
 
   /**
-   * Trend tham khảo MỚI: luôn báo đủ Swing H1|H4|D1 + Scalp, KHÔNG phụ thuộc
+   * Trend tham khảo: luôn báo đủ Swing H1|H4|D1 + Scalp, KHÔNG phụ thuộc
    * timeframe đang mở của pane - lấy từ TrendReferenceModule instance riêng
    * của pane (xem TrendRefRegistry trong app.js).
    */
   function buildTrendReferenceHTML(trendRef) {
     if (!trendRef) {
-      return `<div class="ms-row ms-muted">⚠️ Chưa có dữ liệu trend tham khảo.</div>`;
+      return `<div class="ms-row ms-muted">${iconInline('warning')} Chưa có dữ liệu trend tham khảo.</div>`;
     }
     const h1 = labelForSwing(trendRef.swing.h1);
     const h4 = labelForSwing(trendRef.swing.h4);
@@ -65,13 +57,13 @@
     const scalp = labelForScalp(trendRef.scalp);
 
     return `
-      <div class="ms-row ms-bold">🧭 TREND SWING (tham khảo)</div>
-      <div class="ms-row ${h1.cls}">H1: ${h1.text}</div>
-      <div class="ms-row ${h4.cls}">H4: ${h4.text}</div>
-      <div class="ms-row ${d1.cls}">D1: ${d1.text}</div>
+      <div class="ms-row ms-bold">${iconInline('compass')} TREND SWING (tham khảo)</div>
+      <div class="ms-row ${h1.cls}">H1: ${iconInline(h1.icon)} ${h1.text}</div>
+      <div class="ms-row ${h4.cls}">H4: ${iconInline(h4.icon)} ${h4.text}</div>
+      <div class="ms-row ${d1.cls}">D1: ${iconInline(d1.icon)} ${d1.text}</div>
       <div class="ms-divider"></div>
-      <div class="ms-row ms-bold">⚡ TREND SCALP (tham khảo)</div>
-      <div class="ms-row ${scalp.cls}">${scalp.text}</div>
+      <div class="ms-row ms-bold">${iconInline('prioMedium')} TREND SCALP (tham khảo)</div>
+      <div class="ms-row ${scalp.cls}">${iconInline(scalp.icon)} ${scalp.text}</div>
     `;
   }
 
@@ -84,20 +76,23 @@
 
     let tradeHTML = '';
     if (status.activeTradeOpen) {
-      const dirLabel = status.activeDirection === 1 ? 'BUY 🔵' : 'SELL 🔴';
+      const isBuy = status.activeDirection === 1;
+      const dirLabel = isBuy
+        ? `<span class="ms-trend-up">BUY</span>`
+        : `<span class="ms-trend-down">SELL</span>`;
       tradeHTML = `
         <div class="ms-divider"></div>
-        <div class="ms-row ms-bold">📌 ĐANG THEO DÕI LỆNH: ${dirLabel}</div>
+        <div class="ms-row ms-bold">${iconInline('pin')} ĐANG THEO DÕI LỆNH: ${dirLabel}</div>
         <div class="ms-row">Entry: ${formatPriceLocalMS(status.activeEntryPrice)}</div>
         <div class="ms-row">Stop Loss: ${formatPriceLocalMS(status.activeSLPrice)}</div>
         <div class="ms-row">Giá hiện tại: ${formatPriceLocalMS(status.currentPrice)}</div>
-        <div class="ms-row">📏 Risk: ${formatPriceLocalMS(status.risk)}</div>
-        <div class="ms-row ms-muted">🎯 Sẽ cảnh báo khi chạm SL hoặc có đảo chiều</div>`;
+        <div class="ms-row">${iconInline('ruler')} Risk: ${formatPriceLocalMS(status.risk)}</div>
+        <div class="ms-row ms-muted">${iconInline('target')} Sẽ cảnh báo khi chạm SL hoặc có đảo chiều</div>`;
     } else {
       tradeHTML = `
         <div class="ms-divider"></div>
-        <div class="ms-row ms-bold">⏳ KHÔNG CÓ LỆNH NÀO ĐANG THEO DÕI</div>
-        <div class="ms-row ms-muted">🎯 Sẽ cảnh báo khi có tín hiệu breakout mới</div>`;
+        <div class="ms-row ms-bold">${iconInline('clock')} KHÔNG CÓ LỆNH NÀO ĐANG THEO DÕI</div>
+        <div class="ms-row ms-muted">${iconInline('target')} Sẽ cảnh báo khi có tín hiệu breakout mới</div>`;
     }
 
     return `
@@ -114,40 +109,38 @@
     panel.className = 'ms-panel';
     panel.innerHTML = `
       <div class="ms-header">
-        <span>📊 Trạng thái thị trường</span>
+        <span>${iconInline('marketStatus')} Trạng thái thị trường</span>
         <span class="ms-header-actions">
-          <span class="ms-reload" title="Làm mới ngay">🔄</span>
-          <span class="ms-close" title="Đóng">✕</span>
+          <span class="ms-reload" title="Làm mới ngay">${iconHTML('reload')}</span>
+          <span class="ms-close" title="Đóng">${iconHTML('close')}</span>
         </span>
       </div>
-      <div class="ms-row ms-muted ms-updated-row" id="msLastUpdated">🕒 Cập nhật lúc --:--:--</div>
+      <div class="ms-row ms-muted ms-updated-row" id="msLastUpdated">${iconInline('clock')} Cập nhật lúc --:--:--</div>
       <div id="marketStatusBody"></div>
     `;
     document.body.appendChild(panel);
     panel.querySelector('.ms-close').addEventListener('click', () => panel.classList.remove('open'));
     panel.querySelector('.ms-reload').addEventListener('click', () => {
-  const reloadIcon = panel.querySelector('.ms-reload');
-  const activePane = Store.getActivePane();
+      const reloadIcon = panel.querySelector('.ms-reload');
+      const activePane = Store.getActivePane();
 
-  // ĐỢT FIX: reload giờ ĐÁ LẠI đúng socket trend tham khảo (M5/H2) của pane
-  // đang xem, thay vì chỉ tính lại từ dữ liệu cũ - xử lý đúng lúc socket bị
-  // "zombie" mà watchdog (chạy mỗi 10s) chưa kịp bắt.
-  if (typeof forceReconnectPaneTrendRef === 'function') {
-    forceReconnectPaneTrendRef(activePane.id);
-  }
+      // Reload ĐÁ LẠI đúng socket trend tham khảo (M5/H2) của pane đang xem,
+      // xử lý lúc socket bị "zombie" mà watchdog (mỗi 10s) chưa kịp bắt.
+      if (typeof forceReconnectPaneTrendRef === 'function') {
+        forceReconnectPaneTrendRef(activePane.id);
+      }
 
-  if (reloadIcon) {
-    reloadIcon.classList.add('ms-reload-spinning');
-    setTimeout(() => reloadIcon.classList.remove('ms-reload-spinning'), 800);
-  }
+      if (reloadIcon) {
+        reloadIcon.classList.add('ms-reload-spinning');
+        setTimeout(() => reloadIcon.classList.remove('ms-reload-spinning'), 800);
+      }
 
-  showStatus(panel);
-  // Socket vừa reconnect cần 1 nhịp mới có message đầu tiên về - tính lại
-  // thêm lần nữa sau ~1.5s để phản ánh ngay, khỏi bắt bấm reload lần 2.
-  setTimeout(() => {
-    if (panel.classList.contains('open')) showStatus(panel);
-  }, 1500);
-});
+      showStatus(panel);
+      // Socket vừa reconnect cần 1 nhịp mới có message đầu - tính lại sau ~1.5s
+      setTimeout(() => {
+        if (panel.classList.contains('open')) showStatus(panel);
+      }, 1500);
+    });
     return panel;
   }
 
@@ -170,9 +163,8 @@
       body.innerHTML = `<div class="ms-row ms-muted">Lỗi khi lấy trạng thái: ${err.message}</div>`;
       console.error('marketstatus.js error:', err);
     }
-    // Luôn cập nhật mốc giờ, kể cả khi có lỗi ở trên - để biết chính xác lần
-    // tính gần nhất là lúc nào.
-    if (updatedEl) updatedEl.textContent = `🕒 Cập nhật lúc ${formatNowClock()}`;
+    // Luôn cập nhật mốc giờ, kể cả khi có lỗi - để biết lần tính gần nhất.
+    if (updatedEl) updatedEl.innerHTML = `${iconInline('clock')} Cập nhật lúc ${formatNowClock()}`;
     panel.classList.add('open');
   }
 
@@ -181,7 +173,7 @@
     btn.id = 'marketStatusBtn';
     btn.className = 'topbar-btn';
     btn.type = 'button';
-    btn.innerHTML = '<span class="btn-icon">📊</span><span class="btn-text"> Trạng thái thị trường</span>';
+    btn.innerHTML = `<span class="btn-icon">${iconHTML('marketStatus')}</span><span class="btn-text"> Trạng thái thị trường</span>`;
     btn.title = 'Xem trạng thái thị trường';
     btn.addEventListener('click', () => {
       if (panel.classList.contains('open')) {

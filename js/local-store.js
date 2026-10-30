@@ -3,6 +3,11 @@
  * Kho lưu trữ cục bộ theo từng tài khoản (Khách = 'guest').
  * Thứ tự đọc: key của tài khoản -> key của 'guest' -> key cũ (legacy), rồi
  * copy về key của tài khoản (di trú 1 lần, người dùng không mất dữ liệu cũ).
+ *
+ * CẬP NHẬT: nút "💾 Dữ liệu" không còn nằm trong topbar (tránh làm hàng
+ * topbar bị tràn xuống dòng trên iPhone/iPad) mà nằm ở CHÂN SIDEBAR
+ * (.sidebar-footer, style trong css/topbar-landscape.css). Panel sao lưu
+ * mở ngay phía trên nút đó.
  */
 const LocalStore = (function () {
   const DEVICE_ID_KEY = 'dq_tracker_device_id_v1';
@@ -77,25 +82,71 @@ const LocalStore = (function () {
     return count;
   }
 
-  // ===== Nút "💾 Dữ liệu" trên topbar =====
+  // ===== Nút "💾 Dữ liệu" ở CHÂN SIDEBAR + panel sao lưu =====
   function mountBackupUI() {
+    if (document.getElementById('backupBtn')) return; // tránh gắn 2 lần
+
     const panel = document.createElement('div');
     panel.id = 'backupPanel';
     panel.className = 'ms-panel';
     panel.innerHTML = `
-      <div class="ms-header"><span>💾 Dữ liệu trên thiết bị</span><span class="ms-close">✕</span></div>
+      <div class="ms-header"><span>${iconInline('database')} Dữ liệu trên thiết bị</span><span class="ms-close">${iconHTML('close')}</span></div>
       <div class="ms-row ms-muted" style="line-height:1.5">
         Watchlist, bố cục, chỉ báo, hình vẽ và nhật ký lệnh chỉ lưu trên thiết bị này.
         Hãy sao lưu định kỳ, nhất là trước khi xoá dữ liệu Safari hoặc đổi máy.
       </div>
       <div class="ms-row" style="display:flex; gap:8px; flex-wrap:wrap;">
-        <button type="button" class="alert-remove-btn" id="backupExportBtn">⬇ Xuất file sao lưu</button>
-        <button type="button" class="alert-remove-btn" id="backupImportBtn">⬆ Khôi phục từ file</button>
+        <button type="button" class="alert-remove-btn" id="backupExportBtn">${iconHTML('download')} Xuất file sao lưu</button>
+        <button type="button" class="alert-remove-btn" id="backupImportBtn">${iconHTML('upload')} Khôi phục từ file</button>
       </div>
       <input type="file" id="backupFileInput" accept="application/json,.json" style="display:none">
     `;
     document.body.appendChild(panel);
-    panel.querySelector('.ms-close').addEventListener('click', () => panel.classList.remove('open'));
+
+    const btn = document.createElement('button');
+    btn.id = 'backupBtn';
+    btn.className = 'sidebar-footer-btn';
+    btn.type = 'button';
+    btn.innerHTML = `<span class="sfb-icon">${iconHTML('database')}</span><span class="sfb-text">Dữ liệu</span>`;
+    btn.title = 'Sao lưu / khôi phục dữ liệu trên thiết bị';
+
+    function setOpen(open) {
+      panel.classList.toggle('open', open);
+      btn.classList.toggle('open', open);
+    }
+
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setOpen(!panel.classList.contains('open'));
+    });
+    panel.querySelector('.ms-close').addEventListener('click', () => setOpen(false));
+
+    // Panel nằm ngoài #sidebar: nếu để click lọt lên document thì
+    // sidebar-resize.js (mobile) sẽ coi là "bấm ra ngoài" và tự đóng drawer.
+    panel.addEventListener('click', (e) => e.stopPropagation());
+
+    // Bấm ra ngoài panel thì đóng lại
+    document.addEventListener('click', (e) => {
+      if (!panel.classList.contains('open')) return;
+      if (panel.contains(e.target) || btn.contains(e.target)) return;
+      setOpen(false);
+    });
+
+    // Gắn nút vào chân sidebar (nằm ngoài vùng tab nên luôn hiện ở mọi tab)
+    const sidebar = document.getElementById('sidebar');
+    if (sidebar) {
+      const footer = document.createElement('div');
+      footer.className = 'sidebar-footer';
+      footer.appendChild(btn);
+      sidebar.appendChild(footer);
+    } else {
+      btn.style.position = 'fixed';
+      btn.style.left = '10px';
+      btn.style.bottom = '10px';
+      btn.style.width = 'auto';
+      btn.style.zIndex = '9999';
+      document.body.appendChild(btn);
+    }
 
     panel.querySelector('#backupExportBtn').addEventListener('click', () => {
       const blob = new Blob([JSON.stringify(exportAll(), null, 2)], { type: 'application/json' });
@@ -125,15 +176,6 @@ const LocalStore = (function () {
         fileInput.value = '';
       }
     });
-
-    const btn = document.createElement('button');
-    btn.id = 'backupBtn';
-    btn.className = 'topbar-btn';
-    btn.type = 'button';
-    btn.innerHTML = '<span class="btn-icon">💾</span><span class="btn-text"> Dữ liệu</span>';
-    btn.title = 'Sao lưu / khôi phục dữ liệu trên thiết bị';
-    btn.addEventListener('click', () => panel.classList.toggle('open'));
-    (document.querySelector('.topbar-right') || document.getElementById('topbar') || document.body).appendChild(btn);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountBackupUI);

@@ -3,27 +3,16 @@
  * Chuyển đổi NỀN SÁNG / NỀN TỐI cho TOÀN BỘ app (kiểu TradingView).
  *
  * Cách làm: đặt attribute `data-theme="light"` hoặc `data-theme="dark"` lên
- * thẻ <html> - toàn bộ css/style.css định nghĩa lại các biến CSS
- * (--bg-main, --text-primary, ...) theo attribute này (xem
- * :root[data-theme="light"] trong style.css), nên hầu hết giao diện
- * (sidebar, topbar, panel, popover...) tự đổi theo mà không cần code JS gì
- * thêm.
+ * thẻ <html> - css/style.css định nghĩa lại các biến CSS theo attribute này
+ * nên hầu hết giao diện tự đổi theo. Riêng chart Lightweight Charts (vẽ bằng
+ * canvas, không đọc được biến CSS) nhận sự kiện 'theme:changed' qua EventBus
+ * để tự applyOptions() đổi màu (xem chart.js).
  *
- * RIÊNG chart Lightweight Charts KHÔNG đọc được biến CSS (nó vẽ bằng canvas,
- * màu phải truyền vào bằng JS lúc tạo/applyOptions) - nên module này phát ra
- * sự kiện 'theme:changed' qua EventBus, và chart.js lắng nghe sự kiện đó để
- * tự gọi chart.applyOptions() đổi màu nền/lưới/chữ cho từng pane.
+ * Lựa chọn theme lưu vào localStorage. Đoạn script đầu <head> (index.html)
+ * đã đặt data-theme TRƯỚC khi trang vẽ để tránh "nháy" nền; module này chỉ
+ * đọc lại để đồng bộ nút bấm.
  *
- * Lựa chọn theme được lưu vào localStorage để nhớ giữa các lần mở app. Đoạn
- * script nhỏ ở đầu <head> (index.html) đã đọc trước giá trị này và đặt
- * data-theme lên <html> NGAY LẬP TỨC (trước khi trang vẽ ra) để tránh bị
- * "nháy" nền tối mặc định rồi mới đổi sang sáng - module này chỉ cần đọc lại
- * đúng giá trị đó để đồng bộ trạng thái nút bấm.
- *
- * CẬP NHẬT (đợt fix này): nút bấm giờ dùng chung class .topbar-btn (định
- * nghĩa trong style.css) để đồng bộ hình dáng với nút "Cảnh báo"/"Trạng thái
- * thị trường" - trước đây tự vẽ style riêng bằng #themeToggleBtn, không
- * khớp hoàn toàn với 2 nút kia.
+ * CẬP NHẬT: nút dùng icon SVG (sun/moon trong icons-ui.js) thay emoji.
  */
 
 const ThemeModule = (function () {
@@ -51,10 +40,10 @@ const ThemeModule = (function () {
   function updateButtonLabel() {
     if (!btnRef) return;
     if (currentTheme === 'dark') {
-      btnRef.innerHTML = '<span class="btn-icon">☀️</span><span class="btn-text"> Nền sáng</span>';
+      btnRef.innerHTML = `<span class="btn-icon">${iconHTML('sun')}</span><span class="btn-text"> Nền sáng</span>`;
       btnRef.title = 'Chuyển sang nền sáng';
     } else {
-      btnRef.innerHTML = '<span class="btn-icon">🌙</span><span class="btn-text"> Nền tối</span>';
+      btnRef.innerHTML = `<span class="btn-icon">${iconHTML('moon')}</span><span class="btn-text"> Nền tối</span>`;
       btnRef.title = 'Chuyển sang nền tối';
     }
   }
@@ -102,8 +91,6 @@ const ThemeModule = (function () {
   }
 
   function init() {
-    // Đồng bộ lại đúng giá trị đã được đoạn script trong <head> áp trước đó
-    // (không set lại attribute ở đây để tránh 1 nhịp "nháy" - chỉ đọc lại).
     currentTheme = readSavedTheme();
 
     if (document.readyState === 'loading') {

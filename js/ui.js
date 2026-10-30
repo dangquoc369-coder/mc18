@@ -467,7 +467,7 @@ groupEl.appendChild(makeToolbarBtn('cursor', 'Con trỏ', activeTool === 'cursor
     const caretBtn = document.createElement('button');
     caretBtn.type = 'button';
     caretBtn.className = 'draw-tool-btn draw-tool-combo-caret';
-    caretBtn.textContent = '▾';
+    caretBtn.innerHTML = iconHTML('chevronDown');
     caretBtn.title = 'Chọn công cụ vẽ khác';
     caretBtn.addEventListener('click', (e) => {
       e.stopPropagation();

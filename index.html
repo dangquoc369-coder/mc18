@@ -20,13 +20,12 @@
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="manifest" href="manifest.json">
 
-<!-- ===== CHỐNG "NHÁY" THEME (đợt fix này) =====
-     Đọc lựa chọn nền sáng/tối đã lưu và đặt data-theme lên <html> NGAY LẬP
-     TỨC, TRƯỚC khi style.css tải xong và trang vẽ ra - tránh việc trang
+<!-- ===== CHỐNG "NHÁY" THEME =====
+     Đọc lựa chọn nền sáng/tối đã lưu và đặt data-theme lên <html> NGAY
+     LẬP TỨC, TRƯỚC khi style.css tải xong và trang vẽ ra - tránh việc trang
      luôn hiện nền tối mặc định trong 1 nhịp rồi mới "nháy" sang nền sáng.
      theme.js (script cuối) chỉ cần đọc lại đúng giá trị này để đồng bộ nút
-     bấm, không set lại attribute nữa.
-     CẬP NHẬT: đồng thời đặt luôn theme-color khớp --bg-panel của theme. -->
+     bấm, không set lại attribute nữa. -->
 <script>
   (function () {
     window.addEventListener('error', function (e) {
@@ -55,6 +54,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css?v=20261010c">
+<!-- MỚI: topbar gộp 1 hàng ở màn ngang + nút Dữ liệu ở chân sidebar. PHẢI nạp SAU style.css -->
+<link rel="stylesheet" href="css/topbar-landscape.css?v=20261030b">
 </head>
 <body>
 
@@ -117,6 +118,7 @@
     <div class="sidebar-section-title">Hiệu suất</div>
     <div id="sidebarAnalyticsSummary"></div>
   </div>
+  <!-- Chân sidebar (.sidebar-footer chứa nút "💾 Dữ liệu") do local-store.js tự chèn vào cuối #sidebar -->
 </aside>
 
     <!-- ===== MAIN ===== -->
@@ -135,16 +137,53 @@
           <!-- nút "☀️/🌙 đổi theme" được theme.js tự chèn vào đây -->
           <!-- nút "Trạng thái thị trường" được marketstatus.js tự chèn vào đây -->
           <!-- nút "🔔 Cảnh báo" được alerts.js tự chèn vào đây -->
+          <!-- nút "👤 Tài khoản" được login.js tự chèn vào đây -->
         </div>
       </header>
 
-      <!-- Thanh điều khiển DÙNG CHUNG cho mọi ô -->
+      <!-- Thanh điều khiển DÙNG CHUNG cho mọi ô.
+           Màn DỌC: nằm riêng 1 hàng dưới #topbar (như cũ).
+           Màn NGANG: script ngay bên dưới chuyển nó VÀO TRONG #topbar để
+           cả hai cùng 1 hàng (xem css/topbar-landscape.css). -->
       <div id="controlBar">
         <span class="control-label">Khung giờ</span>
         <div id="sharedTimeframeGroup" class="timeframe-group"></div>
         <span class="control-label">Vẽ</span>
         <div id="sharedDrawGroup" class="timeframe-group"></div>
       </div>
+
+      <!-- ===== GỘP TOPBAR + CONTROLBAR Ở MÀN NGANG =====
+           Đặt NGAY SAU #controlBar để chạy trước khi trang vẽ lần đầu (không
+           bị nháy 2 hàng -> 1 hàng). Chỉ di chuyển node (giữ nguyên id và
+           mọi event listener) nên ui.js/tasks.js/analytics.js/fullscreen.js
+           không cần sửa: tasks.js/analytics.js vẫn ẩn #controlBar bằng
+           style.display, fullscreen vẫn ẩn #topbar (chứa luôn controlBar).
+           Xoay máy / đổi cỡ cửa sổ -> tự gộp / tách lại. -->
+      <script>
+        (function () {
+          var mq = window.matchMedia('(orientation: landscape)');
+          function place() {
+            var topbar = document.getElementById('topbar');
+            var bar = document.getElementById('controlBar');
+            var root = document.documentElement;
+            if (!topbar || !bar) return;
+            if (mq.matches) {
+              if (bar.parentNode !== topbar) {
+                topbar.insertBefore(bar, topbar.querySelector('.topbar-right'));
+              }
+              root.classList.add('tb-merged');
+            } else {
+              if (bar.parentNode === topbar) {
+                topbar.parentNode.insertBefore(bar, topbar.nextSibling);
+              }
+              root.classList.remove('tb-merged');
+            }
+          }
+          place();
+          if (mq.addEventListener) mq.addEventListener('change', place);
+          else if (mq.addListener) mq.addListener(place);
+        })();
+      </script>
 
       <!-- Vùng chart: LUÔN có 4 pane cố định -->
       <div id="chartArea">
@@ -223,8 +262,9 @@
   <!-- ===== SCRIPTS (thứ tự bắt buộc) ===== -->
   <script src="https://unpkg.com/lightweight-charts@5.0.0/dist/lightweight-charts.standalone.production.js"></script>
   <script src="js/utils.js"></script>
-  <script src="js/icons.js"></script>   
-  <script src="js/local-store.js"></script>   <!-- MỚI: PHẢI trước storage.js -->
+  <script src="js/icons.js"></script>
+  <script src="js/icons-ui.js"></script>   <!-- MỚI: icon SVG đồng bộ phong cách, PHẢI ngay sau icons.js -->
+  <script src="js/local-store.js?v=20261030b"></script>   <!-- PHẢI trước storage.js -->
   <script src="js/storage.js"></script>
   <script src="js/api.js"></script>
   <script src="js/websocket.js"></script>
@@ -254,5 +294,6 @@
   <script src="js/sidebar-resize.js"></script>
   <script src="js/countdown.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/topbar-fit.js"></script>   <!-- MỚI: tự co giãn topbar màn ngang, nạp sau cùng -->
 </body>
 </html>

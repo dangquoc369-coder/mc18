@@ -296,11 +296,11 @@ const LoginModule = (function () {
     topbarBtn.className = `topbar-btn ${isGuest ? 'is-guest' : ''}`;
     topbarBtn.type = 'button';
     if (isGuest) {
-      topbarBtn.innerHTML = `<span class="btn-icon">👤</span><span class="btn-text"> Khách</span>`;
+      topbarBtn.innerHTML = `<span class="btn-icon">${iconHTML('account')}</span><span class="btn-text"> Khách</span>`;
       topbarBtn.title = 'Bạn đang ở vai trò Khách (không ghi đè, không có cảnh báo). Bấm để đăng nhập hoặc lập tài khoản riêng.';
       topbarBtn.addEventListener('click', () => showLoginOverlay());
     } else {
-      topbarBtn.innerHTML = `<span class="btn-icon">👤</span><span class="btn-text"> ${username}</span>`;
+      topbarBtn.innerHTML = `<span class="btn-icon">${iconHTML('account')}</span><span class="btn-text"> ${username}</span>`;
       topbarBtn.title = `Tài khoản: ${username} (bấm để đổi tài khoản hoặc về vai trò Khách)`;
       topbarBtn.addEventListener('click', () => confirmSwitchAccount(username));
     }
@@ -314,11 +314,11 @@ const LoginModule = (function () {
     sidebarBtn.id = 'profileBadgeSidebar';
     sidebarBtn.className = isGuest ? 'is-guest' : '';
     if (isGuest) {
-      sidebarBtn.innerHTML = `<span>👤</span><span class="pbs-name">Khách (Đăng nhập)</span><span style="margin-left:auto; opacity:0.7;">➔</span>`;
+      sidebarBtn.innerHTML = `<span class="ms-ico" style="margin:0">${Icons.account}</span><span class="pbs-name">Khách (Đăng nhập)</span><span style="margin-left:auto; opacity:0.7; display:inline-flex;">${iconHTML('chevronRight')}</span>`;
       sidebarBtn.title = 'Bạn đang ở vai trò Khách. Bấm để đăng nhập hoặc lập tài khoản riêng.';
       sidebarBtn.addEventListener('click', () => showLoginOverlay());
     } else {
-      sidebarBtn.innerHTML = `<span>👤</span><span class="pbs-name">${username}</span><span style="margin-left:auto; opacity:0.6;">⇄</span>`;
+      sidebarBtn.innerHTML = `<span class="ms-ico" style="margin:0">${Icons.account}</span><span class="pbs-name">${username}</span><span style="margin-left:auto; opacity:0.6; display:inline-flex;">${iconHTML('repeat')}</span>`;
       sidebarBtn.title = `Tài khoản: ${username} (bấm để đổi tài khoản hoặc về vai trò Khách)`;
       sidebarBtn.addEventListener('click', () => confirmSwitchAccount(username));
     }

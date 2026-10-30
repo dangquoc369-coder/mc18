@@ -1,13 +1,12 @@
 /**
  * sidebar-resize.js
- * Cho phép kéo thanh chia giữa sidebar và vùng chart để đổi độ rộng sidebar,
- * cộng thêm nút thu gọn nhanh về dạng "chỉ icon".
+ * Kéo thanh chia giữa sidebar và vùng chart để đổi độ rộng sidebar, cộng
+ * nút thu gọn nhanh về dạng "chỉ icon".
  *
- * CẬP NHẬT (đợt fix này - tối ưu mobile): thêm 1 nút hamburger (☰) cố định
- * góc trên-trái, CHỈ hiển thị trên màn hình hẹp (xem media query trong
- * style.css). Bấm vào sẽ bật/tắt class 'mobile-open' trên #sidebar, biến
- * sidebar thành dạng "drawer" trượt ra từ bên trái thay vì chiếm chỗ cố định
- * trong grid - giữ tối đa diện tích cho chart trên điện thoại.
+ * Trên màn hình hẹp có nút hamburger cố định góc trên-trái (CSS chỉ hiện nó
+ * ở <=900px) để bật/tắt sidebar dạng "drawer" (class 'mobile-open').
+ *
+ * CẬP NHẬT: nút thu gọn («») và hamburger (☰) dùng icon SVG (icons-ui.js).
  */
 
 (function () {
@@ -48,7 +47,7 @@
 
   let toggleBtnRef = null;
   function updateToggleIcon() {
-    if (toggleBtnRef) toggleBtnRef.textContent = collapsed ? '\u00BB' : '\u00AB';
+    if (toggleBtnRef) toggleBtnRef.innerHTML = iconHTML(collapsed ? 'chevronsRight' : 'chevronsLeft');
   }
 
   function mount() {
@@ -83,14 +82,14 @@
     toggleBtn.id = 'sidebarToggleBtn';
     toggleBtn.type = 'button';
     toggleBtn.title = 'Thu gọn / mở rộng sidebar';
-    toggleBtn.textContent = '\u00AB';
+    toggleBtnRef = toggleBtn;
+    updateToggleIcon();
     toggleBtn.addEventListener('click', () => {
       collapsed = !collapsed;
       sidebar.classList.toggle('collapsed', collapsed);
       setWidth(collapsed ? COLLAPSED_WIDTH : lastExpandedWidth);
       updateToggleIcon();
     });
-    toggleBtnRef = toggleBtn;
     header.appendChild(toggleBtn);
 
     mountMobileToggle(sidebar);
@@ -102,7 +101,7 @@
     btn.id = 'mobileSidebarToggle';
     btn.type = 'button';
     btn.title = 'Mở/đóng danh sách symbol';
-    btn.textContent = '☰';
+    btn.innerHTML = iconHTML('menu');
     btn.addEventListener('click', () => {
       sidebar.classList.toggle('mobile-open');
     });
@@ -112,7 +111,7 @@
     document.addEventListener('click', (e) => {
       if (window.innerWidth > MOBILE_BREAKPOINT) return;
       if (!sidebar.classList.contains('mobile-open')) return;
-      if (sidebar.contains(e.target) || e.target === btn) return;
+      if (sidebar.contains(e.target) || btn.contains(e.target)) return;
       sidebar.classList.remove('mobile-open');
     });
 

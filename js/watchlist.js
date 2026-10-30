@@ -1,7 +1,8 @@
 /**
  * watchlist.js
- * Watchlist cục bộ: danh sách ở sidebar + nút ★ trên từng ô chart.
+ * Watchlist cục bộ: danh sách ở sidebar + nút sao trên từng ô chart.
  * Lưu qua Store.* (-> LocalStore), không đụng cloud.
+ * CẬP NHẬT: sao / nút xoá dùng icon SVG (star, starOutline, close).
  */
 const WatchlistModule = (function () {
   function injectStyles() {
@@ -16,11 +17,14 @@ const WatchlistModule = (function () {
       .wl-item:hover { background: var(--bg-elevated, rgba(127,127,127,0.12)); }
       .wl-item.active { border-left-color: var(--accent-blue, #4f7cff); background: rgba(79,124,255,0.1); }
       .wl-remove { background: none; border: none; color: var(--text-secondary); cursor: pointer;
-        font-size: 13px; padding: 2px 6px; border-radius: 4px; }
+        padding: 3px 5px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
+      .wl-remove .icon-svg { width: 12px; height: 12px; }
       .wl-remove:hover { color: var(--red, #ff5a67); }
       .wl-empty { padding: 10px 12px; font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
-      .wl-star { background: none; border: none; cursor: pointer; font-size: 15px; line-height: 1;
-        padding: 0 4px; color: var(--text-secondary); pointer-events: auto; }
+      .wl-star { background: none; border: none; cursor: pointer; line-height: 1;
+        padding: 0 4px; color: var(--text-secondary); pointer-events: auto;
+        display: inline-flex; align-items: center; align-self: center; }
+      .wl-star .icon-svg { width: 15px; height: 15px; }
       .wl-star.on { color: #f5c518; }
     `;
     document.head.appendChild(s);
@@ -34,7 +38,7 @@ const WatchlistModule = (function () {
       const old = document.getElementById('symbolList');
       if (old) old.style.display = 'none'; // thay danh sách "Phổ biến" cố định
       const title = section.querySelector('.sidebar-section-title');
-      if (title) title.textContent = '★ Watchlist';
+      if (title) title.textContent = 'Watchlist';
       list = document.createElement('ul');
       list.id = 'watchlistList';
       list.className = 'wl-list';
@@ -51,14 +55,14 @@ const WatchlistModule = (function () {
     list.innerHTML = '';
 
     if (items.length === 0) {
-      list.innerHTML = '<li class="wl-empty">Watchlist trống. Bấm ★ cạnh tên cặp trên chart để thêm.</li>';
+      list.innerHTML = `<li class="wl-empty">Watchlist trống. Bấm ${iconInline('starOutline')} cạnh tên cặp trên chart để thêm.</li>`;
       return;
     }
 
     items.forEach((sym) => {
       const li = document.createElement('li');
       li.className = 'wl-item' + (active && active.symbol === sym ? ' active' : '');
-      li.innerHTML = `<span>${sym}</span><button type="button" class="wl-remove" title="Bỏ khỏi watchlist">✕</button>`;
+      li.innerHTML = `<span>${sym}</span><button type="button" class="wl-remove" title="Bỏ khỏi watchlist">${iconHTML('close')}</button>`;
       li.addEventListener('click', () => {
         Store.setPaneSymbol(Store.getState().activePaneId, sym); // áp cho ô đang chọn
       });
@@ -90,7 +94,7 @@ const WatchlistModule = (function () {
         else row.appendChild(star);
       }
       const on = Store.isInWatchlist(Store.getPane(pane.id).symbol);
-      star.textContent = on ? '★' : '☆';
+      star.innerHTML = iconHTML(on ? 'star' : 'starOutline');
       star.classList.toggle('on', on);
       star.title = on ? 'Bỏ khỏi watchlist' : 'Thêm vào watchlist';
     });

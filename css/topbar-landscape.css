@@ -1,0 +1,241 @@
+/*
+ * topbar-landscape.css
+ * NẠP SAU style.css (xem index.html). Không sửa style.css.
+ *
+ * 1) MÀN NGANG (iPhone / iPad / máy tính): gộp #controlBar (Khung giờ + Vẽ)
+ *    vào CÙNG 1 HÀNG với #topbar. Script nội tuyến trong index.html chuyển
+ *    #controlBar vào trong #topbar và gắn class "tb-merged" lên <html>
+ *    khi (orientation: landscape); mọi luật bên dưới chỉ chạy khi có class
+ *    này nên MÀN DỌC GIỮ NGUYÊN 100% như cũ.
+ *
+ *    Một hàng duy nhất, KHÔNG BAO GIỜ xuống dòng:
+ *      [Số ô] [Khung giờ] [Vẽ ........ cuộn ngang] | [Theme] [Thị trường] [Cảnh báo] [Tài khoản] [⛶]
+ *    - #topbar: flex-wrap: nowrap, cao cố định 48px, overflow hidden.
+ *    - Cụm nút bên phải flex-shrink: 0 -> luôn giữ nguyên kích thước.
+ *    - #controlBar chiếm phần co giãn còn lại, tự cuộn ngang (ẩn thanh cuộn)
+ *      nếu màn quá hẹp, thay vì đẩy nút xuống dòng.
+ *    - Nút topbar chỉ còn icon khi rộng < 1600px (chữ chỉ hiện ở màn rất rộng).
+ *
+ * 2) NÚT "💾 DỮ LIỆU": chuyển từ topbar xuống chân sidebar (.sidebar-footer).
+ */
+
+/* ===================== TOPBAR GỘP 1 HÀNG ===================== */
+html.tb-merged #topbar {
+  height: 48px;
+  min-height: 48px;
+  padding: 0 10px 0 12px;
+  gap: 8px;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  align-items: center;
+  overflow: hidden;
+}
+
+/* Chừa chỗ cho nút ☰ (#mobileSidebarToggle) khi sidebar dạng ngăn kéo */
+@media (max-width: 900px) {
+  html.tb-merged #topbar {
+    padding-left: 54px;
+    gap: 6px;
+  }
+}
+
+/* Nút ☰ canh giữa theo chiều cao 48px của hàng gộp */
+html.tb-merged #mobileSidebarToggle {
+  top: calc(5px + var(--safe-top));
+}
+
+/* Tiêu đề "Đa khung thời gian" dư thừa khi đã có thanh công cụ */
+html.tb-merged .topbar-left { display: none; }
+
+/* .topbar-right "biến mất" khỏi layout để từng nút con trở thành phần tử
+   của hàng flex #topbar -> sắp thứ tự bằng `order` bên dưới. */
+html.tb-merged .topbar-right { display: contents; }
+
+/* Thứ tự: [Số ô] [controlBar co giãn] [nút bên phải] */
+html.tb-merged #topbar #layoutGroup {
+  order: 1;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+}
+
+html.tb-merged #topbar #controlBar {
+  order: 2;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+html.tb-merged #topbar #controlBar::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+html.tb-merged #topbar #controlBar .control-label { display: none; }
+html.tb-merged #topbar #controlBar > * { flex-shrink: 0; }
+html.tb-merged #topbar #sharedTimeframeGroup,
+html.tb-merged #topbar #sharedDrawGroup {
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+
+/* Cụm nút bên phải: không bao giờ co lại / xuống dòng */
+html.tb-merged #topbar .topbar-right > * {
+  order: 8;
+  flex: 0 0 auto;
+  margin-left: 0;
+}
+html.tb-merged #topbar #themeToggleBtn      { order: 3; }
+html.tb-merged #topbar #marketStatusBtn     { order: 4; }
+html.tb-merged #topbar #alertsListBtn       { order: 5; }
+html.tb-merged #topbar #profileBadgeBtn     { order: 6; }
+html.tb-merged #topbar #fullscreenToggleBtn { order: 7; }
+
+html.tb-merged #topbar .topbar-btn {
+  height: 34px;
+  padding: 0 10px;
+  margin-left: 0;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+/* Tài khoản: login.js ẩn #profileBadgeBtn ở <=900px (dùng bản trong
+   sidebar). Ở màn ngang hàng đã đủ chỗ -> hiện lại theo yêu cầu. */
+@media (max-width: 900px) {
+  html.tb-merged #topbar #profileBadgeBtn { display: inline-flex !important; }
+}
+
+/* ===== CHỮ TRÊN NÚT: hiện càng nhiều càng tốt (topbar-fit.js đặt data-tb-level) =====
+   Mặc định HIỆN chữ (kể cả trên điện thoại - ghi đè luật ẩn .btn-text của
+   style.css ở <=900px). Khi thiếu chỗ, topbar-fit.js tăng level:
+     1 = ẩn nút khung giờ nhanh (chỉ còn ô chọn khung)
+     2 = nút "Trạng thái thị trường" chỉ còn icon
+     3 = mọi nút chỉ còn icon */
+html.tb-merged #topbar .topbar-btn .btn-text,
+html.tb-merged #topbar #layoutGroup .btn-text {
+  display: inline-block;
+}
+html.tb-merged #topbar .timeframe-quick-btns { display: flex; }
+
+html.tb-merged[data-tb-level="1"] #topbar .timeframe-quick-btns,
+html.tb-merged[data-tb-level="2"] #topbar .timeframe-quick-btns,
+html.tb-merged[data-tb-level="3"] #topbar .timeframe-quick-btns {
+  display: none;
+}
+html.tb-merged[data-tb-level="2"] #topbar #marketStatusBtn .btn-text,
+html.tb-merged[data-tb-level="3"] #topbar #marketStatusBtn .btn-text {
+  display: none;
+}
+html.tb-merged[data-tb-level="3"] #topbar .topbar-btn .btn-text,
+html.tb-merged[data-tb-level="3"] #topbar #layoutGroup .btn-text {
+  display: none;
+}
+/* Level 1+: khung giờ nhanh đã ẩn thì nền nhóm không cần đệm thừa */
+html.tb-merged #topbar #sharedTimeframeGroup { padding: 3px; }
+
+/* Panel nổi (Cảnh báo / Trạng thái thị trường) nằm ngay dưới hàng 48px */
+html.tb-merged .ms-panel {
+  top: calc(54px + var(--safe-top));
+  max-height: calc(100vh - 66px);
+}
+
+/* ===================== NÚT "💾 DỮ LIỆU" Ở CHÂN SIDEBAR ===================== */
+.sidebar-footer {
+  margin-top: auto;
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-panel);
+}
+
+.sidebar-footer-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.sidebar-footer-btn:hover,
+.sidebar-footer-btn.open {
+  background: var(--bg-hover);
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+.sidebar-footer-btn .sfb-icon { font-size: 14px; line-height: 1; flex-shrink: 0; }
+
+/* Sidebar thu gọn (desktop): chỉ còn icon */
+#sidebar.collapsed .sidebar-footer { padding: 8px 6px; }
+#sidebar.collapsed .sidebar-footer-btn { justify-content: center; padding: 8px 0; }
+#sidebar.collapsed .sidebar-footer-btn .sfb-text { display: none; }
+
+/* Sidebar dạng ngăn kéo (<=900px) luôn hiện đủ chữ */
+@media (max-width: 900px) {
+  #sidebar.collapsed .sidebar-footer { padding: 8px 12px; }
+  #sidebar.collapsed .sidebar-footer-btn { justify-content: flex-start; padding: 8px 10px; }
+  #sidebar.collapsed .sidebar-footer-btn .sfb-text { display: inline; }
+  .sidebar-footer { padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* Panel sao lưu mở ngay phía trên nút ở chân sidebar (thay vì góc phải) */
+#backupPanel {
+  top: auto;
+  right: auto;
+  left: 12px;
+  bottom: 56px;
+  width: 300px;
+  max-width: calc(100vw - 24px);
+  max-height: 70vh;
+}
+html.tb-merged #backupPanel {
+  top: auto;
+  max-height: 70vh;
+}
+
+/* ===================== ICON SVG (thay emoji) ===================== */
+.ms-ico {
+  display: inline-flex;
+  width: 1.15em;
+  height: 1.15em;
+  margin-right: 4px;
+  vertical-align: -0.2em;
+  flex-shrink: 0;
+}
+.ms-ico svg { width: 100%; height: 100%; display: block; }
+
+.topbar-btn .btn-icon { display: inline-flex; align-items: center; }
+.topbar-btn .icon-svg { width: 17px; height: 17px; }
+
+.sidebar-footer-btn .sfb-icon { display: inline-flex; align-items: center; }
+.sidebar-footer-btn .icon-svg { width: 17px; height: 17px; }
+
+#sidebarToggleBtn { display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+#sidebarToggleBtn .icon-svg { width: 14px; height: 14px; }
+
+#mobileSidebarToggle .icon-svg { width: 20px; height: 20px; }
+#fullscreenExitBtn .icon-svg { width: 17px; height: 17px; }
+.draw-tool-combo-caret .icon-svg { width: 10px; height: 10px; }
+
+.ms-reload .icon-svg, .ms-close .icon-svg { width: 15px; height: 15px; }
+.ms-close { display: inline-flex; align-items: center; }
+#backupPanel .alert-remove-btn { display: inline-flex; align-items: center; gap: 5px; }
+#backupPanel .alert-remove-btn .icon-svg { width: 13px; height: 13px; }
