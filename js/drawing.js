@@ -2,61 +2,52 @@
  * drawing.js
  * Bộ công cụ vẽ nâng cao kiểu TradingView cho MỖI pane, độc lập với nhau.
  *
- * ============================================================================
- * CẬP NHẬT (đợt nâng cấp "bộ công cụ vẽ chuyên nghiệp"):
+ * LOCAL-FIRST (đợt này):
+ *   - Hình vẽ được lưu TRỰC TIẾP trên thiết bị (LocalStore), THEO TỪNG SYMBOL
+ *     (key 'drawings:<SYMBOL>'): mở lại app hình vẫn còn; 2 ô cùng symbol dùng
+ *     chung 1 bộ hình (giống TradingView).
+ *   - Ghi xuống máy có debounce 500ms và CHỈ khi dữ liệu thật sự thay đổi;
+ *     ghi nốt khi tab ẩn / đóng trang (pagehide, visibilitychange).
+ *   - chart.js gọi loadForSymbol(symbol) khi khởi tạo và mỗi khi pane đổi
+ *     symbol; flushSave() khi huỷ pane.
+ *   - Style mặc định (nút ⭐ trong bảng thuộc tính) cũng được lưu cục bộ.
  *
- *   Bổ sung thêm nhiều công cụ vẽ mới bên cạnh các công cụ gốc (Con trỏ,
- *   Đường ngang, Đường xu hướng, Hình chữ nhật, Fib Retracement, Chữ/Ghi chú,
- *   Tẩy, Xoá tất cả):
+ * Công cụ hỗ trợ:
+ *   Con trỏ, Đường ngang, Đường dọc, Tia ngang, Đường xu hướng, Tia (Ray),
+ *   Đường mở rộng, Hình chữ nhật, Hình tròn/Ellipse, Tam giác, Kênh giá song
+ *   song, Fib Retracement, Fib Extension, Long/Short Position, Mũi tên,
+ *   Chữ/Ghi chú, Cảnh báo giá, Tẩy.
  *
- *     Đường kẻ:    Tia (Ray), Đường mở rộng (Extended Line), Tia ngang
- *                  (Horizontal Ray), Đường dọc (Vertical Line)
- *     Kênh giá:    Kênh giá song song (Parallel Channel) - 3 điểm neo
- *     Fibonacci:   Fib Extension - 3 điểm neo
- *     Hình vẽ:     Hình tròn/Ellipse, Tam giác (3 điểm neo)
- *     Lệnh:        Long Position, Short Position - tự tính Take Profit theo
- *                  tỷ lệ R:R (mặc định 2), sửa được trong bảng công cụ
- *     Ghi chú:     Mũi tên (Arrow) - có đầu mũi tên
+ * KIẾN TRÚC NEO (ANCHOR):
+ *   - 1 điểm neo:  hline (giá), vline (thời gian), hray ({time,price})
+ *   - 2 điểm neo:  trendline, ray, extendedline, rectangle, circle, arrow,
+ *                  fib, long, short
+ *   - 3 điểm neo:  triangle, channel, fibextension
+ *   Logic kéo-thả để di chuyển hình viết theo NHÓM neo, không viết riêng
+ *   từng loại hình.
  *
- *   KIẾN TRÚC NEO (ANCHOR) - để không phải viết lại toàn bộ pipeline cũ:
- *     - Công cụ 1 điểm neo "đơn":     hline (giá), vline (thời gian),
- *                                     hray (1 điểm {time,price})
- *     - Công cụ 2 điểm neo (p1, p2):  trendline, ray, extendedline,
- *                                     rectangle, circle, arrow, fib,
- *                                     long, short
- *     - Công cụ 3 điểm neo (p1,p2,p3): triangle, channel, fibextension
- *   Nhờ vậy toàn bộ logic kéo-thả để DI CHUYỂN hình đã vẽ (khi ở tool
- *   "Con trỏ") chỉ cần viết theo NHÓM neo ở trên, không phải viết riêng cho
- *   từng loại hình - xem handlePointerMove() nhánh isDraggingShape.
+ * LUỒNG ĐẶT HÌNH 3 ĐIỂM NEO: bước 1-2 giống công cụ 2 điểm (giữ-kéo-nhả),
+ * sau đó sang trạng thái pendingThirdPoint: hình xem trước bám theo con
+ * trỏ/ngón tay, cú CHẠM/CLICK tiếp theo chốt điểm neo thứ 3.
  *
- *   LUỒNG ĐẶT HÌNH 3 ĐIỂM NEO (triangle/channel/fibextension):
- *     Bước 1-2 giống hệt công cụ 2 điểm (giữ chuột/tay xuống - kéo - nhả ra
- *     để đặt điểm 1 và điểm 2, y hệt vẽ Hình chữ nhật). Nhưng thay vì quay
- *     lại "Con trỏ" ngay, sang trạng thái pendingThirdPoint: hình xem trước
- *     bám theo con trỏ/ngón tay, và cú CHẠM/CLICK tiếp theo (không cần kéo)
- *     sẽ chốt điểm neo thứ 3 rồi mới thực sự tạo hình và quay về Con trỏ.
- *
- *   Mọi cơ chế mobile gốc (offset crosshair khỏi ngón tay, "giữ tay để
- *   chỉnh - nhấc tay để đặt" cho công cụ 1 điểm, tự quay về Con trỏ sau khi
- *   vẽ xong...) được GIỮ NGUYÊN và áp dụng luôn cho các công cụ mới.
- * ============================================================================
+ * Cơ chế mobile (offset crosshair khỏi ngón tay, "giữ tay để chỉnh - nhấc
+ * tay để đặt", tự quay về Con trỏ sau khi vẽ xong...) được giữ nguyên.
  */
 
 const DrawingModule = (function () {
   const TOUCH_CROSSHAIR_OFFSET = 40; // px - đẩy điểm vẽ lên trên khỏi ngón tay
-  const EXTEND_FACTOR = 60; // hệ số "kéo dài vô tận" cho Tia/Đường mở rộng - canvas tự cắt phần thừa ngoài khung nhìn, không cần tính toán clip chính xác
+  const EXTEND_FACTOR = 60; // hệ số "kéo dài vô tận" cho Tia/Đường mở rộng
+  const SAVE_DEBOUNCE_MS = 500;
 
   // Công cụ chỉ cần 1 điểm neo để đặt hình (không cần kéo)
   const SINGLE_ANCHOR_TOOLS = ['hline', 'vline', 'hray'];
-  // Công cụ cần 2 điểm neo (kéo từ điểm 1 sang điểm 2, giống Hình chữ nhật gốc)
+  // Công cụ cần 2 điểm neo
   const TWO_ANCHOR_TOOLS = ['trendline', 'ray', 'extendedline', 'rectangle', 'circle', 'arrow', 'fib', 'long', 'short'];
-  // Công cụ cần 3 điểm neo (2 điểm đầu kéo-thả như trên, điểm 3 chốt bằng 1 cú chạm/click tiếp theo)
+  // Công cụ cần 3 điểm neo
   const THREE_ANCHOR_TOOLS = ['triangle', 'channel', 'fibextension'];
   // Các loại hình cho phép bật/tắt nét đứt trong bảng công cụ
   const DASHED_STYLE_TOOLS = ['hline', 'vline', 'hray', 'trendline', 'ray', 'extendedline', 'rectangle', 'circle', 'triangle', 'arrow', 'channel'];
 
-  // Tên hiển thị (tiếng Việt) cho tiêu đề bảng thuộc tính - CẬP NHẬT (đợt
-  // nâng cấp bảng thuộc tính "chuyên nghiệp hơn" kiểu TradingView).
   const TOOL_DISPLAY_NAMES = {
     hline: 'Đường ngang', vline: 'Đường dọc', hray: 'Tia ngang',
     trendline: 'Đường xu hướng', ray: 'Tia (Ray)', extendedline: 'Đường mở rộng',
@@ -67,24 +58,25 @@ const DrawingModule = (function () {
 
   const PRESET_COLORS = ['#f2a339', '#22c9a0', '#ff5a67', '#2962ff', '#d1a53d', '#7e57c2', '#ffffff'];
 
+  const hasLocalStore = () => typeof LocalStore !== 'undefined';
+
   function create(paneId, chart, candleSeries, container, options = {}) {
     const { onAlertRequested, onToolChanged } = options;
 
     let currentTool = 'cursor'; // cursor | hline | vline | hray | trendline | ray | extendedline | rectangle | circle | triangle | channel | fib | fibextension | long | short | arrow | text | eraser | alert
     let drawings = [];
-    // Style mặc định áp cho MỌI hình vẽ mới tạo - người dùng có thể "Đặt làm
-    // mặc định" ngay trong bảng thuộc tính của 1 hình đã vẽ (xem nút ⭐).
-    let defaultStyle = { color: null, width: 1.5 };
-    // Ẩn/hiện TOÀN BỘ hình vẽ của pane này bằng 1 nút (giống icon 👁 "Hide
-    // all drawings" của TradingView) - khi bật, không vẽ VÀ không bắt sự
-    // kiện (cursor/eraser không tương tác được) cho tới khi bật lại.
+
+    // Style mặc định áp cho MỌI hình vẽ mới tạo - lưu cục bộ.
+    let defaultStyle = (hasLocalStore() && LocalStore.read('drawing_default_style', null)) || { color: null, width: 1.5 };
+
+    // Ẩn/hiện TOÀN BỘ hình vẽ của pane này bằng 1 nút (icon 👁).
     let allDrawingsHidden = false;
     let dragStart = null;
     let previewDrawing = null;
-    let hoverPoint = null; // { x, y, price } - vị trí crosshair (đã đẩy lên nếu là cảm ứng)
-    let touchRawPoint = null; // { x, y } - vị trí NGÓN TAY thật (chưa đẩy), dùng vẽ đường nối
-    let pendingTouchPlacement = null; // 'hline' | 'vline' | 'hray' | 'alert' | 'text' - đang giữ tay để đặt, chưa commit
-    let pendingThirdPoint = null; // { type, p1, p2, ... } - đã đặt xong 2 điểm neo của công cụ 3 điểm, đang chờ chốt điểm neo thứ 3
+    let hoverPoint = null; // { x, y, price }
+    let touchRawPoint = null; // { x, y } - vị trí NGÓN TAY thật (chưa đẩy)
+    let pendingTouchPlacement = null; // 'hline' | 'vline' | 'hray' | 'alert' | 'text'
+    let pendingThirdPoint = null; // { type, p1, p2, ... } đang chờ điểm neo thứ 3
 
     let isDraggingShape = false;
     let draggedDrawingIndex = null;
@@ -94,6 +86,11 @@ const DrawingModule = (function () {
     let hoveredDrawingIndex = null;
     let selectedDrawingIndex = null;
     let toolbarEl = null;
+
+    // ===== Lưu cục bộ =====
+    let currentSymbol = null;
+    let saveTimer = null;
+    let lastSavedStr = '[]';
 
     // Đảm bảo container có vị trí tương đối
     const computed = window.getComputedStyle(container);
@@ -129,28 +126,72 @@ const DrawingModule = (function () {
       return candleSeries.coordinateToPrice(y);
     }
 
-    /** Màu chữ mặc định theo theme hiện tại (khi người dùng CHƯA tự chọn
-     * màu riêng cho ghi chú đó) - giống TradingView: chữ ăn theo màu chữ
-     * chính của theme, không cố định 1 màu. */
+    // ===================== LƯU / NẠP HÌNH VẼ CỤC BỘ =====================
+    function drawingsKey(sym) {
+      return 'drawings:' + sym;
+    }
+
+    /** Ghi ngay xuống máy (nếu dữ liệu đã đổi so với lần ghi gần nhất). */
+    function flushSave() {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      if (!currentSymbol || !hasLocalStore()) return;
+      const str = JSON.stringify(drawings);
+      if (str === lastSavedStr) return; // không đổi -> không ghi
+      LocalStore.write(drawingsKey(currentSymbol), drawings); // ghi cả mảng rỗng (để "xoá hết" cũng được nhớ)
+      lastSavedStr = str;
+    }
+
+    function scheduleSave() {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(flushSave, SAVE_DEBOUNCE_MS);
+    }
+
+    /** Chuyển sang bộ hình vẽ của 1 symbol (lưu bộ của symbol cũ trước). */
+    function loadForSymbol(symbol) {
+      flushSave();
+      currentSymbol = symbol || null;
+      selectedDrawingIndex = null;
+      hoveredDrawingIndex = null;
+      hideToolbar();
+      dragStart = null;
+      previewDrawing = null;
+      pendingThirdPoint = null;
+      pendingTouchPlacement = null;
+      isDraggingShape = false;
+      draggedDrawingIndex = null;
+      draggedDrawingOriginal = null;
+      dragStartPixel = null;
+
+      const saved = currentSymbol && hasLocalStore() ? LocalStore.read(drawingsKey(currentSymbol), []) : [];
+      drawings = Array.isArray(saved) ? saved : [];
+      lastSavedStr = JSON.stringify(drawings);
+      redraw();
+    }
+
+    // Lưu nốt khi người dùng rời trang / chuyển app nền (đặc biệt quan trọng trên iOS)
+    window.addEventListener('pagehide', flushSave);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') flushSave();
+    });
+
+    /** Màu chữ mặc định theo theme hiện tại. */
     function getThemeTextColor() {
       const theme = (typeof ThemeModule !== 'undefined' && ThemeModule.getTheme()) || 'dark';
       return theme === 'light' ? '#12151c' : '#e6e9f0';
     }
 
-    /** Màu "viền mảnh cùng nền" (halo) vẽ NGAY DƯỚI chữ để chữ luôn đọc rõ
-     * dù đè lên nến sáng/tối - kỹ thuật giống nhãn bản đồ, THAY THẾ hoàn
-     * toàn cho hộp nền cũ. */
+    /** Màu viền halo vẽ NGAY DƯỚI chữ để chữ luôn đọc rõ. */
     function getThemeHaloColor() {
       const theme = (typeof ThemeModule !== 'undefined' && ThemeModule.getTheme()) || 'dark';
       return theme === 'light' ? '#ffffff' : '#0c0d14';
     }
+
     /**
      * Toạ độ màn hình (px trong canvas) của 1 sự kiện con trỏ. Trên CẢM ỨNG
-     * và khi đang ở 1 công cụ VẼ (không phải 'cursor'), y được đẩy lên trên
-     * TOUCH_CROSSHAIR_OFFSET px để điểm sẽ vẽ không bị ngón tay che mất -
-     * xem drawCrosshair() vẽ đường nối xuống đúng vị trí ngón tay thật.
-     * KHÔNG áp dụng offset này cho tool 'cursor' (chọn/kéo hình có sẵn) vì
-     * lúc đó cần chạm ĐÚNG vào hình, không phải điểm bị dịch lên.
+     * và khi đang ở 1 công cụ VẼ (không phải 'cursor'), y được đẩy lên
+     * TOUCH_CROSSHAIR_OFFSET px để điểm sẽ vẽ không bị ngón tay che mất.
+     * KHÔNG áp dụng cho tool 'cursor' (cần chạm ĐÚNG vào hình).
      */
     function getScreenXY(e) {
       const rect = canvas.getBoundingClientRect();
@@ -170,29 +211,19 @@ const DrawingModule = (function () {
       if (isInteractive) {
         selectedDrawingIndex = null;
         hideToolbar();
-        // Nếu đang bật "Ẩn tất cả" (👁) mà người dùng chọn 1 công cụ vẽ mới
-        // (khác Con trỏ/Tẩy), tự động hiện lại - tránh việc vừa vẽ xong hình
-        // lại "biến mất" ngay lập tức, gây khó hiểu.
+        // Đang "Ẩn tất cả" mà chọn công cụ vẽ mới (khác Tẩy) -> tự hiện lại.
         if (allDrawingsHidden && tool !== 'eraser') allDrawingsHidden = false;
       }
-      // Đổi tool huỷ luôn mọi thao tác dở dang (đang kéo 2 điểm đầu, hoặc
-      // đang chờ chốt điểm neo thứ 3 của công cụ 3 điểm) để tránh trạng
-      // thái kẹt giữa chừng.
+      // Đổi tool huỷ mọi thao tác dở dang.
       dragStart = null;
       previewDrawing = null;
       pendingThirdPoint = null;
       pendingTouchPlacement = null;
-      // FIX DELAY: luôn vẽ lại - kể cả khi quay về "Con trỏ" - để xoá NGAY
-      // crosshair còn sót lại từ khung vẽ trước đó.
       redraw();
     }
 
-    /**
-     * ĐỢT FIX (chuyên nghiệp hơn): sau khi vẽ xong 1 hình / đặt xong 1 cảnh
-     * báo / ghi chú, TỰ ĐỘNG quay về "Con trỏ" - đúng hành vi TradingView
-     * (chỉ Tẩy mới ở lại chế độ liên tục). onToolChanged() báo cho ui.js vẽ
-     * lại nút đang active trong thanh công cụ.
-     */
+    /** Sau khi vẽ xong 1 hình / đặt xong cảnh báo / ghi chú -> TỰ ĐỘNG quay
+     * về "Con trỏ" (chỉ Tẩy ở lại chế độ liên tục). */
     function returnToCursorAfterDraw() {
       setTool('cursor');
       if (typeof onToolChanged === 'function') onToolChanged();
@@ -200,6 +231,8 @@ const DrawingModule = (function () {
 
     function clearAll() {
       drawings = [];
+      selectedDrawingIndex = null;
+      hideToolbar();
       redraw();
     }
 
@@ -221,9 +254,8 @@ const DrawingModule = (function () {
       ctx.restore();
     }
 
-    /** Điểm mở rộng theo hướng (x1,y1)->(x2,y2) ra xa gấp EXTEND_FACTOR lần
-     * - canvas tự cắt phần vẽ ngoài khung nhìn nên không cần tính clip
-     * chính xác theo biên, chỉ cần "đủ xa" để luôn phủ hết khung nhìn. */
+    /** Điểm mở rộng theo hướng (x1,y1)->(x2,y2) ra xa gấp `factor` lần -
+     * canvas tự cắt phần ngoài khung nhìn nên không cần clip chính xác. */
     function extendPointBeyond(x1, y1, x2, y2, factor) {
       return { x: x1 + (x2 - x1) * factor, y: y1 + (y2 - y1) * factor };
     }
@@ -250,6 +282,7 @@ const DrawingModule = (function () {
       }
       if (previewDrawing) drawShape(previewDrawing, true);
       drawCrosshair();
+      scheduleSave(); // debounce 500ms, chỉ ghi khi dữ liệu thật sự đổi
     }
 
     function toRGBA(baseColor, alpha) {
@@ -264,8 +297,8 @@ const DrawingModule = (function () {
     }
 
     function drawShape(d, isPreview, idx) {
-      const isHovered = (idx !== undefined && idx === hoveredDrawingIndex);
-      const isSelected = (idx !== undefined && idx === selectedDrawingIndex);
+      const isHovered = idx !== undefined && idx === hoveredDrawingIndex;
+      const isSelected = idx !== undefined && idx === selectedDrawingIndex;
 
       ctx.save();
       ctx.globalAlpha = d.opacity === undefined ? 1 : d.opacity;
@@ -322,7 +355,7 @@ const DrawingModule = (function () {
         ctx.fillStyle = baseColor;
         ctx.font = '10px sans-serif';
         ctx.fillText(formatPrice(d.p.price), x + 4, y - 4);
-        if (isSelected) { drawHandle(x, y); }
+        if (isSelected) drawHandle(x, y);
 
       } else if (d.type === 'trendline' || d.type === 'ray' || d.type === 'extendedline') {
         const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
@@ -446,8 +479,8 @@ const DrawingModule = (function () {
         const diff = priceEnd - priceStart;
         const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0];
 
-        let colors = [];
-        for (let i = 0; i < levels.length; i++) colors.push(toRGBA(baseColor, 0.05 + (i * 0.015)));
+        const colors = [];
+        for (let i = 0; i < levels.length; i++) colors.push(toRGBA(baseColor, 0.05 + i * 0.015));
 
         ctx.strokeStyle = isPreview ? 'rgba(242, 163, 57, 0.4)' : 'rgba(124, 132, 150, 0.6)';
         ctx.setLineDash([4, 4]);
@@ -525,7 +558,7 @@ const DrawingModule = (function () {
         const rr = d.rr || 2;
         const entryPrice = d.p1.price;
         const stopPrice = d.p2.price;
-        const risk = d.type === 'long' ? (entryPrice - stopPrice) : (stopPrice - entryPrice);
+        const risk = d.type === 'long' ? entryPrice - stopPrice : stopPrice - entryPrice;
         const targetPrice = d.type === 'long' ? entryPrice + risk * rr : entryPrice - risk * rr;
 
         const yEntry = y1;
@@ -575,8 +608,7 @@ const DrawingModule = (function () {
         const fillColor = d.color || getThemeTextColor();
         const haloColor = getThemeHaloColor();
 
-        // Viền mảnh cùng màu nền (halo) vẽ TRƯỚC - thay cho hộp nền cũ,
-        // giúp chữ luôn đọc rõ dù đè lên nến/lưới bất kỳ màu gì.
+        // Viền mảnh cùng màu nền (halo) vẽ TRƯỚC - giúp chữ luôn đọc rõ.
         ctx.lineJoin = 'round';
         ctx.miterLimit = 2;
         ctx.strokeStyle = haloColor;
@@ -586,8 +618,7 @@ const DrawingModule = (function () {
         ctx.fillStyle = fillColor;
         ctx.fillText(d.text, x, y);
 
-        // Chỉ khi ĐANG CHỌN/HOVER mới hiện khung chấm chấm mảnh quanh chữ
-        // để biết đang thao tác đúng ghi chú nào - không hiện thường trực.
+        // Chỉ khi ĐANG CHỌN/HOVER mới hiện khung chấm chấm mảnh quanh chữ.
         if (isSelected || isHovered) {
           const textWidth = ctx.measureText(d.text).width;
           ctx.strokeStyle = baseColor;
@@ -652,8 +683,7 @@ const DrawingModule = (function () {
         ctx.fillText(label, width - boxW + 4, boxY + 11);
       }
 
-      // Đang chờ chốt điểm neo thứ 3 (Tam giác/Kênh giá/Fib Extension) - gợi
-      // ý nhỏ để người dùng biết cần bấm thêm 1 lần nữa.
+      // Đang chờ chốt điểm neo thứ 3 - gợi ý nhỏ.
       if (pendingThirdPoint) {
         ctx.font = '10px sans-serif';
         ctx.fillStyle = '#f2a339';
@@ -683,8 +713,8 @@ const DrawingModule = (function () {
 
     function boundsHit(x, y, xs, ys, margin) {
       const rx = Math.min(...xs) - margin, ry = Math.min(...ys) - margin;
-      const rw = (Math.max(...xs) - Math.min(...xs)) + margin * 2;
-      const rh = (Math.max(...ys) - Math.min(...ys)) + margin * 2;
+      const rw = Math.max(...xs) - Math.min(...xs) + margin * 2;
+      const rh = Math.max(...ys) - Math.min(...ys) + margin * 2;
       return x >= rx && x <= rx + rw && y >= ry && y <= ry + rh;
     }
 
@@ -757,8 +787,8 @@ const DrawingModule = (function () {
     }
 
     /** Tính điểm neo trung tâm (tx,ty theo px) dùng để định vị bảng thuộc
-     * tính bên trên hình - tách riêng khỏi phần dựng DOM để có thể gọi lại
-     * RẺ (không rebuild toàn bộ nút/input) mỗi khi hình bị kéo di chuyển. */
+     * tính bên trên hình - tách riêng khỏi phần dựng DOM để gọi lại RẺ mỗi
+     * khi hình bị kéo di chuyển. */
     function computeToolbarAnchor(d) {
       const rect = container.getBoundingClientRect();
       let tx = rect.width / 2;
@@ -799,13 +829,8 @@ const DrawingModule = (function () {
       return { top, left, toolbarWidth };
     }
 
-    /** Gọi RẺ mỗi khung hình khi đang KÉO DI CHUYỂN 1 hình đã vẽ - chỉ cập
-     * nhật lại vị trí top/left của bảng thuộc tính đã tồn tại sẵn, KHÔNG
-     * dựng lại toàn bộ DOM bên trong (màu/độ dày/ô nhập...) như trước đây.
-     * Đây là điểm tối ưu hiệu năng quan trọng nhất của đợt nâng cấp này:
-     * trước đây showToolbar(idx) - vốn dựng lại ~15-20 phần tử DOM - bị gọi
-     * lại trên MỖI sự kiện pointermove khi kéo hình, gây giật/tốn CPU rõ
-     * rệt khi kéo nhiều lần liên tục hoặc trên máy yếu. */
+    /** Gọi RẺ mỗi khung hình khi đang KÉO DI CHUYỂN 1 hình - chỉ cập nhật
+     * lại top/left của bảng thuộc tính đã có sẵn, KHÔNG dựng lại DOM. */
     function repositionToolbarOnly(idx) {
       if (!toolbarEl) return;
       const d = drawings[idx];
@@ -854,10 +879,10 @@ const DrawingModule = (function () {
 
       if (d.type !== 'text') {
         const lockBtn = document.createElement('button');
-lockBtn.type = 'button';
-lockBtn.className = 'dt-icon-btn' + (d.locked ? ' active' : '');
-setIcon(lockBtn, d.locked ? 'lock' : 'unlock');
-lockBtn.title = d.locked ? 'Đã khoá vị trí - bấm để mở khoá (cho phép kéo lại)' : 'Khoá vị trí - không cho kéo di chuyển nữa';
+        lockBtn.type = 'button';
+        lockBtn.className = 'dt-icon-btn' + (d.locked ? ' active' : '');
+        setIcon(lockBtn, d.locked ? 'lock' : 'unlock');
+        lockBtn.title = d.locked ? 'Đã khoá vị trí - bấm để mở khoá (cho phép kéo lại)' : 'Khoá vị trí - không cho kéo di chuyển nữa';
         lockBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           d.locked = !d.locked;
@@ -867,24 +892,25 @@ lockBtn.title = d.locked ? 'Đã khoá vị trí - bấm để mở khoá (cho p
       }
 
       const defaultBtn = document.createElement('button');
-defaultBtn.type = 'button';
-defaultBtn.className = 'dt-icon-btn';
-setIcon(defaultBtn, 'star');
-defaultBtn.title = 'Đặt màu & độ dày hiện tại làm mặc định cho MỌI hình vẽ mới';
-defaultBtn.addEventListener('click', (e) => {
-  e.stopPropagation();
-  defaultStyle.color = d.color || defaultStyle.color;
-  defaultStyle.width = d.width || defaultStyle.width;
-  setIcon(defaultBtn, 'check');
-  setTimeout(() => setIcon(defaultBtn, 'star'), 700);
-});
+      defaultBtn.type = 'button';
+      defaultBtn.className = 'dt-icon-btn';
+      setIcon(defaultBtn, 'star');
+      defaultBtn.title = 'Đặt màu & độ dày hiện tại làm mặc định cho MỌI hình vẽ mới';
+      defaultBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        defaultStyle.color = d.color || defaultStyle.color;
+        defaultStyle.width = d.width || defaultStyle.width;
+        if (hasLocalStore()) LocalStore.write('drawing_default_style', defaultStyle);
+        setIcon(defaultBtn, 'check');
+        setTimeout(() => setIcon(defaultBtn, 'star'), 700);
+      });
       headerActions.appendChild(defaultBtn);
 
       const closeBtn = document.createElement('button');
-closeBtn.type = 'button';
-closeBtn.className = 'dt-icon-btn';
-setIcon(closeBtn, 'close');
-closeBtn.title = 'Đóng bảng thuộc tính';
+      closeBtn.type = 'button';
+      closeBtn.className = 'dt-icon-btn';
+      setIcon(closeBtn, 'close');
+      closeBtn.title = 'Đóng bảng thuộc tính';
       closeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         selectedDrawingIndex = null;
@@ -957,7 +983,7 @@ closeBtn.title = 'Đóng bảng thuộc tính';
       opacityRow.appendChild(opValue);
       toolbarEl.appendChild(opacityRow);
 
-      // ---- Hàng độ dày nét: mẫu xem trước dạng thanh (không áp dụng cho ghi chú) ----
+      // ---- Hàng độ dày nét (không áp dụng cho ghi chú) ----
       if (d.type !== 'text') {
         const widthRow = document.createElement('div');
         widthRow.className = 'dt-swatch-row';
@@ -969,7 +995,7 @@ closeBtn.title = 'Đóng bảng thuộc tính';
           btn.title = wVal === 1 ? 'Nét mảnh' : wVal === 1.5 ? 'Nét vừa' : 'Nét đậm';
           const bar = document.createElement('span');
           bar.className = 'dt-swatch-bar';
-          bar.style.height = (wVal + 0.5) + 'px';
+          bar.style.height = wVal + 0.5 + 'px';
           btn.appendChild(bar);
           btn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -980,9 +1006,9 @@ closeBtn.title = 'Đóng bảng thuộc tính';
           widthRow.appendChild(btn);
         });
 
-        // ---- Kiểu nét (liền/đứt) ghép chung hàng, dạng mẫu xem trước ----
+        // ---- Kiểu nét (liền/đứt) ghép chung hàng ----
         if (DASHED_STYLE_TOOLS.includes(d.type)) {
-          const isDashed = (d.type === 'hline' || d.type === 'vline' || d.type === 'hray') ? d.dashed !== false : !!d.dashed;
+          const isDashed = d.type === 'hline' || d.type === 'vline' || d.type === 'hray' ? d.dashed !== false : !!d.dashed;
           [{ dashed: false, title: 'Nét liền' }, { dashed: true, title: 'Nét đứt' }].forEach((opt) => {
             const active = isDashed === opt.dashed;
             const btn = document.createElement('button');
@@ -1055,8 +1081,7 @@ closeBtn.title = 'Đóng bảng thuộc tính';
       } else if (d.type === 'hray') {
         priceCol.appendChild(makePriceInput('Giá', d.p.price, (v) => { d.p.price = v; redraw(); }));
       } else if (d.type === 'vline') {
-        // Đường dọc chỉ neo theo THỜI GIAN - không có ô sửa số, kéo bằng
-        // chuột/tay (tool Con trỏ) để di chuyển.
+        // Đường dọc chỉ neo theo THỜI GIAN - không có ô sửa số.
       } else if (d.p3) {
         priceCol.appendChild(makePriceInput('Điểm 1', d.p1.price, (v) => { d.p1.price = v; redraw(); }));
         priceCol.appendChild(makePriceInput('Điểm 2', d.p2.price, (v) => { d.p2.price = v; redraw(); }));
@@ -1096,19 +1121,19 @@ closeBtn.title = 'Đóng bảng thuộc tính';
       actionRow.style.justifyContent = 'flex-end';
 
       const delBtn = document.createElement('button');
-delBtn.type = 'button';
-delBtn.title = 'Xoá hình';
-delBtn.style.display = 'inline-flex';
-delBtn.style.alignItems = 'center';
-delBtn.style.gap = '4px';
-delBtn.innerHTML = Icons.trash.replace('<svg ', '<svg class="icon-svg" ') + '<span>Xoá</span>';
-delBtn.style.background = 'transparent';
-delBtn.style.border = '1px solid var(--border-color)';
-delBtn.style.borderRadius = 'var(--radius-sm)';
-delBtn.style.color = 'var(--red)';
-delBtn.style.fontSize = '11px';
-delBtn.style.cursor = 'pointer';
-delBtn.style.padding = '3px 8px';
+      delBtn.type = 'button';
+      delBtn.title = 'Xoá hình';
+      delBtn.style.display = 'inline-flex';
+      delBtn.style.alignItems = 'center';
+      delBtn.style.gap = '4px';
+      delBtn.innerHTML = Icons.trash.replace('<svg ', '<svg class="icon-svg" ') + '<span>Xoá</span>';
+      delBtn.style.background = 'transparent';
+      delBtn.style.border = '1px solid var(--border-color)';
+      delBtn.style.borderRadius = 'var(--radius-sm)';
+      delBtn.style.color = 'var(--red)';
+      delBtn.style.fontSize = '11px';
+      delBtn.style.cursor = 'pointer';
+      delBtn.style.padding = '3px 8px';
       delBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         drawings.splice(idx, 1);
@@ -1172,8 +1197,8 @@ delBtn.style.padding = '3px 8px';
     }
 
     function onPointerDown(e) {
-      // Đang chờ chốt điểm neo thứ 3 (Tam giác/Kênh giá/Fib Extension) -
-      // cú chạm/click này CHỐT LUÔN điểm neo thứ 3 rồi tạo hình hoàn chỉnh.
+      // Đang chờ chốt điểm neo thứ 3 - cú chạm/click này CHỐT LUÔN điểm neo
+      // thứ 3 rồi tạo hình hoàn chỉnh.
       if (pendingThirdPoint) {
         const pt = pointFromEvent(e);
         if (pt.time !== null && pt.time !== undefined && pt.price !== null && pt.price !== undefined) {
@@ -1193,8 +1218,8 @@ delBtn.style.padding = '3px 8px';
         if (match !== null) {
           selectedDrawingIndex = match.index;
           showToolbar(match.index);
-          // Hình đã khoá (🔒 trong bảng thuộc tính): vẫn chọn được để xem/sửa
-          // màu/xoá, nhưng KHÔNG cho kéo di chuyển.
+          // Hình đã khoá (🔒): vẫn chọn được để xem/sửa màu/xoá, nhưng
+          // KHÔNG cho kéo di chuyển.
           if (!drawings[match.index].locked) {
             isDraggingShape = true;
             draggedDrawingIndex = match.index;
@@ -1222,11 +1247,8 @@ delBtn.style.padding = '3px 8px';
         return;
       }
 
-      // ĐỢT FIX (mobile): công cụ 1 điểm neo ("Đường ngang"/"Đường dọc"/"Tia
-      // ngang"/"Cảnh báo giá"/"Ghi chú") trên CẢM ỨNG không commit ngay lúc
-      // chạm xuống - giữ tay + kéo để chỉnh đúng vị trí, chỉ commit khi
-      // NHẤC TAY (xem onPointerUp). Trên CHUỘT vẫn giữ hành vi cũ (bấm 1
-      // phát là đặt luôn).
+      // Mobile: công cụ 1 điểm neo/Cảnh báo/Ghi chú không commit ngay lúc
+      // chạm xuống - giữ tay + kéo để chỉnh, commit khi NHẤC TAY (onPointerUp).
       if (e.pointerType === 'touch' && (SINGLE_ANCHOR_TOOLS.includes(currentTool) || currentTool === 'alert' || currentTool === 'text')) {
         pendingTouchPlacement = currentTool;
         canvas.setPointerCapture(e.pointerId);
@@ -1276,7 +1298,7 @@ delBtn.style.padding = '3px 8px';
       if (pt.time === null || pt.time === undefined || pt.price === null || pt.price === undefined) return;
 
       // Mọi công cụ 2 điểm neo (kể cả bước đầu của công cụ 3 điểm neo) bắt
-      // đầu bằng thao tác kéo dragStart -> pt, y hệt cơ chế gốc.
+      // đầu bằng thao tác kéo dragStart -> pt.
       dragStart = pt;
       canvas.setPointerCapture(e.pointerId);
     }
@@ -1355,8 +1377,7 @@ delBtn.style.padding = '3px 8px';
             } else if (d.type === 'text') {
               const xOrig = timeToX(orig.p.time), yOrig = priceToY(orig.p.price);
               if (xOrig !== null && yOrig !== null) {
-                const newX = xOrig + dx, newY = yOrig + dy;
-                const t = xToTime(newX), p = yToPrice(newY);
+                const t = xToTime(xOrig + dx), p = yToPrice(yOrig + dy);
                 if (t !== null && p !== null) d.p = { time: t, price: p };
               }
             } else if (d.p3) {
@@ -1375,15 +1396,12 @@ delBtn.style.padding = '3px 8px';
                 }
               }
             } else if (d.p1 && d.p2) {
-              // Công cụ 2 điểm neo (trendline/ray/extendedline/rectangle/
-              // circle/arrow/fib/long/short)
+              // Công cụ 2 điểm neo
               const x1Orig = timeToX(orig.p1.time), y1Orig = priceToY(orig.p1.price);
               const x2Orig = timeToX(orig.p2.time), y2Orig = priceToY(orig.p2.price);
               if (x1Orig !== null && y1Orig !== null && x2Orig !== null && y2Orig !== null) {
-                const newX1 = x1Orig + dx, newY1 = y1Orig + dy;
-                const newX2 = x2Orig + dx, newY2 = y2Orig + dy;
-                const t1 = xToTime(newX1), p1 = yToPrice(newY1);
-                const t2 = xToTime(newX2), p2 = yToPrice(newY2);
+                const t1 = xToTime(x1Orig + dx), p1 = yToPrice(y1Orig + dy);
+                const t2 = xToTime(x2Orig + dx), p2 = yToPrice(y2Orig + dy);
                 if (t1 !== null && p1 !== null && t2 !== null && p2 !== null) {
                   d.p1 = { time: t1, price: p1 };
                   d.p2 = { time: t2, price: p2 };
@@ -1420,8 +1438,7 @@ delBtn.style.padding = '3px 8px';
     }
 
     function onPointerUp(e) {
-      // FIX MOBILE: trên cảm ứng, ngón tay chỉ nhấc lên (pointerup) - xoá
-      // crosshair NGAY tại đây, không đợi pointerleave.
+      // Trên cảm ứng, ngón tay nhấc lên - xoá crosshair NGAY tại đây.
       if (e.pointerType === 'touch') {
         hoverPoint = null;
         touchRawPoint = null;
@@ -1485,7 +1502,6 @@ delBtn.style.padding = '3px 8px';
 
       const pt = pointFromEvent(e);
       let shapeCreated = false;
-      let needThirdPoint = false;
 
       if (pt.time !== null && pt.time !== undefined && pt.price !== null && pt.price !== undefined) {
         if (TWO_ANCHOR_TOOLS.includes(currentTool)) {
@@ -1495,7 +1511,6 @@ delBtn.style.padding = '3px 8px';
           shapeCreated = true;
         } else if (THREE_ANCHOR_TOOLS.includes(currentTool)) {
           pendingThirdPoint = { type: currentTool, p1: dragStart, p2: pt, color: defaultStyle.color, width: defaultStyle.width, dashed: false };
-          needThirdPoint = true;
         }
       }
 
@@ -1503,8 +1518,8 @@ delBtn.style.padding = '3px 8px';
       previewDrawing = null;
       redraw();
       if (shapeCreated) returnToCursorAfterDraw();
-      // Nếu needThirdPoint: vẫn giữ nguyên tool hiện tại, chờ cú chạm/click
-      // tiếp theo ở onPointerDown để chốt điểm neo thứ 3.
+      // Nếu cần điểm neo thứ 3: giữ nguyên tool, chờ cú chạm/click tiếp theo
+      // ở onPointerDown để chốt.
     }
 
     function onContainerPointerMove(e) {
@@ -1569,7 +1584,7 @@ delBtn.style.padding = '3px 8px';
     canvas.addEventListener('pointerleave', () => { hoverPoint = null; touchRawPoint = null; redraw(); });
     container.addEventListener('pointermove', onContainerPointerMove);
 
-    /** FIX: đóng toolbar khi bấm vào chỗ TRỐNG trên chart. */
+    /** Đóng toolbar khi bấm vào chỗ TRỐNG trên chart. */
     container.addEventListener('pointerdown', (e) => {
       if (currentTool !== 'cursor') return;
       if (e.target === canvas) return;
@@ -1610,6 +1625,8 @@ delBtn.style.padding = '3px 8px';
       isAwaitingThirdPoint: () => !!pendingThirdPoint,
       setAllHidden,
       getAllHidden,
+      loadForSymbol,
+      flushSave,
     };
   }
 

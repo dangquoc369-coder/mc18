@@ -2,21 +2,19 @@
  * storage.js
  * State trung tâm (single source of truth) cho toàn bộ app.
  *
- * `state.panes` - mảng tối đa 4 pane, MỖI pane có symbol/timeframe/candles
- * ĐỘC LẬP hoàn toàn với nhau. Pane id CỐ ĐỊNH là 'pane-1'..'pane-4' (khớp với
- * 4 container cố định trong index.html).
+ * LOCAL-FIRST: mọi cấu hình giao diện đều lưu TRỰC TIẾP trên thiết bị qua
+ * LocalStore (js/local-store.js - PHẢI nạp TRƯỚC file này), không còn đồng bộ
+ * lên cloud:
+ *   - Cấu hình 4 pane (symbol, timeframe, breakout, SL...)   -> 'panes'
+ *   - Layout (1/2/3/4 ô) + tỉ lệ kéo splitter                -> 'layout', 'layout_ratios'
+ *   - Ô đang chọn (dùng cho layout 1 ô)                      -> 'active_pane'
+ *   - Khung giờ thông báo tín hiệu BUY/SELL                  -> 'signal_tfs'
+ *   - Watchlist                                              -> 'watchlist'
+ * (Chỉ cảnh báo giá / tín hiệu / nhắc việc vẫn lên cloud - xem push-sync.js,
+ *  vì cần server để đẩy Web Push khi đã tắt app.)
  *
- * CẬP NHẬT (đợt fix trước) - cấu hình BUY/SELL (breakout) riêng từng pane:
- *   - breakoutLookback, slMode, slTimeframe (xem giải thích chi tiết trong
- *     bản gốc, không đổi).
- *
- * CẬP NHẬT (đợt fix này) - CẢNH BÁO TÍN HIỆU BUY/SELL:
- *   - Thêm field `signalAlertEnabled` (mặc định false) cho mỗi pane - bật/tắt
- *     qua checkbox trong popover cài đặt breakout (xem indicator-legend.js).
- *     Khi bật, app.js sẽ gửi thông báo hệ thống mỗi khi breakout.js phát
- *     hiện tín hiệu BUY/SELL MỚI ở pane đó (xem 'pane:newSignal' trong
- *     app.js/breakout.js).
- *   - setPaneSignalAlertEnabled(paneId, enabled) để cập nhật field này.
+ * `state.panes` - mảng 4 pane, MỖI pane có symbol/timeframe/candles ĐỘC LẬP.
+ * Pane id CỐ ĐỊNH là 'pane-1'..'pane-4' (khớp 4 container trong index.html).
  */
 
 const Store = (function () {
@@ -27,6 +25,12 @@ const Store = (function () {
     { id: 'pane-4', symbol: 'SOLUSDT', timeframe: '1d' },
   ];
 
+  const DEFAULT_WATCHLIST = ['XAUUSD', 'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XAUUSDT'];
+
+  // Key cũ (trước khi có LocalStore) - dùng để di trú dữ liệu 1 lần.
+  const LEGACY_PANES_KEY = 'dq_tracker_panes_config_v2';
+  const LEGACY_SIGNAL_TF_KEY = 'dq_tracker_enabled_signal_timeframes_v1';
+
   function makePane(cfg) {
     return {
       id: cfg.id,
@@ -35,12 +39,10 @@ const Store = (function () {
       candles: [],
       lastPrice: null,
       priceChangePercent: null,
-      // Cấu hình breakout/SL riêng của pane này
       breakoutLookback: 2,
       slMode: 'entry', // 'entry' | 'higher' | 'custom'
       slTimeframe: null, // vd '1h' - chỉ dùng khi slMode === 'custom'
       breakoutVisible: false,
-      // Cảnh báo tín hiệu BUY/SELL riêng của pane này (đợt fix này)
       signalAlertEnabled: false,
     };
   }
@@ -53,41 +55,34 @@ const Store = (function () {
     '4': () => ['pane-1', 'pane-2', 'pane-3', 'pane-4'],
   };
 
-  const PANES_STORAGE_KEY = 'dq_tracker_panes_config_v2';
-
+  // ===== Đọc / ghi cục bộ =====
   function loadSavedPanes() {
-    try {
-      const raw = localStorage.getItem(PANES_STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length === 4) {
-          return parsed.map((saved, idx) => {
-            const def = DEFAULT_PANE_CONFIG[idx];
-            return {
-              id: def.id,
-              symbol: saved.symbol || def.symbol,
-              timeframe: saved.timeframe || def.timeframe,
-              candles: [],
-              lastPrice: null,
-              priceChangePercent: null,
-              breakoutLookback: saved.breakoutLookback !== undefined ? saved.breakoutLookback : 2,
-              slMode: saved.slMode || 'entry',
-              slTimeframe: saved.slTimeframe || null,
-              breakoutVisible: saved.breakoutVisible !== undefined ? !!saved.breakoutVisible : false,
-              signalAlertEnabled: !!saved.signalAlertEnabled,
-            };
-          });
-        }
-      }
-    } catch (err) {
-      console.error('Lỗi khi tải cấu hình pane:', err);
+    const parsed = LocalStore.read('panes', null, LEGACY_PANES_KEY);
+    if (Array.isArray(parsed) && parsed.length === 4) {
+      return parsed.map((saved, idx) => {
+        const def = DEFAULT_PANE_CONFIG[idx];
+        return {
+          id: def.id,
+          symbol: saved.symbol || def.symbol,
+          timeframe: saved.timeframe || def.timeframe,
+          candles: [],
+          lastPrice: null,
+          priceChangePercent: null,
+          breakoutLookback: saved.breakoutLookback !== undefined ? saved.breakoutLookback : 2,
+          slMode: saved.slMode || 'entry',
+          slTimeframe: saved.slTimeframe || null,
+          breakoutVisible: saved.breakoutVisible !== undefined ? !!saved.breakoutVisible : false,
+          signalAlertEnabled: !!saved.signalAlertEnabled,
+        };
+      });
     }
     return DEFAULT_PANE_CONFIG.map(makePane);
   }
 
   function savePanes() {
-    try {
-      const data = state.panes.map(p => ({
+    LocalStore.write(
+      'panes',
+      state.panes.map((p) => ({
         symbol: p.symbol,
         timeframe: p.timeframe,
         breakoutLookback: p.breakoutLookback,
@@ -95,52 +90,46 @@ const Store = (function () {
         slTimeframe: p.slTimeframe,
         breakoutVisible: p.breakoutVisible,
         signalAlertEnabled: p.signalAlertEnabled,
-      }));
-      localStorage.setItem(PANES_STORAGE_KEY, JSON.stringify(data));
-    } catch (err) {
-      console.error('Lỗi khi lưu cấu hình pane:', err);
-    }
+      }))
+    );
   }
 
-  const ENABLED_SIGNAL_TIMEFRAMES_KEY = 'dq_tracker_enabled_signal_timeframes_v1';
-
+  // Mặc định KHÔNG bật sẵn khung giờ nào - người dùng tự tích trong popover
+  // ⚙ của chip BUY/SELL.
   function loadSavedSignalTimeframes() {
-    try {
-      const raw = localStorage.getItem(ENABLED_SIGNAL_TIMEFRAMES_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          return parsed;
-        }
-      }
-    } catch (err) {
-      console.error('Lỗi khi tải cấu hình timeframe tín hiệu:', err);
-    }
-    // ĐỢT FIX NÀY: mặc định KHÔNG bật sẵn khung giờ nào cả (trước đây mặc
-    // định có sẵn ['5m','15m','30m','1h','2h'] khiến vừa bật chỉ báo
-    // BUY/SELL là đã tự động có thông báo ở các khung đó mà người dùng
-    // chưa hề tự tích). Giờ người dùng phải tự vào popover ⚙ của chip
-    // BUY/SELL, tự tích khung nào thì khung đó mới được bật thông báo.
-    return [];
+    const v = LocalStore.read('signal_tfs', [], LEGACY_SIGNAL_TF_KEY);
+    return Array.isArray(v) ? v : [];
   }
 
   function saveEnabledSignalTimeframes(tfs) {
-    try {
-      localStorage.setItem(ENABLED_SIGNAL_TIMEFRAMES_KEY, JSON.stringify(tfs));
-    } catch (err) {
-      console.error('Lỗi khi lưu cấu hình timeframe tín hiệu:', err);
-    }
+    LocalStore.write('signal_tfs', tfs);
   }
+
+  function loadSavedLayout() {
+    const l = String(LocalStore.read('layout', '1'));
+    return LAYOUT_PANES[l] ? l : '1';
+  }
+
+  function loadSavedActivePane() {
+    const id = LocalStore.read('active_pane', 'pane-1');
+    return /^pane-[1-4]$/.test(String(id)) ? id : 'pane-1';
+  }
+
+  function loadSavedWatchlist() {
+    const l = LocalStore.read('watchlist', null);
+    return Array.isArray(l) ? l.filter((s) => typeof s === 'string' && s) : DEFAULT_WATCHLIST.slice();
+  }
+
+  const initialWatchlist = loadSavedWatchlist();
 
   const state = {
     panes: loadSavedPanes(),
-    activePaneId: 'pane-1',
-    layout: '1',
+    activePaneId: loadSavedActivePane(),
+    layout: loadSavedLayout(),
     orientation: 'landscape',
-    layoutRatios: {},
-    popularSymbols: [
-      'XAUUSD', 'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XAUUSDT'
-    ],
+    layoutRatios: LocalStore.read('layout_ratios', {}) || {},
+    watchlist: initialWatchlist,
+    popularSymbols: initialWatchlist.slice(), // giữ để ui.js (nếu còn đọc) vẫn chạy
     allSymbols: [],
     enabledSignalTimeframes: loadSavedSignalTimeframes(),
   };
@@ -169,6 +158,7 @@ const Store = (function () {
   function setActivePane(paneId) {
     if (!getPane(paneId) || state.activePaneId === paneId) return;
     state.activePaneId = paneId;
+    LocalStore.write('active_pane', paneId);
     EventBus.emit('pane:focused', { paneId });
     if (state.layout === '1') {
       EventBus.emit('layout:changed', {
@@ -186,15 +176,19 @@ const Store = (function () {
     if (Number(layout) > max) layout = String(max);
     if (state.layout === layout) return;
     state.layout = layout;
+    LocalStore.write('layout', state.layout);
     let visible = getVisiblePaneIds();
     if (!visible.includes(state.activePaneId)) {
       state.activePaneId = visible[0];
+      LocalStore.write('active_pane', state.activePaneId);
       EventBus.emit('pane:focused', { paneId: state.activePaneId });
       visible = getVisiblePaneIds();
     }
     EventBus.emit('layout:changed', { layout, visiblePaneIds: visible, orientation: state.orientation });
   }
 
+  // Xoay màn hình có thể ép layout xuống thấp hơn (dọc tối đa 3 ô) nhưng
+  // KHÔNG ghi đè lựa chọn đã lưu - xoay lại ngang sẽ về đúng layout cũ.
   function setOrientation(orientation) {
     if (state.orientation === orientation) return;
     state.orientation = orientation;
@@ -202,9 +196,12 @@ const Store = (function () {
     const max = maxPanesForOrientation(orientation);
     if (Number(state.layout) > max) {
       state.layout = String(max);
+    } else {
+      const saved = loadSavedLayout();
+      if (Number(saved) <= max) state.layout = saved;
     }
 
-    let visible = getVisiblePaneIds();
+    const visible = getVisiblePaneIds();
     if (!visible.includes(state.activePaneId)) {
       state.activePaneId = visible[0];
     }
@@ -225,8 +222,13 @@ const Store = (function () {
     return state.layoutRatios[getLayoutRatioKey(layout, orientation)] || null;
   }
 
+  // Kéo splitter phát sinh rất nhiều lần/giây -> chỉ ghi xuống máy sau 300ms
+  // kể từ lần kéo cuối (debounce), tránh ghi localStorage liên tục.
+  let ratiosTimer = null;
   function setLayoutRatios(layout, orientation, ratios) {
     state.layoutRatios[getLayoutRatioKey(layout, orientation)] = ratios;
+    clearTimeout(ratiosTimer);
+    ratiosTimer = setTimeout(() => LocalStore.write('layout_ratios', state.layoutRatios), 300);
   }
 
   function setPaneSymbol(paneId, symbol) {
@@ -280,20 +282,23 @@ const Store = (function () {
     state.allSymbols = list;
   }
 
-  function setPaneBreakoutConfig(paneId, config) {
-    const pane = getPane(paneId);
-    if (!pane) return;
-    if (config.lookbackCandles !== undefined) pane.breakoutLookback = config.lookbackCandles;
-    if (config.slMode !== undefined) pane.slMode = config.slMode;
-    if (config.slTimeframe !== undefined) pane.slTimeframe = config.slTimeframe;
-
-    savePanes();
+  function emitBreakoutChanged(paneId, pane) {
     EventBus.emit('pane:breakoutConfigChanged', {
       paneId,
       breakoutLookback: pane.breakoutLookback,
       slMode: pane.slMode,
       slTimeframe: pane.slTimeframe,
     });
+  }
+
+  function setPaneBreakoutConfig(paneId, config) {
+    const pane = getPane(paneId);
+    if (!pane) return;
+    if (config.lookbackCandles !== undefined) pane.breakoutLookback = config.lookbackCandles;
+    if (config.slMode !== undefined) pane.slMode = config.slMode;
+    if (config.slTimeframe !== undefined) pane.slTimeframe = config.slTimeframe;
+    savePanes();
+    emitBreakoutChanged(paneId, pane);
   }
 
   function getPaneBreakoutConfig(paneId) {
@@ -306,32 +311,22 @@ const Store = (function () {
     };
   }
 
-  /** Bật/tắt thông báo tín hiệu BUY/SELL của 1 pane (đợt fix này). */
+  /** Bật/tắt thông báo tín hiệu BUY/SELL của 1 pane. */
   function setPaneSignalAlertEnabled(paneId, enabled) {
     const pane = getPane(paneId);
     if (!pane) return;
     pane.signalAlertEnabled = !!enabled;
     savePanes();
-    EventBus.emit('pane:breakoutConfigChanged', {
-      paneId,
-      breakoutLookback: pane.breakoutLookback,
-      slMode: pane.slMode,
-      slTimeframe: pane.slTimeframe,
-    });
+    emitBreakoutChanged(paneId, pane);
   }
 
-  /** Bật/tắt hiển thị chỉ báo breakout của 1 pane (đợt fix này). */
+  /** Bật/tắt hiển thị chỉ báo breakout của 1 pane. */
   function setPaneBreakoutVisible(paneId, visible) {
     const pane = getPane(paneId);
     if (!pane) return;
     pane.breakoutVisible = !!visible;
     savePanes();
-    EventBus.emit('pane:breakoutConfigChanged', {
-      paneId,
-      breakoutLookback: pane.breakoutLookback,
-      slMode: pane.slMode,
-      slTimeframe: pane.slTimeframe,
-    });
+    emitBreakoutChanged(paneId, pane);
   }
 
   function getEnabledSignalTimeframes() {
@@ -344,67 +339,38 @@ const Store = (function () {
     EventBus.emit('pane:breakoutConfigChanged', {});
   }
 
-  function applyRemoteSetup(remoteSetup) {
-    if (!remoteSetup) return false;
-    let changed = false;
+  // ===== WATCHLIST (cục bộ) =====
+  function getWatchlist() {
+    return state.watchlist.slice();
+  }
 
-    if (Array.isArray(remoteSetup.panes) && remoteSetup.panes.length === 4) {
-      remoteSetup.panes.forEach((saved, idx) => {
-        const p = state.panes[idx];
-        if (!p) return;
-        let pChanged = false;
-        if (saved.symbol && saved.symbol !== p.symbol) {
-          p.symbol = saved.symbol;
-          p.candles = [];
-          pChanged = true;
-        }
-        if (saved.timeframe && saved.timeframe !== p.timeframe) {
-          p.timeframe = saved.timeframe;
-          p.candles = [];
-          pChanged = true;
-        }
-        if (saved.breakoutLookback !== undefined && saved.breakoutLookback !== p.breakoutLookback) {
-          p.breakoutLookback = saved.breakoutLookback;
-          pChanged = true;
-        }
-        if (saved.slMode !== undefined && saved.slMode !== p.slMode) {
-          p.slMode = saved.slMode;
-          pChanged = true;
-        }
-        if (saved.slTimeframe !== undefined && saved.slTimeframe !== p.slTimeframe) {
-          p.slTimeframe = saved.slTimeframe;
-          pChanged = true;
-        }
-        if (saved.breakoutVisible !== undefined && saved.breakoutVisible !== p.breakoutVisible) {
-          p.breakoutVisible = !!saved.breakoutVisible;
-          pChanged = true;
-        }
-        if (saved.signalAlertEnabled !== undefined && saved.signalAlertEnabled !== p.signalAlertEnabled) {
-          p.signalAlertEnabled = !!saved.signalAlertEnabled;
-          pChanged = true;
-        }
-        if (pChanged) changed = true;
-      });
-      savePanes();
-    }
+  function isInWatchlist(symbol) {
+    return state.watchlist.includes(symbol);
+  }
 
-    if (Array.isArray(remoteSetup.enabledSignalTimeframes)) {
-      state.enabledSignalTimeframes = remoteSetup.enabledSignalTimeframes;
-      saveEnabledSignalTimeframes(state.enabledSignalTimeframes);
-      changed = true;
-    }
+  function persistWatchlist() {
+    LocalStore.write('watchlist', state.watchlist);
+    state.popularSymbols = state.watchlist.slice();
+    EventBus.emit('watchlist:changed', { list: getWatchlist() });
+  }
 
-    if (remoteSetup.layout && LAYOUT_PANES[String(remoteSetup.layout)]) {
-      const max = maxPanesForOrientation(state.orientation);
-      let newLayout = String(remoteSetup.layout);
-      if (Number(newLayout) > max) newLayout = String(max);
-      if (state.layout !== newLayout) {
-        state.layout = newLayout;
-        changed = true;
-      }
-    }
+  function addToWatchlist(symbol) {
+    symbol = String(symbol || '').trim();
+    if (!symbol || state.watchlist.includes(symbol)) return;
+    state.watchlist.push(symbol);
+    persistWatchlist();
+  }
 
-    return changed;
+  function removeFromWatchlist(symbol) {
+    const next = state.watchlist.filter((s) => s !== symbol);
+    if (next.length === state.watchlist.length) return;
+    state.watchlist = next;
+    persistWatchlist();
+  }
+
+  function toggleWatchlist(symbol) {
+    if (isInWatchlist(symbol)) removeFromWatchlist(symbol);
+    else addToWatchlist(symbol);
   }
 
   return {
@@ -430,6 +396,10 @@ const Store = (function () {
     setPaneBreakoutVisible,
     getEnabledSignalTimeframes,
     setEnabledSignalTimeframes,
-    applyRemoteSetup,
+    getWatchlist,
+    isInWatchlist,
+    addToWatchlist,
+    removeFromWatchlist,
+    toggleWatchlist,
   };
 })();

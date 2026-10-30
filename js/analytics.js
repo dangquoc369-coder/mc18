@@ -1,36 +1,39 @@
 /**
  * analytics.js
- * Phần Phân Tích Nhật Ký Lệnh Trading (Trading Analytics & Performance Journal)
+ * Phân Tích Nhật Ký Lệnh Trading (Trading Analytics & Performance Journal)
  *
- * TÍNH NĂNG CHÍNH:
- * 1. Phân tích hiệu suất chuyên sâu chuyên nghiệp (Quant Metrics) KHÔNG DÙNG AI:
- *    - Total Trades, Win Rate %, Gross Profit, Gross Loss, Net Profit (USD)
- *    - Profit Factor (PF), Expected Payoff ($/trade)
- *    - Sharpe Ratio, Sortino Ratio, Calmar Ratio, Recovery Factor
- *    - Max Drawdown ($ & %), Max Consecutive Wins/Losses, Payoff Ratio
- * 2. Phân biệt theo Tài khoản (Tên + PIN của người dùng hiện tại, chỉ hiện đúng tài khoản đó).
- * 3. Phân biệt Lệnh Bot (EA) vs Lệnh Tay (Manual) dựa trên magic number / comment.
- * 4. Chuẩn hóa Symbol & PnL:
- *    - Symbol: XAUUSDc -> XAUUSD, BTCUSDc -> BTCUSD (luôn bỏ đuôi 'c')
- *    - PnL: Giữ nguyên số gốc từ MT5 (KHÔNG chia 100), chỉ hiển thị nhãn đơn vị là "USD" dù tài khoản là USD hay Cent/USC.
- * 5. Biểu đồ đường Lợi nhuận Tích lũy (Cumulative PnL / Equity Curve Canvas 2D interactive).
- * 6. Mã nguồn MQL5 EA MT5 chuẩn chỉnh + Hướng dẫn kết nối VPS MT5 chi tiết.
- * 7. Tối ưu phân trang & mượt mà 60fps khi lưu hàng nghìn lệnh giao dịch.
- * 8. Xóa nhật ký lệnh AN TOÀN: chờ xác nhận thật sự từ Server trước khi báo
- *    thành công, tránh tình trạng lệnh cũ "tự hồi sinh" do request DELETE
- *    lên server âm thầm thất bại (mất mạng / lỗi Worker / lỗi 404...).
- * 
+ * LOCAL-FIRST (đợt này):
+ *   - Nhật ký lệnh, vốn ban đầu, danh sách lệnh đã xoá (tombstone) đều lưu
+ *     TRỰC TIẾP trên thiết bị qua LocalStore (js/local-store.js).
+ *   - Lệnh tay + mọi chỉnh sửa/xoá CHỈ nằm ở máy - KHÔNG đẩy lên cloud nữa
+ *     (đã bỏ syncTradesToServer).
+ *   - Cloud (Worker /api/trades) chỉ còn là "HỘP THƯ ĐẾN" của EA MT5: EA chỉ
+ *     gửi được lên server, nên app KÉO lệnh EA về (pullTradesFromServer) rồi
+ *     gộp vào máy. Lệnh đã xoá được ghi nhớ cục bộ nên không bị EA/server
+ *     "hồi sinh" lại ở lần kéo sau.
+ *   - Khách (chưa đăng nhập) vẫn dùng được nhật ký + lệnh tay trên máy;
+ *     chỉ riêng kéo lệnh từ EA cần tài khoản (deviceId).
+ *
+ * TÍNH NĂNG CHÍNH (không đổi):
+ *   1. Chỉ số hiệu suất chuyên sâu (KHÔNG dùng AI): Win Rate, Profit Factor,
+ *      Expected Payoff, Sharpe, Sortino, Calmar, Recovery Factor, Max
+ *      Drawdown, chuỗi thắng/thua, Payoff Ratio.
+ *   2. Phân biệt lệnh Bot (EA) vs Lệnh Tay (magic number / comment).
+ *   3. Chuẩn hoá Symbol (XAUUSDc -> XAUUSD) & giữ nguyên PnL gốc của MT5.
+ *   4. Equity Curve (Canvas 2D) + Monte Carlo + kiểm tra độ bền vững.
+ *   5. Mã MQL5 EA + hướng dẫn kết nối VPS MT5.
+ *   6. Phân trang mượt khi có hàng nghìn lệnh.
  */
 
 const AnalyticsModule = (function () {
+  // Key cũ (trước khi có LocalStore) - dùng để di trú dữ liệu 1 lần.
   const TRADES_STORAGE_KEY = 'dq_tracker_trades_v1';
   const CAPITAL_STORAGE_KEY = 'dq_tracker_initial_capital_v1';
   const DEFAULT_INITIAL_CAPITAL = 1000;
 
   let trades = [];
-  // Vốn ban đầu (USD) do người dùng tự nhập - dùng để tính Max Drawdown %
-  // và Calmar Ratio chính xác theo đúng số vốn thật, thay vì giả định cứng
-  // $1,000 như trước (đây chính là nguồn gây nghi ngờ số liệu sai).
+  // Vốn ban đầu (USD) do người dùng tự nhập - để tính Max Drawdown % và
+  // Calmar Ratio chính xác theo số vốn thật.
   let initialCapital = DEFAULT_INITIAL_CAPITAL;
   let currentView = 'chart'; // 'chart' | 'tasks' | 'analytics'
 
@@ -52,7 +55,7 @@ const AnalyticsModule = (function () {
     return '';
   }
 
-  // Lấy deviceId (tên tài khoản người dùng)
+  // Lấy deviceId (tên tài khoản người dùng) - null nếu là Khách
   function getDeviceId() {
     try {
       return localStorage.getItem('dq_tracker_device_id_v1') || null;
@@ -61,54 +64,42 @@ const AnalyticsModule = (function () {
     }
   }
 
-  // Tải vốn ban đầu đã lưu (nếu chưa có thì dùng mặc định)
+  // ===================== LƯU TRỮ CỤC BỘ =====================
   function loadInitialCapital() {
-    try {
-      const raw = localStorage.getItem(CAPITAL_STORAGE_KEY);
-      const val = raw !== null ? parseFloat(raw) : NaN;
-      initialCapital = (!isNaN(val) && val > 0) ? val : DEFAULT_INITIAL_CAPITAL;
-    } catch (e) {
-      initialCapital = DEFAULT_INITIAL_CAPITAL;
-    }
+    const val = parseFloat(LocalStore.read('initial_capital', NaN, CAPITAL_STORAGE_KEY));
+    initialCapital = !isNaN(val) && val > 0 ? val : DEFAULT_INITIAL_CAPITAL;
   }
 
-  // Lưu vốn ban đầu do người dùng nhập & render lại toàn bộ chỉ số
   function saveInitialCapital(rawVal) {
     const num = parseFloat(rawVal);
-    initialCapital = (!isNaN(num) && num > 0) ? num : DEFAULT_INITIAL_CAPITAL;
-    try {
-      localStorage.setItem(CAPITAL_STORAGE_KEY, String(initialCapital));
-    } catch (e) {
-      console.error('[analytics.js] Lỗi lưu vốn ban đầu:', e);
-    }
-    if (currentView === 'analytics') {
-      renderMainView();
-    }
+    initialCapital = !isNaN(num) && num > 0 ? num : DEFAULT_INITIAL_CAPITAL;
+    LocalStore.write('initial_capital', initialCapital);
+    if (currentView === 'analytics') renderMainView();
   }
 
-  // Tải dữ liệu từ LocalStorage
   function loadLocalTrades() {
-    try {
-      const raw = localStorage.getItem(TRADES_STORAGE_KEY);
-      trades = raw ? JSON.parse(raw) : [];
-    } catch (err) {
-      trades = [];
-    }
+    const arr = LocalStore.read('trades', [], TRADES_STORAGE_KEY);
+    trades = Array.isArray(arr) ? arr : [];
   }
 
-  // Lưu xuống LocalStorage và đồng bộ server nếu cần
-  function persistLocalTrades({ sync = true } = {}) {
-    try {
-      localStorage.setItem(TRADES_STORAGE_KEY, JSON.stringify(trades));
-    } catch (err) {
-      console.error('[analytics.js] Lỗi lưu trades:', err);
-    }
-    if (currentView === 'analytics') {
-      renderMainView();
-    }
-    if (sync) {
-      syncTradesToServer();
-    }
+  // Chỉ ghi xuống máy (không còn đồng bộ lên cloud).
+  function persistLocalTrades() {
+    LocalStore.write('trades', trades);
+    if (currentView === 'analytics') renderMainView();
+  }
+
+  // ===== Tombstone cục bộ: lệnh đã xoá không bị EA/server kéo về lại =====
+  function getDeletedTickets() {
+    return LocalStore.read('trades_deleted', {}) || {};
+  }
+
+  function markTicketsDeleted(tickets) {
+    const map = getDeletedTickets();
+    const now = Date.now();
+    tickets.forEach((t) => {
+      map[String(t)] = now;
+    });
+    LocalStore.write('trades_deleted', map);
   }
 
   // Chuẩn hóa 1 bản ghi lệnh
@@ -154,11 +145,11 @@ const AnalyticsModule = (function () {
       swap,
       magic,
       comment: t.comment || '',
-      isBot
+      isBot,
     };
   }
 
-  // Đồng bộ lên Server
+  // ===================== GIAO TIẾP SERVER (CHỈ "HỘP THƯ ĐẾN" CỦA EA) =====================
   function getApiTradesUrl(pathSuffix = '') {
     const appOrigin = window.location.origin || '';
     const isGithub = appOrigin.includes('github.io');
@@ -169,62 +160,30 @@ const AnalyticsModule = (function () {
     return base + '/api/trades' + pathSuffix;
   }
 
-  // Đẩy lên Server
-  async function syncTradesToServer() {
-    const deviceId = getDeviceId();
-    if (!deviceId) return;
-    try {
-      const url = getApiTradesUrl();
-      await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceId, trades })
-      });
-    } catch (err) {
-      console.error('[analytics.js] Lỗi sync server:', err);
-    }
-  }
-
-  // ===== XÓA LỆNH TRÊN SERVER (ĐÃ SỬA: TRẢ VỀ KẾT QUẢ THẬT, KHÔNG "BẮN VÀ QUÊN") =====
-  // Trước đây hàm này không await, không kiểm tra response, không báo lỗi -> nếu
-  // request DELETE thất bại (mất mạng, lỗi CORS, Worker lỗi, route 404...) thì
-  // server VẪN CÒN dữ liệu cũ, nhưng người dùng lại tưởng đã xóa thành công.
-  // Lần mở app sau, pullTradesFromServer() kéo lại dữ liệu cũ đó về -> lệnh
-  // "tự hồi sinh". Giờ hàm này trả về { ok, error } để nơi gọi biết chắc chắn.
+  // Dọn dữ liệu trên server (best-effort): việc xoá THẬT đã xảy ra ở máy nhờ
+  // tombstone, nên thất bại ở đây không ảnh hưởng người dùng.
   async function deleteTradeOnServer(ticket) {
     const deviceId = getDeviceId();
-    if (!deviceId) {
-      return { ok: false, error: 'Không tìm thấy deviceId (tên tài khoản)' };
-    }
+    if (!deviceId) return { ok: false, error: 'Chưa đăng nhập' };
     try {
-      const url = getApiTradesUrl();
-      const res = await fetch(url, {
+      const res = await fetch(getApiTradesUrl(), {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(ticket ? { deviceId, ticket } : { deviceId })
+        body: JSON.stringify(ticket ? { deviceId, ticket } : { deviceId }),
       });
-
-      if (!res.ok) {
-        let bodyText = '';
-        try { bodyText = await res.text(); } catch (e) { /* ignore */ }
-        console.error('[analytics.js] Server từ chối xóa. Status:', res.status, bodyText);
-        return { ok: false, error: `Server trả về lỗi HTTP ${res.status}${bodyText ? ' - ' + bodyText : ''}` };
-      }
-
+      if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
       return { ok: true };
     } catch (err) {
-      console.error('[analytics.js] Lỗi xóa lệnh trên server:', err);
-      return { ok: false, error: err && err.message ? err.message : 'Lỗi kết nối mạng tới server' };
+      return { ok: false, error: err && err.message ? err.message : 'Lỗi mạng' };
     }
   }
 
-  // Tải từ Server về
+  // Kéo lệnh mà EA đã gửi lên server về máy (bỏ qua lệnh đã xoá cục bộ).
   async function pullTradesFromServer() {
     const deviceId = getDeviceId();
     if (!deviceId) return;
     try {
-      const url = getApiTradesUrl(`?deviceId=${encodeURIComponent(deviceId)}`);
-      const res = await fetch(url);
+      const res = await fetch(getApiTradesUrl(`?deviceId=${encodeURIComponent(deviceId)}`));
       if (!res.ok) return;
       const data = await res.json();
       if (data && Array.isArray(data.trades)) {
@@ -237,22 +196,22 @@ const AnalyticsModule = (function () {
 
   function mergeFromServer(serverTrades) {
     if (!Array.isArray(serverTrades)) return;
+    const deleted = getDeletedTickets();
     const existingMap = new Map();
     trades.forEach((t) => existingMap.set(String(t.ticket), t));
 
     let changed = false;
     serverTrades.forEach((st) => {
       const norm = normalizeTrade(st);
-      if (norm && !existingMap.has(norm.ticket)) {
-        existingMap.set(norm.ticket, norm);
-        changed = true;
-      }
+      if (!norm || existingMap.has(norm.ticket) || deleted[norm.ticket]) return;
+      existingMap.set(norm.ticket, norm);
+      changed = true;
     });
 
     if (changed) {
       trades = Array.from(existingMap.values());
       trades.sort((a, b) => new Date(b.closeTime) - new Date(a.closeTime));
-      persistLocalTrades({ sync: false });
+      persistLocalTrades();
     }
   }
 
@@ -260,16 +219,13 @@ const AnalyticsModule = (function () {
   function getFilteredTrades() {
     const now = new Date();
     return trades.filter((t) => {
-      // Lọc theo Bot/Manual
       if (filterType === 'bot' && !t.isBot) return false;
       if (filterType === 'manual' && t.isBot) return false;
 
-      // Lọc theo Symbol
       if (filterSymbol === 'XAUUSD' && t.symbol !== 'XAUUSD') return false;
       if (filterSymbol === 'BTCUSD' && t.symbol !== 'BTCUSD') return false;
       if (filterSymbol === 'OTHER' && (t.symbol === 'XAUUSD' || t.symbol === 'BTCUSD')) return false;
 
-      // Lọc theo thời gian
       if (filterTime !== 'all') {
         const tDate = new Date(t.closeTime);
         const diffDays = (now - tDate) / (1000 * 60 * 60 * 24);
@@ -298,7 +254,7 @@ const AnalyticsModule = (function () {
         maxDrawdownUSD: 0, maxDrawdownPercent: 0, maxConsecutiveWins: 0,
         maxConsecutiveLosses: 0, sharpeRatio: 0, sortinoRatio: 0,
         recoveryFactor: 0, calmarRatio: 0,
-        sortedChronological: []
+        sortedChronological: [],
       };
     }
 
@@ -323,12 +279,11 @@ const AnalyticsModule = (function () {
     let maxDrawdownPercent = 0;
 
     sortedChronological.forEach((t) => {
-  // Dùng PnL ròng thực tế (Profit + Commission + Swap) để khớp đúng
-  // với số dư thật trên MT5, KHÔNG đổi t.pnlUSD gốc nên bảng lệnh
-  // và các nơi khác hiển thị vẫn y nguyên như cũ.
-  const pnl = t.pnlUSD + (t.commission || 0) + (t.swap || 0);
-  pnlList.push(pnl);
-  cumulativePnl += pnl;
+      // PnL ròng thực tế (Profit + Commission + Swap) để khớp số dư MT5 -
+      // KHÔNG đổi t.pnlUSD gốc nên bảng lệnh vẫn hiển thị như cũ.
+      const pnl = t.pnlUSD + (t.commission || 0) + (t.swap || 0);
+      pnlList.push(pnl);
+      cumulativePnl += pnl;
 
       if (pnl > 0) {
         winCount++;
@@ -348,7 +303,7 @@ const AnalyticsModule = (function () {
         currentLossStreak = 0;
       }
 
-      // Max Drawdown calculation
+      // Max Drawdown
       if (cumulativePnl > peakEquity) {
         peakEquity = cumulativePnl;
       }
@@ -356,7 +311,7 @@ const AnalyticsModule = (function () {
       if (ddUSD > maxDrawdownUSD) {
         maxDrawdownUSD = ddUSD;
       }
-      // Vốn cơ sở = Vốn ban đầu người dùng nhập + lợi nhuận tích lũy tại đỉnh
+      // Vốn cơ sở = Vốn ban đầu + lợi nhuận tích lũy tại đỉnh
       const baseCapital = initialCapital + Math.max(0, peakEquity);
       const ddPct = (ddUSD / baseCapital) * 100;
       if (ddPct > maxDrawdownPercent) {
@@ -388,7 +343,7 @@ const AnalyticsModule = (function () {
     const recoveryFactor = maxDrawdownUSD > 0 ? netProfitUSD / maxDrawdownUSD : (netProfitUSD > 0 ? 99 : 0);
 
     // Calmar Ratio
-    const calmarRatio = maxDrawdownPercent > 0 ? (netProfitUSD / initialCapital * 100) / maxDrawdownPercent : 0;
+    const calmarRatio = maxDrawdownPercent > 0 ? ((netProfitUSD / initialCapital) * 100) / maxDrawdownPercent : 0;
 
     return {
       totalTrades, winCount, lossCount, evenCount, winRate,
@@ -396,7 +351,7 @@ const AnalyticsModule = (function () {
       expectedPayoffUSD, avgWinUSD, avgLossUSD, payoffRatio,
       maxDrawdownUSD, maxDrawdownPercent, maxConsecutiveWins,
       maxConsecutiveLosses, sharpeRatio, sortinoRatio,
-      recoveryFactor, calmarRatio, sortedChronological
+      recoveryFactor, calmarRatio, sortedChronological,
     };
   }
 
@@ -429,7 +384,6 @@ const AnalyticsModule = (function () {
     const startIndex = (currentPage - 1) * pageSize;
     const pageItems = filteredList.slice(startIndex, startIndex + pageSize);
 
-    // HTML cho thẻ Thống kê
     const netClass = metrics.netProfitUSD >= 0 ? 'an-positive' : 'an-negative';
 
     container.innerHTML = `
@@ -440,7 +394,7 @@ const AnalyticsModule = (function () {
           <div class="an-header-title-box">
             <h2 class="an-title">${getIconSvg('tabAnalytics', 'margin-right:6px;')} Phân Tích Nhật Ký Lệnh Trading (Quant Analytics)</h2>
             <div class="an-subtitle">
-              Tài khoản: <strong>${escapeHtml(username)}</strong> &bull; Vốn ban đầu: <strong>${fmtUSD(initialCapital)}</strong> &bull; Tự động đồng bộ từ EA MQL5 &bull; Tác Giả: <strong>DangQuoc</strong>
+              Tài khoản: <strong>${username ? escapeHtml(username) : 'Khách'}</strong> &bull; Vốn ban đầu: <strong>${fmtUSD(initialCapital)}</strong> &bull; Dữ liệu lưu trên thiết bị này &bull; Tác Giả: <strong>DangQuoc</strong>
             </div>
           </div>
           <div class="an-header-actions">
@@ -492,7 +446,7 @@ const AnalyticsModule = (function () {
 
         <!-- Grid Thống Kê Chỉ Số Chuyên Sâu (Quant Metrics Grid) -->
         <div class="an-metrics-grid">
-          
+
           <div class="an-card highlight-card">
             <div class="an-card-label">Tổng Lợi Nhuận Ròng</div>
             <div class="an-card-value ${netClass}">${fmtUSD(metrics.netProfitUSD, true)}</div>
@@ -649,17 +603,17 @@ const AnalyticsModule = (function () {
                   const pnlClass = t.pnlUSD > 0 ? 'an-positive' : (t.pnlUSD < 0 ? 'an-negative' : '');
                   return `
                     <tr>
-                      <td><code>#${t.ticket}</code></td>
+                      <td><code>#${escapeHtml(t.ticket)}</code></td>
                       <td>${formatDateStr(t.closeTime)}</td>
                       <td><strong>${escapeHtml(t.symbol)}</strong></td>
-                      <td><span class="an-badge ${t.type === 'BUY' ? 'buy' : 'sell'}">${t.type}</span></td>
+                      <td><span class="an-badge ${t.type === 'BUY' ? 'buy' : 'sell'}">${escapeHtml(t.type)}</span></td>
                       <td>${t.lots} lot</td>
                       <td>${t.openPrice ? t.openPrice.toFixed(2) : '-'}</td>
                       <td>${t.closePrice ? t.closePrice.toFixed(2) : '-'}</td>
                       <td class="${pnlClass} ms-bold">${fmtUSD(t.pnlUSD, true)}</td>
                       <td><span class="an-source ${t.isBot ? 'bot' : 'manual'}">${t.isBot ? `${getIconSvg('bot', 'margin-right:3px; font-size:11px;')} EA Bot` : `${getIconSvg('manual', 'margin-right:3px; font-size:11px;')} Tay`}</span></td>
                       <td>
-                        <button type="button" class="an-icon-btn remove" data-action="delete" data-ticket="${t.ticket}" title="Xoá lệnh">${getIconSvg('trash', 'font-size:13px;')}</button>
+                        <button type="button" class="an-icon-btn remove" data-action="delete" data-ticket="${escapeHtml(t.ticket)}" title="Xoá lệnh">${getIconSvg('trash', 'font-size:13px;')}</button>
                       </td>
                     </tr>
                   `;
@@ -683,7 +637,7 @@ const AnalyticsModule = (function () {
       b.addEventListener('click', () => { filterTime = b.dataset.filterTime; currentPage = 1; renderMainView(); });
     });
 
-    // Sự kiện phân trang
+    // Phân trang
     container.querySelector('#anPrevPageBtn')?.addEventListener('click', () => {
       if (currentPage > 1) { currentPage--; renderMainView(); }
     });
@@ -719,8 +673,7 @@ const AnalyticsModule = (function () {
     // Delete trade row
     container.querySelectorAll('[data-action="delete"]').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const ticket = btn.dataset.ticket;
-        deleteTrade(ticket);
+        deleteTrade(btn.dataset.ticket);
       });
     });
 
@@ -736,7 +689,7 @@ const AnalyticsModule = (function () {
   }
 
   // ===== THUẬT TOÁN MÔ PHỎNG MONTE CARLO & QUANT RISK =====
-  function runMonteCarloSimulation(tradesList, initialCapital = 10000, numSims = 1000) {
+  function runMonteCarloSimulation(tradesList, startCapital = 10000, numSims = 1000) {
     let pnlArray = [];
     if (tradesList && tradesList.length > 0) {
       pnlArray = tradesList.map((t) => t.pnlUSD);
@@ -754,7 +707,7 @@ const AnalyticsModule = (function () {
     const avgLoss = losses.length ? Math.abs(losses.reduce((a, b) => a + b, 0) / losses.length) : 1;
     const payoffRatio = avgLoss > 0 ? avgWin / avgLoss : 1;
 
-    let kellyFraction = winRate - ((1 - winRate) / payoffRatio);
+    let kellyFraction = winRate - (1 - winRate) / payoffRatio;
     if (isNaN(kellyFraction) || kellyFraction < 0) kellyFraction = 0;
     if (kellyFraction > 0.5) kellyFraction = 0.5;
 
@@ -768,8 +721,8 @@ const AnalyticsModule = (function () {
     const simulatedPaths = [];
 
     for (let s = 0; s < numSims; s++) {
-      let currentEquity = initialCapital;
-      let peak = initialCapital;
+      let currentEquity = startCapital;
+      let peak = startCapital;
       let maxDDUSD = 0;
       let maxDDPct = 0;
       let currentLossStreak = 0;
@@ -838,19 +791,19 @@ const AnalyticsModule = (function () {
     if (p95DDPct > 20) {
       adviceList.push({
         icon: getIconSvg('warning', 'color:var(--red);'),
-        text: `<strong>Rủi ro sụt giảm cao (High Drawdown Risk)</strong>: Ở độ tin cậy 95%, Max Drawdown có thể đạt <strong>-${p95DDPct.toFixed(1)}% (-$${p95DDUSD.toFixed(0)} USD)</strong>. Khuyên dùng: Giảm 30% - 50% khối lượng lot/trade để hạ sụt giảm xuống dưới mức an toàn 15%.`
+        text: `<strong>Rủi ro sụt giảm cao (High Drawdown Risk)</strong>: Ở độ tin cậy 95%, Max Drawdown có thể đạt <strong>-${p95DDPct.toFixed(1)}% (-$${p95DDUSD.toFixed(0)} USD)</strong>. Khuyên dùng: Giảm 30% - 50% khối lượng lot/trade để hạ sụt giảm xuống dưới mức an toàn 15%.`,
       });
     } else {
       adviceList.push({
         icon: getIconSvg('shield', 'color:var(--green);'),
-        text: `<strong>Kiểm soát sụt giảm tốt (Safe Drawdown Profile)</strong>: Kịch bản sụt giảm xấu nhất (95% CI) duy trì ở mức <strong>-${p95DDPct.toFixed(1)}% (-$${p95DDUSD.toFixed(0)} USD)</strong>, nằm trong ngưỡng an toàn chịu đựng của tài khoản.`
+        text: `<strong>Kiểm soát sụt giảm tốt (Safe Drawdown Profile)</strong>: Kịch bản sụt giảm xấu nhất (95% CI) duy trì ở mức <strong>-${p95DDPct.toFixed(1)}% (-$${p95DDUSD.toFixed(0)} USD)</strong>, nằm trong ngưỡng an toàn chịu đựng của tài khoản.`,
       });
     }
 
     if (p95LossStreak >= 4) {
       adviceList.push({
         icon: getIconSvg('dice', 'color:#f2a339;'),
-        text: `<strong>Cảnh báo chuỗi thua ngẫu nhiên (Sequence Risk)</strong>: Mô phỏng ${numSims.toLocaleString()} kịch bản cho thấy khả năng cao tài khoản sẽ đối mặt chuỗi <strong>${p95LossStreak} lệnh thua liên tiếp</strong>. Giữ kỷ luật tuyệt đối, tránh tâm lý trả thù thị trường (Revenge Trading) khi gặp dải chuỗi đỏ này.`
+        text: `<strong>Cảnh báo chuỗi thua ngẫu nhiên (Sequence Risk)</strong>: Mô phỏng ${numSims.toLocaleString()} kịch bản cho thấy khả năng cao tài khoản sẽ đối mặt chuỗi <strong>${p95LossStreak} lệnh thua liên tiếp</strong>. Giữ kỷ luật tuyệt đối, tránh tâm lý trả thù thị trường (Revenge Trading) khi gặp dải chuỗi đỏ này.`,
       });
     }
 
@@ -858,18 +811,18 @@ const AnalyticsModule = (function () {
       const halfKelly = kellyFraction * 0.5;
       adviceList.push({
         icon: getIconSvg('lightbulb', 'color:#3b82f6;'),
-        text: `<strong>Tỷ lệ vị thế Kelly (Kelly Criterion)</strong>: Mức Full Kelly toán học là <strong>${(kellyFraction * 100).toFixed(1)}%</strong>. Khuyên dùng mức <strong>Half-Kelly (${(halfKelly * 100).toFixed(1)}% vốn)</strong> để đạt lợi nhuận tối ưu dài hạn mà không chịu biến động nặng.`
+        text: `<strong>Tỷ lệ vị thế Kelly (Kelly Criterion)</strong>: Mức Full Kelly toán học là <strong>${(kellyFraction * 100).toFixed(1)}%</strong>. Khuyên dùng mức <strong>Half-Kelly (${(halfKelly * 100).toFixed(1)}% vốn)</strong> để đạt lợi nhuận tối ưu dài hạn mà không chịu biến động nặng.`,
       });
     } else {
       adviceList.push({
         icon: getIconSvg('warning', 'color:var(--red);'),
-        text: `<strong>Chiến lược kỳ vọng âm (Negative Expectancy)</strong>: Tỷ lệ Win/Loss hiện tại cho kết quả Kelly ≤ 0. Nên cải thiện điểm vào lệnh (Risk:Reward Ratio ≥ 1.3) trước khi tăng quy mô vốn.`
+        text: `<strong>Chiến lược kỳ vọng âm (Negative Expectancy)</strong>: Tỷ lệ Win/Loss hiện tại cho kết quả Kelly ≤ 0. Nên cải thiện điểm vào lệnh (Risk:Reward Ratio ≥ 1.3) trước khi tăng quy mô vốn.`,
       });
     }
 
     return {
       numSims,
-      initialCapital,
+      initialCapital: startCapital,
       targetTradeCount,
       p50DDUSD, p95DDUSD, p99DDUSD,
       p50DDPct, p95DDPct, p99DDPct,
@@ -878,22 +831,18 @@ const AnalyticsModule = (function () {
       kellyFraction,
       simulatedPaths,
       adviceList,
-      hasRealTrades: tradesList && tradesList.length > 0
+      hasRealTrades: tradesList && tradesList.length > 0,
     };
   }
 
   // ===== KIỂM TRA ĐỘ BỀN VỮNG CHIẾN LƯỢC (TAIL ROBUSTNESS / EDGE CHECK) =====
-  // Ý tưởng: loại bỏ nhóm lệnh thắng lớn nhất (top 0.5% tổng số lệnh - các
-  // "sự kiện đuôi thuận lợi" hiếm khi lặp lại) ra khỏi lịch sử, rồi tính lại
-  // lợi nhuận ròng & Profit Factor trên phần còn lại. Nếu chiến lược VẪN có
-  // lãi sau khi loại bỏ few lệnh ăn may lớn nhất -> lợi thế (edge) là thật,
-  // không phụ thuộc vào vài lệnh may mắn. Đây là kỹ thuật stress-test phổ
-  // biến trong quant trading (tương tự "remove best trade" test).
+  // Loại bỏ nhóm lệnh thắng lớn nhất (top 0.5%) rồi tính lại lợi nhuận ròng
+  // & Profit Factor trên phần còn lại. Nếu VẪN có lãi -> lợi thế (edge) là
+  // thật, không phụ thuộc vài lệnh ăn may ("remove best trade" test).
   function computeTailRobustness(tradesList) {
     if (!Array.isArray(tradesList) || tradesList.length === 0) return null;
 
     const totalTrades = tradesList.length;
-    // Top 0.5% lệnh thắng lớn nhất, tối thiểu lấy 1 lệnh để luôn có ý nghĩa
     const tailCount = Math.max(1, Math.round(totalTrades * 0.005));
 
     const sortedByPnlDesc = [...tradesList].sort((a, b) => b.pnlUSD - a.pnlUSD);
@@ -904,7 +853,6 @@ const AnalyticsModule = (function () {
     const netProfitWithoutTail = totalNetProfit - tailProfitSum;
     const tailContributionPct = totalNetProfit !== 0 ? (tailProfitSum / totalNetProfit) * 100 : 0;
 
-    // Profit Factor tính lại trên phần còn lại (sau khi bỏ nhóm đuôi)
     const remainingTrades = sortedByPnlDesc.slice(tailCount);
     let grossProfit = 0, grossLoss = 0;
     remainingTrades.forEach((t) => {
@@ -922,15 +870,15 @@ const AnalyticsModule = (function () {
       tailContributionPct,
       profitFactorWithoutTail,
       stillProfitable: netProfitWithoutTail > 0,
-      hasEnoughData: totalTrades >= 20
+      hasEnoughData: totalTrades >= 20,
     };
   }
 
-  function runAndRenderMonteCarlo(tradesList, initialCapital = 10000, numSims = 1000) {
+  function runAndRenderMonteCarlo(tradesList, startCapital = 10000, numSims = 1000) {
     const area = document.getElementById('anMcResultsArea');
     if (!area) return;
 
-    const mcData = runMonteCarloSimulation(tradesList, initialCapital, numSims);
+    const mcData = runMonteCarloSimulation(tradesList, startCapital, numSims);
     if (!mcData) return;
 
     const robust = mcData.hasRealTrades ? computeTailRobustness(tradesList) : null;
@@ -1075,7 +1023,7 @@ const AnalyticsModule = (function () {
       });
     });
 
-    const range = (maxEq - minEq) || 100;
+    const range = maxEq - minEq || 100;
     const yMin = minEq - range * 0.08;
     const yMax = maxEq + range * 0.08;
 
@@ -1163,7 +1111,7 @@ const AnalyticsModule = (function () {
 
     const minPnl = Math.min(0, ...points.map((p) => p.cumPnl));
     const maxPnl = Math.max(0, ...points.map((p) => p.cumPnl));
-    const range = (maxPnl - minPnl) || 10;
+    const range = maxPnl - minPnl || 10;
     const yMargin = range * 0.12;
     const yMin = minPnl - yMargin;
     const yMax = maxPnl + yMargin;
@@ -1183,7 +1131,7 @@ const AnalyticsModule = (function () {
       cumPnl: p.cumPnl,
       pnl: p.pnl,
       time: p.time,
-      trade: p.trade
+      trade: p.trade,
     }));
 
     const zeroY = getY(0);
@@ -1212,7 +1160,7 @@ const AnalyticsModule = (function () {
         lineGrad.addColorStop(1, 'rgba(239, 83, 80, 0.01)');
       }
 
-      // 1. Vẽ Area Fill bên dưới đường mượt
+      // 1. Area Fill bên dưới đường mượt
       ctx.beginPath();
       pts.forEach((pt, i) => {
         if (i === 0) ctx.moveTo(pt.x, pt.y);
@@ -1230,7 +1178,7 @@ const AnalyticsModule = (function () {
       ctx.fillStyle = lineGrad;
       ctx.fill();
 
-      // 2. Vẽ Đường Line Mượt (Smooth Path - Không vẽ các chấm lệnh)
+      // 2. Đường Line Mượt
       ctx.beginPath();
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
@@ -1255,11 +1203,10 @@ const AnalyticsModule = (function () {
       ctx.fillText('$0', padding.left - 8, zeroY + 4);
       ctx.fillText('$' + Math.round(minPnl), padding.left - 8, height - padding.bottom);
 
-      // 4. Nếu đang Hover: Vẽ Crosshair + 1 Chấm Nút Độc Nhất tại điểm hover
+      // 4. Hover: Crosshair + 1 chấm tại điểm hover
       if (hoverIdx !== null && pts[hoverIdx]) {
         const target = pts[hoverIdx];
 
-        // Đường dọc crosshair
         ctx.beginPath();
         ctx.strokeStyle = isLight ? 'rgba(0, 0, 0, 0.35)' : 'rgba(255, 255, 255, 0.45)';
         ctx.setLineDash([3, 3]);
@@ -1268,7 +1215,6 @@ const AnalyticsModule = (function () {
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // Vòng tròn điểm chọn
         ctx.beginPath();
         ctx.arc(target.x, target.y, 6, 0, Math.PI * 2);
         ctx.fillStyle = primaryColor;
@@ -1282,10 +1228,9 @@ const AnalyticsModule = (function () {
       }
     }
 
-    // Initial render
     renderChart(null);
 
-    // Xử lý di chuột O(1) cực mượt, không giật lag
+    // Xử lý di chuột O(1), không giật lag
     let rafId = null;
     canvas.onmousemove = (e) => {
       const bbox = canvas.getBoundingClientRect();
@@ -1312,7 +1257,7 @@ const AnalyticsModule = (function () {
           tooltip.style.left = tooltipX + 'px';
           tooltip.style.top = tooltipY + 'px';
           tooltip.innerHTML = `
-            <div><strong>${target.trade ? target.trade.symbol : 'Bắt đầu'}</strong> ${target.trade ? '#' + target.trade.ticket : ''}</div>
+            <div><strong>${target.trade ? escapeHtml(target.trade.symbol) : 'Bắt đầu'}</strong> ${target.trade ? '#' + escapeHtml(target.trade.ticket) : ''}</div>
             <div>PnL Lệnh: <span class="${target.pnl >= 0 ? 'an-positive' : 'an-negative'}">${fmtUSD(target.pnl, true)}</span></div>
             <div>Lợi Nhuận Tích Lũy: <strong>${fmtUSD(target.cumPnl, true)}</strong></div>
             <div style="font-size:10px; opacity:0.75; margin-top:2px;">${formatDateStr(target.time)}</div>
@@ -1328,34 +1273,26 @@ const AnalyticsModule = (function () {
     };
   }
 
-  // ===== XOÁ VÀ XỬ LÝ LỆNH =====
+  // ===== XOÁ VÀ XỬ LÝ LỆNH (LOCAL-FIRST) =====
 
-  // Xóa 1 lệnh: xóa local ngay để UI phản hồi nhanh, nhưng nếu xóa server
-  // thất bại sẽ cảnh báo rõ để tránh lệnh này "tự hồi sinh" ở lần pull sau.
+  // Xoá 1 lệnh: xoá ở máy NGAY + ghi nhớ ticket đã xoá để EA/server không
+  // đưa nó quay lại. Dọn server chỉ là best-effort.
   async function deleteTrade(ticket) {
     if (!ticket) return;
     if (!confirm(`Bạn có chắc chắn muốn xóa lệnh #${ticket} không?`)) return;
 
+    markTicketsDeleted([ticket]);
     trades = trades.filter((t) => String(t.ticket) !== String(ticket));
-    persistLocalTrades({ sync: false });
-
-    const result = await deleteTradeOnServer(ticket);
-    if (!result.ok) {
-      alert(`⚠️ Đã xóa khỏi màn hình, nhưng xóa trên SERVER thất bại (${result.error}).\n\nLệnh #${ticket} có thể tự động hiện lại ở lần mở app sau. Vui lòng kiểm tra kết nối server rồi thử xóa lại.`);
-    }
+    persistLocalTrades();
+    deleteTradeOnServer(ticket); // best-effort, không chờ, không báo lỗi
   }
 
-  // ===== XÓA TOÀN BỘ NHẬT KÝ - ĐÃ SỬA: CHỜ SERVER XÁC NHẬN THẬT SỰ =====
-  // Trước đây: xóa local xong gọi deleteTradeOnServer() không await -> nếu
-  // server lỗi/mất mạng thì dữ liệu cũ vẫn còn nguyên trên server, và
-  // pullTradesFromServer() ở lần mở app kế tiếp sẽ tự động kéo nó về lại,
-  // khiến người dùng thấy lệnh cũ "tự hồi sinh" dù đã bấm Xóa.
-  // Giờ hàm này AWAIT kết quả xóa server trước, báo lỗi rõ ràng nếu thất
-  // bại, và chỉ khi đó người dùng mới biết cần kiểm tra lại server/Worker.
+  // Xoá toàn bộ nhật ký: ghi nhớ MỌI ticket (kể cả lệnh còn nằm trên server
+  // chưa kéo về) để EA gửi lại lịch sử cũ cũng không làm lệnh hồi sinh.
   async function clearAllTrades() {
     if (!confirm(
-      'Bạn có chắc chắn muốn XOÁ TOÀN BỘ nhật ký lệnh của tài khoản này không?\n\n' +
-      'Lưu ý: Nếu EA vẫn đang chạy trên VPS (kể cả trên chart khác), EA sẽ tự động gửi lại toàn bộ lịch sử cũ lên server ngay khi khởi động lại. Hãy gỡ EA khỏi TẤT CẢ các chart trước khi xóa.'
+      'Bạn có chắc chắn muốn XOÁ TOÀN BỘ nhật ký lệnh của tài khoản này trên thiết bị không?\n\n' +
+      'Lệnh cũ mà EA gửi lại sẽ tự bị chặn (đã ghi nhớ). Chỉ lệnh MỚI phát sinh sau đó mới vào nhật ký.'
     )) {
       return;
     }
@@ -1364,30 +1301,33 @@ const AnalyticsModule = (function () {
     const originalHtml = btn ? btn.innerHTML : '';
     if (btn) {
       btn.disabled = true;
-      btn.innerHTML = 'Đang xóa trên server...';
+      btn.innerHTML = 'Đang xóa...';
     }
 
-    // Xóa trên SERVER TRƯỚC, chờ kết quả thật sự
-    const result = await deleteTradeOnServer();
+    const tickets = trades.map((t) => t.ticket);
+    try {
+      const deviceId = getDeviceId();
+      if (deviceId) {
+        const res = await fetch(getApiTradesUrl(`?deviceId=${encodeURIComponent(deviceId)}`));
+        if (res.ok) {
+          const data = await res.json();
+          (data.trades || []).forEach((t) => tickets.push(t.ticket || t.id));
+        }
+      }
+    } catch (e) {
+      // Offline: vẫn xoá local bình thường
+    }
 
-    // Chỉ sau khi biết chắc kết quả server mới xóa local + báo người dùng
+    markTicketsDeleted(tickets.filter(Boolean));
     trades = [];
-    persistLocalTrades({ sync: false });
+    persistLocalTrades();
+    deleteTradeOnServer(); // best-effort dọn server
 
     if (btn) {
       btn.disabled = false;
       btn.innerHTML = originalHtml;
     }
-
-    if (!result.ok) {
-      alert(
-        `❌ XÓA TRÊN SERVER THẤT BẠI: ${result.error}\n\n` +
-        'Dữ liệu trên màn hình đã được xóa, NHƯNG dữ liệu cũ vẫn còn trên server và sẽ tự động hiện lại khi app kết nối lại.\n\n' +
-        'Cách khắc phục: kiểm tra kết nối mạng, kiểm tra route DELETE /api/trades trên Cloudflare Worker (có thể cần "npx wrangler deploy" lại), rồi bấm Xóa nhật ký lần nữa.'
-      );
-    } else {
-      alert('✅ Đã xóa toàn bộ nhật ký lệnh - đã xác nhận xóa thành công trên cả server. Bạn có thể gắn lại EA mới an toàn.');
-    }
+    alert('✅ Đã xóa toàn bộ nhật ký lệnh trên thiết bị này.');
   }
 
   // ===== MODAL THÊM LỆNH TAY MANUAL =====
@@ -1461,22 +1401,22 @@ const AnalyticsModule = (function () {
         pnlUSD,
         closeTime: new Date().toISOString(),
         isBot: false,
-        comment: 'Manual Trade'
+        comment: 'Manual Trade',
       });
 
       trades.unshift(newTrade);
-      persistLocalTrades({ sync: true });
+      persistLocalTrades(); // chỉ lưu trên thiết bị
       backdrop.remove();
     });
   }
 
   // ===== MODAL EA MT5 MQL5 SCRIPT & HƯỚNG DẪN =====
   function openEaModal() {
-    const username = getDeviceId();
+    const username = getDeviceId() || '';
     const appOrigin = window.location.origin || '';
     const isGithub = appOrigin.includes('github.io');
-    let currentServerUrl = (!isGithub && appOrigin.startsWith('http')) 
-      ? appOrigin 
+    const currentServerUrl = (!isGithub && appOrigin.startsWith('http'))
+      ? appOrigin
       : (typeof WORKER_URL !== 'undefined' ? WORKER_URL : 'https://dq-tracker-push.quocngyendanght.workers.dev');
 
     function buildMql5Code(serverUrl) {
@@ -1751,17 +1691,28 @@ void SendJsonPost(string url, string jsonBody, int itemCount)
 }`;
     }
 
+    const guestWarning = username
+      ? ''
+      : `<div style="margin-bottom:10px; padding:8px 12px; background:rgba(242,163,57,0.12); border:1px solid rgba(242,163,57,0.3); border-radius:6px; font-size:12px;">
+           ${getIconSvg('warning', 'color:#f2a339; margin-right:4px;')} Bạn đang ở vai trò <strong>Khách</strong> nên <code>InpDeviceId</code> trong mã bên dưới đang để trống. Hãy <strong>đăng nhập / lập tài khoản</strong> trước để app tự điền tên, và để app kéo được lệnh từ EA về máy.
+         </div>`;
+
     const backdrop = document.createElement('div');
     backdrop.className = 'an-modal-backdrop';
     backdrop.innerHTML = `
       <div class="an-modal large">
         <div class="an-modal-title">${getIconSvg('bot', 'margin-right:6px;')} Mã Nguồn EA MQL5 Cho MT5 VPS &amp; HƯỚNG DẪN ĐỒNG BỘ</div>
-        
+
+        ${guestWarning}
+
         <div style="margin-bottom: 12px; padding: 10px 14px; background: rgba(59, 130, 246, 0.08); border-left: 4px solid #3b82f6; border-radius: 6px;">
           <label style="font-weight:700; font-size: 13px; color: var(--text-color); display:block; margin-bottom: 4px;">🌐 URL Server Backend (Chèn tự động vào MQL5):</label>
-          <input type="text" id="anServerUrlInput" class="an-input" value="${currentServerUrl}" style="width:100%; font-family:monospace; padding: 6px 10px; border: 1px solid var(--border-color); border-radius: 4px; font-size: 13px;" placeholder="https://your-backend-server.com" />
+          <input type="text" id="anServerUrlInput" class="an-input" value="${escapeHtml(currentServerUrl)}" style="width:100%; font-family:monospace; padding: 6px 10px; border: 1px solid var(--border-color); border-radius: 4px; font-size: 13px;" placeholder="https://your-backend-server.com" />
           <div style="font-size:12px; color: var(--text-muted); margin-top:6px; line-height: 1.4;">
             ${getIconSvg('warning', 'color:#f2a339; margin-right:4px;')} <strong>LƯU Ý VỀ LỖI 404:</strong> Nếu bạn đang dùng Cloudflare Worker (<code>dq-tracker-push...</code>) mà MT5 báo <code>Error code: 404</code>, do bạn chưa deploy code mới lên Cloudflare. Bạn cần mở terminal tại máy tính và chạy lệnh: <code style="background:rgba(0,0,0,0.1); padding:2px 6px; border-radius:3px;">cd worker && npx wrangler deploy</code> để cập nhật route <code>/api/trades</code>.
+          </div>
+          <div style="font-size:12px; color: var(--text-muted); margin-top:6px; line-height: 1.4;">
+            ℹ️ Server chỉ đóng vai trò <strong>hộp thư</strong> nhận lệnh từ EA; app sẽ tự kéo lệnh về lưu trên thiết bị của bạn.
           </div>
         </div>
 
@@ -1773,7 +1724,7 @@ void SendJsonPost(string url, string jsonBody, int itemCount)
             <li>Xóa toàn bộ mã mặc định, nhấn nút <strong>${getIconSvg('copy', 'margin-right:2px; font-size:12px;')} Copy Mã MQL5</strong> bên dưới và DÁN vào MetaEditor.</li>
             <li>Nhấn <code>F7</code> (Compile) để biên dịch. Màn hình báo <em>0 errors, 0 warnings</em> là xong.</li>
             <li>Trên giao diện MT5 chính: Vào <code>Tools</code> &rarr; <code>Options</code> &rarr; Chọn tab <code>Expert Advisors</code>.</li>
-            <li>Tích chọn <code>Allow WebRequest for listed URL</code> và thêm URL Server Backend này vào danh sách: <br><code id="anServerUrlDisplay" style="color:var(--accent-blue);font-weight:bold;">${currentServerUrl}</code></li>
+            <li>Tích chọn <code>Allow WebRequest for listed URL</code> và thêm URL Server Backend này vào danh sách: <br><code id="anServerUrlDisplay" style="color:var(--accent-blue);font-weight:bold;">${escapeHtml(currentServerUrl)}</code></li>
             <li>Kéo EA <code>TradingPro_EA_Sync</code> vào 1 biểu đồ bất kỳ và bật <code>Algo Trading</code>.</li>
           </ol>
         </div>
@@ -1783,7 +1734,7 @@ void SendJsonPost(string url, string jsonBody, int itemCount)
           <button type="button" class="an-btn primary" id="anCopyCodeBtn">${getIconSvg('copy', 'margin-right:4px; font-size:13px;')} Copy Mã MQL5</button>
         </div>
 
-        <textarea readonly class="an-code-area" id="anCodeArea" style="height: 220px;">${buildMql5Code(currentServerUrl)}</textarea>
+        <textarea readonly class="an-code-area" id="anCodeArea" style="height: 220px;"></textarea>
 
         <div class="an-modal-actions" style="margin-top:12px;">
           <button type="button" class="an-btn" id="anCloseEaModalBtn">Đóng</button>
@@ -1796,6 +1747,9 @@ void SendJsonPost(string url, string jsonBody, int itemCount)
     const urlInput = backdrop.querySelector('#anServerUrlInput');
     const urlDisplay = backdrop.querySelector('#anServerUrlDisplay');
     const codeArea = backdrop.querySelector('#anCodeArea');
+
+    // Gán qua .value (không nhúng vào HTML) để mã MQL5 chứa < > & không bị trình duyệt hiểu nhầm
+    codeArea.value = buildMql5Code(currentServerUrl);
 
     urlInput.addEventListener('input', () => {
       const val = urlInput.value.trim();
@@ -1829,7 +1783,7 @@ void SendJsonPost(string url, string jsonBody, int itemCount)
   }
 
   function escapeHtml(str) {
-    return String(str || '')
+    return String(str === null || str === undefined ? '' : str)
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
@@ -1902,7 +1856,7 @@ void SendJsonPost(string url, string jsonBody, int itemCount)
     loadLocalTrades();
     loadInitialCapital();
     bindTabs();
-    pullTradesFromServer();
+    pullTradesFromServer(); // chỉ kéo lệnh EA về (nếu đã đăng nhập)
   }
 
   return {
@@ -1910,6 +1864,5 @@ void SendJsonPost(string url, string jsonBody, int itemCount)
     switchView,
     getFilteredTrades,
     pullTradesFromServer,
-    syncTradesToServer
   };
 })();

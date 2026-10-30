@@ -1,3 +1,15 @@
+/**
+ * chart.js
+ * Mỗi pane = 1 instance ChartModule (Lightweight Charts + chỉ báo + breakout
+ * + bộ công cụ vẽ).
+ *
+ * LOCAL-FIRST:
+ *   - Chỉ báo bật/tắt + period: lưu qua IndicatorPrefsModule (localStorage).
+ *   - Hình vẽ: DrawingModule lưu cục bộ THEO TỪNG SYMBOL; chart.js chỉ có
+ *     việc báo cho drawing nạp đúng bộ hình khi pane đổi symbol
+ *     (handleSymbolChangedForDrawing) và lưu nốt khi destroy().
+ *   - Màu theme: đọc từ ThemeModule (cũng lưu cục bộ).
+ */
 const ChartModule = (function () {
   const ENTRY_TO_HIGHER_TF = {
     '2h': '2d',
@@ -11,10 +23,9 @@ const ChartModule = (function () {
     return ENTRY_TO_HIGHER_TF[entryTimeframe] || null;
   }
 
-  // ===== Bảng màu chart theo theme (đợt fix này) =====
   // Lightweight Charts vẽ bằng canvas nên không đọc được biến CSS - màu ở
   // đây phải khớp thủ công với :root / :root[data-theme="light"] trong
-  // css/style.css (--bg-main, --text-primary, grid, border...).
+  // css/style.css.
   const CHART_THEME = {
     dark: {
       background: '#0c0d14',
@@ -76,7 +87,7 @@ const ChartModule = (function () {
       wmaRsi: { label: 'WMA(RSI)', color: '#ef5350', period: 45, enabled: false },
       macdLine: { label: 'MACD Line', color: '#2962ff', period: 12, enabled: false },
       macdSignal: { label: 'MACD Signal', color: '#ff9800', period: 9, enabled: false },
-      macdHist: { label: 'MACD Hist', color: '#26a69a', period: 26, enabled: false }
+      macdHist: { label: 'MACD Hist', color: '#26a69a', period: 26, enabled: false },
     };
 
     const breakout = BreakoutModule.create(paneId);
@@ -135,10 +146,7 @@ const ChartModule = (function () {
       scheduleRecompute(true);
     }
 
-    /**
-     * Áp màu chart (nền/lưới/chữ/viền trục) theo theme hiện tại - gọi lúc
-     * khởi tạo VÀ mỗi khi ThemeModule phát ra 'theme:changed'.
-     */
+    /** Áp màu chart (nền/lưới/chữ/viền trục) theo theme hiện tại. */
     function applyChartTheme(theme) {
       if (!chart) return;
       const c = CHART_THEME[theme] || CHART_THEME.dark;
@@ -161,27 +169,34 @@ const ChartModule = (function () {
       applyChartTheme(theme);
     }
 
+    /** Đổi symbol của pane này -> nạp đúng bộ hình vẽ đã lưu của symbol mới
+     * (hình của symbol cũ được lưu lại trước đó bên trong drawing). */
+    function handleSymbolChangedForDrawing({ paneId: pid, symbol }) {
+      if (pid !== paneId || !drawing) return;
+      drawing.loadForSymbol(symbol);
+    }
+
     function initChart(container) {
-  containerRef = container;
+      containerRef = container;
 
-  const initialTheme = (typeof ThemeModule !== 'undefined' && ThemeModule.getTheme()) || 'dark';
-  const initialColors = CHART_THEME[initialTheme] || CHART_THEME.dark;
+      const initialTheme = (typeof ThemeModule !== 'undefined' && ThemeModule.getTheme()) || 'dark';
+      const initialColors = CHART_THEME[initialTheme] || CHART_THEME.dark;
 
-  chart = LightweightCharts.createChart(container, {
-    autoSize: true, // để thư viện tự resize theo container - xem comment ở setupResize()
-    layout: {
-      background: { type: 'solid', color: initialColors.background },
-      textColor: initialColors.text,
-      panes: { separatorColor: initialColors.border },
-    },
-    grid: {
-      vertLines: { color: initialColors.grid },
-      horzLines: { color: initialColors.grid },
-    },
-    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-    rightPriceScale: { borderColor: initialColors.border },
-    timeScale: { borderColor: initialColors.border, timeVisible: true, secondsVisible: false },
-  });
+      chart = LightweightCharts.createChart(container, {
+        autoSize: true, // để thư viện tự resize theo container
+        layout: {
+          background: { type: 'solid', color: initialColors.background },
+          textColor: initialColors.text,
+          panes: { separatorColor: initialColors.border },
+        },
+        grid: {
+          vertLines: { color: initialColors.grid },
+          horzLines: { color: initialColors.grid },
+        },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+        rightPriceScale: { borderColor: initialColors.border },
+        timeScale: { borderColor: initialColors.border, timeVisible: true, secondsVisible: false },
+      });
 
       candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
         upColor: '#26a69a',
@@ -202,36 +217,20 @@ const ChartModule = (function () {
       });
       volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
 
-       ema21Series = chart.addSeries(
-        LightweightCharts.LineSeries,
-        { color: '#f5c518', lineWidth: 1, title: '', priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: false },
-        0
-      );
-      ema200Series = chart.addSeries(
-        LightweightCharts.LineSeries,
-        { color: '#ff5f5f', lineWidth: 1, title: '', priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: false },
-        0
-      );
-      sma50Series = chart.addSeries(
-        LightweightCharts.LineSeries,
-        { color: '#2962ff', lineWidth: 1, title: '', priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: false },
-        0
-      );
-      bbUpperSeries = chart.addSeries(
-        LightweightCharts.LineSeries,
-        { color: '#26a69a', lineWidth: 1, title: '', priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: false },
-        0
-      );
-      bbMiddleSeries = chart.addSeries(
-        LightweightCharts.LineSeries,
-        { color: '#787b86', lineWidth: 1, title: '', priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: false },
-        0
-      );
-      bbLowerSeries = chart.addSeries(
-        LightweightCharts.LineSeries,
-        { color: '#ef5350', lineWidth: 1, title: '', priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: false },
-        0
-      );
+      const overlayOpts = {
+        lineWidth: 1,
+        title: '',
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+        visible: false,
+      };
+      ema21Series = chart.addSeries(LightweightCharts.LineSeries, { ...overlayOpts, color: '#f5c518' }, 0);
+      ema200Series = chart.addSeries(LightweightCharts.LineSeries, { ...overlayOpts, color: '#ff5f5f' }, 0);
+      sma50Series = chart.addSeries(LightweightCharts.LineSeries, { ...overlayOpts, color: '#2962ff' }, 0);
+      bbUpperSeries = chart.addSeries(LightweightCharts.LineSeries, { ...overlayOpts, color: '#26a69a' }, 0);
+      bbMiddleSeries = chart.addSeries(LightweightCharts.LineSeries, { ...overlayOpts, color: '#787b86' }, 0);
+      bbLowerSeries = chart.addSeries(LightweightCharts.LineSeries, { ...overlayOpts, color: '#ef5350' }, 0);
 
       updatePaneStretchFactors();
 
@@ -258,6 +257,11 @@ const ChartModule = (function () {
           EventBus.emit('pane:drawToolChanged', { paneId });
         },
       });
+
+      // Nạp hình vẽ đã lưu của symbol hiện tại + theo dõi các lần đổi symbol sau.
+      const initPane = Store.getPane(paneId);
+      if (initPane) drawing.loadForSymbol(initPane.symbol);
+      EventBus.on('pane:symbolChanged', handleSymbolChangedForDrawing);
 
       return chart;
     }
@@ -329,23 +333,25 @@ const ChartModule = (function () {
       );
       if (macdLineSeries) macdLineSeries.setData(IndicatorModule.toSeriesData(candles, macd.macd));
       if (macdSignalSeries) macdSignalSeries.setData(IndicatorModule.toSeriesData(candles, macd.signal));
-      
+
       if (macdHistSeries) {
-        const histData = candles.map((c, i) => {
-          const val = macd.hist[i];
-          if (val === null || val === undefined) return null;
-          return {
-            time: c.time,
-            value: val,
-            color: val >= 0 ? 'rgba(38, 166, 154, 0.6)' : 'rgba(239, 83, 80, 0.6)'
-          };
-        }).filter(d => d !== null);
+        const histData = candles
+          .map((c, i) => {
+            const val = macd.hist[i];
+            if (val === null || val === undefined) return null;
+            return {
+              time: c.time,
+              value: val,
+              color: val >= 0 ? 'rgba(38, 166, 154, 0.6)' : 'rgba(239, 83, 80, 0.6)',
+            };
+          })
+          .filter((d) => d !== null);
         macdHistSeries.setData(histData);
       }
     }
 
     /** Lưu lại toàn bộ trạng thái bật/tắt + period của mọi chỉ báo trong
-     * pane này - gọi mỗi khi người dùng bật/tắt hoặc đổi period 1 chỉ báo. */
+     * pane này (cục bộ, theo tài khoản) - gọi mỗi khi bật/tắt hoặc đổi period. */
     function persistIndicatorPrefs() {
       if (typeof IndicatorPrefsModule === 'undefined') return;
       const prefs = {};
@@ -355,9 +361,9 @@ const ChartModule = (function () {
       IndicatorPrefsModule.setPanePrefs(paneId, prefs);
     }
 
-    /** Khôi phục lại chỉ báo đã lưu của pane này - gọi 1 lần sau khi nến
-     * đầu tiên đã tải xong (xem loadInitialData). Đặt period TRƯỚC khi bật
-     * để lần render đầu tiên đã đúng luôn, không phải render lại 2 lần. */
+    /** Khôi phục chỉ báo đã lưu của pane này - gọi sau khi nến đầu tiên đã
+     * tải xong (xem loadInitialData). Đặt period TRƯỚC khi bật để lần render
+     * đầu đã đúng luôn. */
     function restoreIndicatorPrefs() {
       if (typeof IndicatorPrefsModule === 'undefined') return;
       const saved = IndicatorPrefsModule.getPanePrefs(paneId);
@@ -368,6 +374,7 @@ const ChartModule = (function () {
         if (saved[k].enabled) setIndicatorVisible(k, true);
       });
     }
+
     function seriesForKey(key) {
       return {
         ema21: ema21Series,
@@ -381,7 +388,7 @@ const ChartModule = (function () {
         wmaRsi: wmaRsiSeries,
         macdLine: macdLineSeries,
         macdSignal: macdSignalSeries,
-        macdHist: macdHistSeries
+        macdHist: macdHistSeries,
       }[key];
     }
 
@@ -405,15 +412,9 @@ const ChartModule = (function () {
         } else if (pane1Active) {
           f0 = 0.75;
           f1 = 0.25;
-          f2 = 0.0;
         } else if (pane2Active) {
           f0 = 0.75;
-          f1 = 0.0;
           f2 = 0.25;
-        } else {
-          f0 = 1.0;
-          f1 = 0.0;
-          f2 = 0.0;
         }
 
         if (panes[0] && typeof panes[0].setStretchFactor === 'function') panes[0].setStretchFactor(f0);
@@ -430,7 +431,7 @@ const ChartModule = (function () {
       cfg.enabled = visible;
 
       if (visible) {
-        let series = seriesForKey(key);
+        const series = seriesForKey(key);
         if (!series) {
           const fixedRSIRangeProvider = (original) => {
             const originalInfo = original();
@@ -441,15 +442,19 @@ const ChartModule = (function () {
           };
 
           if (key === 'rsi') {
-            rsiSeries = chart.addSeries(LightweightCharts.LineSeries, {
-              color: '#7e57c2',
-              lineWidth: 1.5,
-              title: '',
-              priceLineVisible: false,
-              lastValueVisible: false,
-              crosshairMarkerVisible: false,
-              autoscaleInfoProvider: fixedRSIRangeProvider,
-            }, 1);
+            rsiSeries = chart.addSeries(
+              LightweightCharts.LineSeries,
+              {
+                color: '#7e57c2',
+                lineWidth: 1.5,
+                title: '',
+                priceLineVisible: false,
+                lastValueVisible: false,
+                crosshairMarkerVisible: false,
+                autoscaleInfoProvider: fixedRSIRangeProvider,
+              },
+              1
+            );
             const RSI_REFERENCE_LEVELS = [50, 40, 60, 30, 70];
             RSI_REFERENCE_LEVELS.forEach((level) => {
               rsiSeries.createPriceLine({
@@ -462,50 +467,70 @@ const ChartModule = (function () {
               });
             });
           } else if (key === 'emaRsi') {
-            emaRsiSeries = chart.addSeries(LightweightCharts.LineSeries, {
-              color: '#26a69a',
-              lineWidth: 1.5,
-              title: '',
-              priceLineVisible: false,
-              lastValueVisible: false,
-              crosshairMarkerVisible: false,
-              autoscaleInfoProvider: fixedRSIRangeProvider,
-            }, 1);
+            emaRsiSeries = chart.addSeries(
+              LightweightCharts.LineSeries,
+              {
+                color: '#26a69a',
+                lineWidth: 1.5,
+                title: '',
+                priceLineVisible: false,
+                lastValueVisible: false,
+                crosshairMarkerVisible: false,
+                autoscaleInfoProvider: fixedRSIRangeProvider,
+              },
+              1
+            );
           } else if (key === 'wmaRsi') {
-            wmaRsiSeries = chart.addSeries(LightweightCharts.LineSeries, {
-              color: '#ef5350',
-              lineWidth: 1.5,
-              title: '',
-              priceLineVisible: false,
-              lastValueVisible: false,
-              crosshairMarkerVisible: false,
-              autoscaleInfoProvider: fixedRSIRangeProvider,
-            }, 1);
+            wmaRsiSeries = chart.addSeries(
+              LightweightCharts.LineSeries,
+              {
+                color: '#ef5350',
+                lineWidth: 1.5,
+                title: '',
+                priceLineVisible: false,
+                lastValueVisible: false,
+                crosshairMarkerVisible: false,
+                autoscaleInfoProvider: fixedRSIRangeProvider,
+              },
+              1
+            );
           } else if (key === 'macdLine') {
-            macdLineSeries = chart.addSeries(LightweightCharts.LineSeries, {
-              color: '#2962ff',
-              lineWidth: 1.5,
-              title: '',
-              priceLineVisible: false,
-              lastValueVisible: false,
-              crosshairMarkerVisible: false,
-            }, 2);
+            macdLineSeries = chart.addSeries(
+              LightweightCharts.LineSeries,
+              {
+                color: '#2962ff',
+                lineWidth: 1.5,
+                title: '',
+                priceLineVisible: false,
+                lastValueVisible: false,
+                crosshairMarkerVisible: false,
+              },
+              2
+            );
           } else if (key === 'macdSignal') {
-            macdSignalSeries = chart.addSeries(LightweightCharts.LineSeries, {
-              color: '#ff9800',
-              lineWidth: 1.5,
-              title: '',
-              priceLineVisible: false,
-              lastValueVisible: false,
-              crosshairMarkerVisible: false,
-            }, 2);
+            macdSignalSeries = chart.addSeries(
+              LightweightCharts.LineSeries,
+              {
+                color: '#ff9800',
+                lineWidth: 1.5,
+                title: '',
+                priceLineVisible: false,
+                lastValueVisible: false,
+                crosshairMarkerVisible: false,
+              },
+              2
+            );
           } else if (key === 'macdHist') {
-            macdHistSeries = chart.addSeries(LightweightCharts.HistogramSeries, {
-              color: '#26a69a',
-              title: '',
-              priceLineVisible: false,
-              lastValueVisible: false,
-            }, 2);
+            macdHistSeries = chart.addSeries(
+              LightweightCharts.HistogramSeries,
+              {
+                color: '#26a69a',
+                title: '',
+                priceLineVisible: false,
+                lastValueVisible: false,
+              },
+              2
+            );
           } else {
             const s = seriesForKey(key);
             if (s) s.applyOptions({ visible: true });
@@ -599,7 +624,7 @@ const ChartModule = (function () {
         try {
           candleSeries.removePriceLine(line);
         } catch (err) {
-          // Series có thể đã bị huỷ (destroy) - bỏ qua an toàn.
+          // Series có thể đã bị huỷ - bỏ qua an toàn.
         }
       });
       alertPriceLines = [];
@@ -728,6 +753,8 @@ const ChartModule = (function () {
       EventBus.off('kline:update', handleKlineUpdate);
       EventBus.off('alerts:changed', renderAlertLines);
       EventBus.off('theme:changed', handleThemeChanged);
+      EventBus.off('pane:symbolChanged', handleSymbolChangedForDrawing);
+      if (drawing) drawing.flushSave(); // lưu nốt hình vẽ trước khi huỷ
       if (resizeObserver) resizeObserver.disconnect();
       if (recomputeRafId !== null) {
         cancelAnimationFrame(recomputeRafId);
