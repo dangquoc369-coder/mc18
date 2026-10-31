@@ -1,0 +1,204 @@
+/* =====================================================================
+ * css/draw-flyout.css  -  Bảng chọn công cụ vẽ (flyout) dạng "ô icon"
+ *
+ * NẠP SAU style.css và topbar-landscape.css (xem index.html):
+ *   <link rel="stylesheet" href="css/draw-flyout.css?v=20261031a">
+ *
+ * - Máy tính / iPad : popover 3 cột, ô icon lớn + tên bên dưới
+ * - iPhone (<=600px): bottom sheet trượt từ dưới lên, 3 cột, ô >= 76px
+ * - Không còn cuộn ngang, nhãn dài tự xuống dòng (tối đa 2 dòng)
+ * - Toàn bộ màu dùng biến theme của app nên sáng/tối đều khớp
+ * ===================================================================== */
+
+/* ---------- Khung bảng ---------- */
+.draw-flyout {
+  width: 316px;
+  max-width: calc(100vw - 16px);
+  max-height: min(72vh, 520px);
+  padding: 12px;
+  gap: 14px;
+  border-radius: 14px;
+  background: var(--bg-elevated);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.draw-flyout::-webkit-scrollbar { width: 6px; }
+.draw-flyout::-webkit-scrollbar-thumb { border-radius: 3px; }
+
+/* ---------- Tiêu đề nhóm: chữ nhỏ + đường kẻ mảnh ---------- */
+.draw-flyout-category-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 0 2px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: var(--text-secondary);
+}
+.draw-flyout-category-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-color);
+}
+
+/* ---------- Lưới 3 cột, không bao giờ tràn ngang ---------- */
+.draw-flyout-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+/* ---------- Ô công cụ: icon ở trên, tên ở dưới ---------- */
+.draw-flyout-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  min-width: 0;
+  min-height: 70px;
+  padding: 9px 4px 7px;
+  text-align: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--text-primary);
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease, transform 0.12s ease;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.draw-flyout-item .dfi-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.draw-flyout-item .dfi-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.draw-flyout-item .dfi-label {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  width: 100%;
+  min-height: 2.5em;          /* luôn chừa 2 dòng để các ô thẳng hàng */
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.25;
+  white-space: normal;
+  word-break: break-word;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+/* Hover chỉ áp cho chuột, tránh bị "dính" hover trên iPhone/iPad */
+@media (hover: hover) {
+  .draw-flyout-item:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-color);
+  }
+  .draw-flyout-item:hover .dfi-icon {
+    background: var(--accent-blue-soft);
+    color: var(--accent-blue);
+  }
+}
+.draw-flyout-item:active { transform: scale(0.96); }
+
+/* Công cụ đang chọn */
+.draw-flyout-item.active {
+  background: var(--accent-blue-soft);
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+.draw-flyout-item.active .dfi-icon {
+  background: var(--accent-blue-soft);
+  color: var(--accent-blue);
+}
+.draw-flyout-item.active .dfi-label { font-weight: 600; }
+
+.draw-flyout-item:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 1px;
+}
+
+/* ---------- iPad / tablet cảm ứng: ô to hơn một chút ---------- */
+@media (min-width: 601px) and (max-width: 1100px) and (pointer: coarse) {
+  .draw-flyout { width: 348px; }
+  .draw-flyout-item { min-height: 78px; padding: 10px 4px 8px; }
+  .draw-flyout-item .dfi-icon { width: 40px; height: 40px; }
+  .draw-flyout-item .dfi-icon svg { width: 22px; height: 22px; }
+  .draw-flyout-item .dfi-label { font-size: 11.5px; }
+}
+
+/* ---------- Màn ngang thấp (iPhone xoay ngang): 4 cột cho đỡ phải cuộn ---------- */
+@media (orientation: landscape) and (max-height: 500px) and (min-width: 601px) {
+  .draw-flyout {
+    width: 420px;
+    max-height: 80vh;
+  }
+  .draw-flyout-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .draw-flyout-item { min-height: 62px; padding: 7px 4px 6px; gap: 4px; }
+  .draw-flyout-item .dfi-icon { width: 30px; height: 30px; }
+  .draw-flyout-item .dfi-icon svg { width: 18px; height: 18px; }
+}
+
+/* ---------- iPhone dọc: BOTTOM SHEET ----------
+   !important để thắng toạ độ top/left mà ui.js gán bằng JS */
+@media (max-width: 600px) {
+  .draw-flyout {
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    bottom: 0 !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: 72vh;
+    padding: 16px 12px calc(14px + env(safe-area-inset-bottom, 0px));
+    border-width: 1px 0 0;
+    border-radius: 18px 18px 0 0;
+    box-shadow: 0 -10px 32px rgba(0, 0, 0, 0.35);
+    animation: dq-sheet-in 0.2s ease-out;
+  }
+
+  /* thanh nắm kéo nhỏ ở đầu sheet */
+  .draw-flyout::before {
+    content: '';
+    flex-shrink: 0;
+    align-self: center;
+    width: 38px;
+    height: 4px;
+    margin: -8px 0 -4px;
+    border-radius: 2px;
+    background: var(--border-color);
+  }
+
+  .draw-flyout-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .draw-flyout-item { min-height: 80px; padding: 10px 4px 8px; }
+  .draw-flyout-item .dfi-icon { width: 40px; height: 40px; }
+  .draw-flyout-item .dfi-icon svg { width: 22px; height: 22px; }
+  .draw-flyout-item .dfi-label { font-size: 11.5px; }
+}
+
+@keyframes dq-sheet-in {
+  from { opacity: 0.6; transform: translateY(28px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ---------- Nút công cụ trên thanh điều khiển: dễ chạm hơn trên cảm ứng ---------- */
+@media (pointer: coarse) {
+  #sharedDrawGroup .draw-tool-btn { min-width: 30px; height: 30px; }
+  #sharedDrawGroup .draw-tool-combo-caret { width: 22px !important; }
+}

@@ -1,84 +1,265 @@
 /**
- * drawing.js
- * Bộ công cụ vẽ nâng cao kiểu TradingView cho MỖI pane, độc lập với nhau.
+ * js/drawing.js
+ * Bộ công cụ vẽ kiểu TradingView:
+ *  - Vẽ cả vùng tương lai (logicalIndex), kéo sửa từng điểm neo
+ *  - Floating toolbar nhỏ khi chọn hình (màu / khoá / cài đặt / nhân bản / xoá)
+ *  - Modal cài đặt 3 tab (Style / Coordinates / Visibility), Fib retracement đầy đủ như TradingView
+ *  - NHỚ STYLE THEO TỪNG CÔNG CỤ: mỗi khi chỉnh màu / độ dày / nét đứt / độ mờ / cấu hình Fib...
+ *    của 1 hình thì style đó được lưu lại và tự áp cho các hình mới cùng loại (dùng chung 4 pane,
+ *    lưu cục bộ trong LocalStore khoá 'drawing_tool_styles', nằm trong file sao lưu "Dữ liệu").
  *
- * LOCAL-FIRST (đợt này):
- *   - Hình vẽ được lưu TRỰC TIẾP trên thiết bị (LocalStore), THEO TỪNG SYMBOL
- *     (key 'drawings:<SYMBOL>'): mở lại app hình vẫn còn; 2 ô cùng symbol dùng
- *     chung 1 bộ hình (giống TradingView).
- *   - Ghi xuống máy có debounce 500ms và CHỈ khi dữ liệu thật sự thay đổi;
- *     ghi nốt khi tab ẩn / đóng trang (pagehide, visibilitychange).
- *   - chart.js gọi loadForSymbol(symbol) khi khởi tạo và mỗi khi pane đổi
- *     symbol; flushSave() khi huỷ pane.
- *   - Style mặc định (nút ⭐ trong bảng thuộc tính) cũng được lưu cục bộ.
+ * options:
+ *   onAlertRequested(price), onToolChanged()
+ *   timeframes: ['1m','5m','15m','1h','4h','1d']   (tuỳ chọn, để bật tab Visibility theo khung)
+ *   getTimeframe(): trả về khung hiện tại           (tuỳ chọn)
  *
- * Công cụ hỗ trợ:
- *   Con trỏ, Đường ngang, Đường dọc, Tia ngang, Đường xu hướng, Tia (Ray),
- *   Đường mở rộng, Hình chữ nhật, Hình tròn/Ellipse, Tam giác, Kênh giá song
- *   song, Fib Retracement, Fib Extension, Long/Short Position, Mũi tên,
- *   Chữ/Ghi chú, Cảnh báo giá, Tẩy.
- *
- * KIẾN TRÚC NEO (ANCHOR):
- *   - 1 điểm neo:  hline (giá), vline (thời gian), hray ({time,price})
- *   - 2 điểm neo:  trendline, ray, extendedline, rectangle, circle, arrow,
- *                  fib, long, short
- *   - 3 điểm neo:  triangle, channel, fibextension
- *   Logic kéo-thả để di chuyển hình viết theo NHÓM neo, không viết riêng
- *   từng loại hình.
- *
- * LUỒNG ĐẶT HÌNH 3 ĐIỂM NEO: bước 1-2 giống công cụ 2 điểm (giữ-kéo-nhả),
- * sau đó sang trạng thái pendingThirdPoint: hình xem trước bám theo con
- * trỏ/ngón tay, cú CHẠM/CLICK tiếp theo chốt điểm neo thứ 3.
- *
- * Cơ chế mobile (offset crosshair khỏi ngón tay, "giữ tay để chỉnh - nhấc
- * tay để đặt", tự quay về Con trỏ sau khi vẽ xong...) được giữ nguyên.
+ * API tĩnh (DrawingModule):
+ *   create(...), getToolStyle(type), resetToolStyles(type?)
+ * Sự kiện: window 'drawing:styleChanged' khi kho style thay đổi.
  */
 
 const DrawingModule = (function () {
-  const TOUCH_CROSSHAIR_OFFSET = 40; // px - đẩy điểm vẽ lên trên khỏi ngón tay
-  const EXTEND_FACTOR = 60; // hệ số "kéo dài vô tận" cho Tia/Đường mở rộng
+  const TOUCH_CROSSHAIR_OFFSET = 40;
+  const EXTEND_FACTOR = 60;
   const SAVE_DEBOUNCE_MS = 500;
+  const HANDLE_RADIUS = 5;
 
-  // Công cụ chỉ cần 1 điểm neo để đặt hình (không cần kéo)
   const SINGLE_ANCHOR_TOOLS = ['hline', 'vline', 'hray'];
-  // Công cụ cần 2 điểm neo
   const TWO_ANCHOR_TOOLS = ['trendline', 'ray', 'extendedline', 'rectangle', 'circle', 'arrow', 'fib', 'long', 'short'];
-  // Công cụ cần 3 điểm neo
   const THREE_ANCHOR_TOOLS = ['triangle', 'channel', 'fibextension'];
-  // Các loại hình cho phép bật/tắt nét đứt trong bảng công cụ
   const DASHED_STYLE_TOOLS = ['hline', 'vline', 'hray', 'trendline', 'ray', 'extendedline', 'rectangle', 'circle', 'triangle', 'arrow', 'channel'];
 
   const TOOL_DISPLAY_NAMES = {
     hline: 'Đường ngang', vline: 'Đường dọc', hray: 'Tia ngang',
     trendline: 'Đường xu hướng', ray: 'Tia (Ray)', extendedline: 'Đường mở rộng',
     rectangle: 'Hình chữ nhật', circle: 'Hình tròn / Ellipse', triangle: 'Tam giác',
-    channel: 'Kênh giá song song', fib: 'Fibonacci Retracement', fibextension: 'Fibonacci Extension',
+    channel: 'Kênh giá song song', fib: 'Fib retracement', fibextension: 'Fib extension',
     long: 'Lệnh Long', short: 'Lệnh Short', arrow: 'Mũi tên', text: 'Ghi chú',
   };
 
-  const PRESET_COLORS = ['#f2a339', '#22c9a0', '#ff5a67', '#2962ff', '#d1a53d', '#7e57c2', '#ffffff'];
+  // Danh sách mức Fib giống TradingView (xếp 2 cột, đọc từ trái sang phải)
+  const DEFAULT_FIB_LEVELS = [
+    { level: 0, color: '#787b86', enabled: true },
+    { level: 0.236, color: '#f23645', enabled: true },
+    { level: 0.382, color: '#ff9800', enabled: true },
+    { level: 0.5, color: '#4caf50', enabled: true },
+    { level: 0.618, color: '#089981', enabled: true },
+    { level: 0.786, color: '#00bcd4', enabled: true },
+    { level: 1, color: '#787b86', enabled: true },
+    { level: 1.618, color: '#2962ff', enabled: true },
+    { level: 2.618, color: '#f23645', enabled: false },
+    { level: 3.618, color: '#9c27b0', enabled: false },
+    { level: 4.236, color: '#e91e63', enabled: false },
+    { level: 1.272, color: '#81c784', enabled: false },
+    { level: 1.414, color: '#f23645', enabled: false },
+    { level: 2.272, color: '#81c784', enabled: false },
+    { level: 2.414, color: '#2962ff', enabled: false },
+    { level: 2, color: '#00bcd4', enabled: false },
+    { level: 3, color: '#ff9800', enabled: false },
+    { level: 3.272, color: '#4caf50', enabled: false },
+    { level: 3.414, color: '#9c27b0', enabled: false },
+    { level: 4, color: '#f23645', enabled: false },
+    { level: 4.272, color: '#e91e63', enabled: false },
+    { level: 4.414, color: '#ff9800', enabled: false },
+    { level: 4.618, color: '#089981', enabled: false },
+    { level: 4.764, color: '#2962ff', enabled: false },
+  ];
+
+  const FIB_DEFAULTS = {
+    showTrendline: true,
+    trendColor: '#787b86',
+    trendStyle: 'dashed',
+    levelsWidth: 1,
+    levelsStyle: 'solid',
+    extend: 'none',            // none | left | right | both
+    bg: true,
+    bgOpacity: 0.15,
+    reverse: false,
+    showPrices: true,
+    showLevels: true,
+    levelsMode: 'values',      // values | percents
+    labelH: 'left',            // left | right
+    labelV: 'top',             // top | middle | bottom
+    showText: false,
+    text: '',
+    textH: 'center',
+    textV: 'middle',
+    fontSize: 10,
+    levels: DEFAULT_FIB_LEVELS,
+  };
+
+  const LINE_STYLES = [['solid', 'Nét liền'], ['dashed', 'Nét đứt'], ['dotted', 'Chấm']];
+
+  const ICON = {
+    lock: '<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>',
+    unlock: '<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/></svg>',
+    gear: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1"/></svg>',
+    copy: '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg>',
+    grip: '<svg viewBox="0 0 24 24" class="grip"><circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/></svg>',
+    dashed: '<svg viewBox="0 0 24 24"><path d="M3 12h4M10 12h4M17 12h4"/></svg>',
+    solid: '<svg viewBox="0 0 24 24"><path d="M3 12h18"/></svg>',
+    trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
+    star: '<svg viewBox="0 0 24 24"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg>',
+    check: '<svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>',
+  };
+
+
+const DTV_CSS = `
+.dtv-tb{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:100;display:flex;align-items:center;gap:2px;padding:4px 6px;background:#1e222d;border:1px solid rgba(255,255,255,.14);border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,.5);color:#d1d4dc;user-select:none;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.dtv-tb-grip{width:18px;height:28px;display:flex;align-items:center;justify-content:center;cursor:grab;color:#6a6d78}
+.dtv-tb-grip:active{cursor:grabbing}
+.dtv-tb-grip svg{width:14px;height:14px;fill:currentColor;stroke:none}
+.dtv-tb-sep{width:1px;height:20px;background:rgba(255,255,255,.14);margin:0 4px}
+.dtv-tb-btn{background:transparent;border:none;color:#b2b5be;width:30px;height:30px;border-radius:5px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.dtv-tb-btn svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.dtv-tb-btn:hover{background:rgba(255,255,255,.1);color:#fff}
+.dtv-tb-btn.active{color:#2962ff;background:rgba(41,98,255,.16)}
+.dtv-tb-color{position:relative;width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:5px;cursor:pointer}
+.dtv-tb-color:hover{background:rgba(255,255,255,.1)}
+.dtv-tb-color input{width:18px;height:18px;padding:0;border:2px solid #fff;border-radius:50%;background:transparent;cursor:pointer}
+.dtv-tb-select{background:transparent;border:none;color:#d1d4dc;font-size:12px;padding:5px 2px;border-radius:5px;cursor:pointer;outline:none}
+.dtv-tb-select:hover{background:rgba(255,255,255,.1)}
+.dtv-tb-select option{background:#1e222d;color:#d1d4dc}
+
+.dtv-modal-backdrop{position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.65);z-index:99999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+.dtv-modal{width:480px;max-width:94vw;background:#1e222d;border:1px solid rgba(255,255,255,.12);border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.7);display:flex;flex-direction:column;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#f0f3f8}
+.dtv-modal-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid rgba(255,255,255,.08)}
+.dtv-modal-title{font-size:16px;font-weight:600;color:#fff}
+.dtv-modal-close{background:transparent;border:none;color:#9aa3b8;cursor:pointer;font-size:22px;width:28px;height:28px;border-radius:4px}
+.dtv-modal-close:hover{background:rgba(255,255,255,.1);color:#fff}
+.dtv-modal-tabs{display:flex;gap:24px;padding:0 20px;border-bottom:1px solid rgba(255,255,255,.08)}
+.dtv-modal-tab{background:transparent;border:none;color:#9aa3b8;padding:12px 0;font-size:14px;font-weight:500;cursor:pointer;position:relative}
+.dtv-modal-tab.active{color:#fff}
+.dtv-modal-tab.active::after{content:'';position:absolute;bottom:-1px;left:0;width:100%;height:2px;background:#2962ff}
+.dtv-modal-body{padding:20px;max-height:62vh;overflow-y:auto}
+.dtv-modal .tab-pane{display:flex;flex-direction:column;gap:14px}
+.dtv-modal-row{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px}
+.dtv-modal-sep{height:1px;background:rgba(255,255,255,.08)}
+.dtv-modal-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
+.dtv-ctrls{display:flex;align-items:center;gap:8px}
+.dtv-check{display:flex;align-items:center;gap:8px;cursor:pointer}
+.dtv-check input[type=checkbox],.dtv-fib-item input[type=checkbox]{width:16px;height:16px;cursor:pointer;accent-color:#2962ff}
+.dtv-mini{display:flex;align-items:center;gap:6px;font-size:12px;color:#9aa3b8}
+.dtv-select,.dtv-input{background:#12151c;border:1px solid rgba(255,255,255,.18);border-radius:6px;color:#fff;padding:5px 8px;font-size:12px;outline:none}
+.dtv-select:focus,.dtv-input:focus{border-color:#2962ff}
+.dtv-input[type=number]{width:96px;font-family:monospace}
+.dtv-color{width:32px;height:26px;padding:0;border:none;background:transparent;cursor:pointer;border-radius:4px}
+.dtv-range{width:150px;accent-color:#2962ff;cursor:pointer}
+.dtv-fib-item{display:flex;align-items:center;gap:8px}
+.dtv-fib-item input[type=number]{width:70px;background:#12151c;border:1px solid rgba(255,255,255,.15);border-radius:4px;color:#fff;padding:4px 6px;font-size:12px;font-family:monospace}
+.dtv-fib-item input[type=color]{width:26px;height:26px;padding:0;border:none;background:transparent;cursor:pointer;border-radius:3px}
+.dtv-modal-footer{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-top:1px solid rgba(255,255,255,.08);background:#161a25}
+.dtv-modal-btn-group{display:flex;gap:10px}
+.dtv-modal-btn{padding:8px 18px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;border:none}
+.dtv-modal-btn.cancel{background:transparent;color:#9aa3b8;border:1px solid rgba(255,255,255,.2)}
+.dtv-modal-btn.cancel:hover{background:rgba(255,255,255,.08);color:#fff}
+.dtv-modal-btn.primary{background:#2962ff;color:#fff}
+.dtv-modal-btn.primary:hover{background:#1e4bd8}
+`;
+
+function ensureStyles() {
+  if (document.getElementById('dtv-styles')) return;
+  const st = document.createElement('style');
+  st.id = 'dtv-styles';
+  st.textContent = DTV_CSS;
+  document.head.appendChild(st);
+}
 
   const hasLocalStore = () => typeof LocalStore !== 'undefined';
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+  const hex6 = (c, fb) => (/^#[0-9a-fA-F]{6}$/.test(c || '') ? c : fb || '#f2a339');
+  const esc = (v) => String(v === undefined || v === null ? '' : v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  const dashFor = (style) => (style === 'dashed' ? [6, 4] : style === 'dotted' ? [2, 3] : []);
+
+  function selectHTML(id, options, cur) {
+    return `<select id="${id}" class="dtv-select">${options
+      .map(([v, l]) => `<option value="${v}" ${String(v) === String(cur) ? 'selected' : ''}>${l}</option>`)
+      .join('')}</select>`;
+  }
+
+  // ===================== KHO STYLE NHỚ THEO CÔNG CỤ (DÙNG CHUNG CẢ 4 PANE) =====================
+  // Dạng: { trendline: {color,width,dashed,opacity}, fib: {...cấu hình Fib...}, long: {..., rr}, ... }
+  const TOOL_STYLES_KEY = 'drawing_tool_styles';
+  const STYLE_KEYS = ['color', 'width', 'dashed', 'opacity', 'rr'];
+  // Chữ ghi chú của Fib là riêng từng hình nên không nhớ
+  const FIB_KEYS = Object.keys(FIB_DEFAULTS).filter((k) => k !== 'text');
+  let toolStyles = null;
+
+  function getToolStyles() {
+    if (!toolStyles) {
+      const saved = hasLocalStore() ? LocalStore.read(TOOL_STYLES_KEY, null) : null;
+      toolStyles = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+      // Chuyển template Fib kiểu cũ (nếu có)
+      if (!toolStyles.fib && hasLocalStore()) {
+        const old = LocalStore.read('drawing_fib_template', null);
+        if (old && typeof old === 'object' && Object.keys(old).length) {
+          delete old.text;
+          toolStyles.fib = old;
+        }
+      }
+    }
+    return toolStyles;
+  }
+
+  function notifyStyleChanged() {
+    try {
+      window.dispatchEvent(new CustomEvent('drawing:styleChanged'));
+    } catch (e) { /* bỏ qua */ }
+  }
+
+  function saveToolStyles() {
+    if (hasLocalStore()) LocalStore.write(TOOL_STYLES_KEY, getToolStyles());
+    notifyStyleChanged();
+  }
+
+  /** Bản sao style đã nhớ của 1 công cụ ({} nếu chưa có). */
+  function styleOf(type) {
+    return clone(getToolStyles()[type] || {});
+  }
+
+  /** Ghi nhớ style hiện tại của hình d làm mặc định cho công cụ cùng loại. */
+  function rememberStyle(d) {
+    if (!d || !d.type) return;
+    const s = {};
+    (d.type === 'fib' ? FIB_KEYS : STYLE_KEYS).forEach((k) => {
+      if (d[k] !== undefined) s[k] = clone(d[k]);
+    });
+    getToolStyles()[d.type] = s;
+    saveToolStyles();
+  }
+
+  function setToolStyle(type, obj) {
+    getToolStyles()[type] = obj;
+    saveToolStyles();
+  }
+
+  /** Xoá style đã nhớ: của 1 công cụ (có type) hoặc của tất cả (không truyền). */
+  function resetToolStyles(type) {
+    if (type) delete getToolStyles()[type];
+    else toolStyles = {};
+    saveToolStyles();
+  }
 
   function create(paneId, chart, candleSeries, container, options = {}) {
-    const { onAlertRequested, onToolChanged } = options;
+    const { onAlertRequested, onToolChanged, timeframes, getTimeframe } = options;
+    ensureStyles();
 
-    let currentTool = 'cursor'; // cursor | hline | vline | hray | trendline | ray | extendedline | rectangle | circle | triangle | channel | fib | fibextension | long | short | arrow | text | eraser | alert
+    let currentTool = 'cursor';
     let drawings = [];
 
-    // Style mặc định áp cho MỌI hình vẽ mới tạo - lưu cục bộ.
     let defaultStyle = (hasLocalStore() && LocalStore.read('drawing_default_style', null)) || { color: null, width: 1.5 };
 
-    // Ẩn/hiện TOÀN BỘ hình vẽ của pane này bằng 1 nút (icon 👁).
     let allDrawingsHidden = false;
     let dragStart = null;
     let previewDrawing = null;
-    let hoverPoint = null; // { x, y, price }
-    let touchRawPoint = null; // { x, y } - vị trí NGÓN TAY thật (chưa đẩy)
-    let pendingTouchPlacement = null; // 'hline' | 'vline' | 'hray' | 'alert' | 'text'
-    let pendingThirdPoint = null; // { type, p1, p2, ... } đang chờ điểm neo thứ 3
+    let hoverPoint = null;
+    let touchRawPoint = null;
+    let pendingTouchPlacement = null;
+    let pendingThirdPoint = null;
 
     let isDraggingShape = false;
+    let isDraggingHandle = false;
+    let draggedHandleName = null;
     let draggedDrawingIndex = null;
     let draggedDrawingOriginal = null;
     let dragStartPixel = null;
@@ -86,19 +267,30 @@ const DrawingModule = (function () {
     let hoveredDrawingIndex = null;
     let selectedDrawingIndex = null;
     let toolbarEl = null;
+    let toolStartCount = 0;
 
-    // ===== Lưu cục bộ =====
     let currentSymbol = null;
     let saveTimer = null;
     let lastSavedStr = '[]';
 
-    // Đảm bảo container có vị trí tương đối
+    /** Tạo hình mới: mặc định chung -> mặc định riêng của loại -> style đã nhớ của công cụ. */
+    function newDrawing(type, geom, base = {}) {
+      return {
+        type,
+        ...geom,
+        color: defaultStyle.color,
+        width: defaultStyle.width,
+        ...base,
+        ...styleOf(type),
+      };
+    }
+
     const computed = window.getComputedStyle(container);
     if (computed.position === 'static') container.style.position = 'relative';
 
     const canvas = document.createElement('canvas');
     canvas.className = 'draw-canvas';
-    canvas.style.touchAction = 'none'; // chặn cuộn trang khi đang kéo vẽ trên mobile
+    canvas.style.touchAction = 'none';
     container.appendChild(canvas);
     const ctx = canvas.getContext('2d');
 
@@ -113,32 +305,45 @@ const DrawingModule = (function () {
       redraw();
     }
 
-    function timeToX(time) {
-      return chart.timeScale().timeToCoordinate(time);
+    // ===================== CHUYỂN ĐỔI TỌA ĐỘ (hỗ trợ vùng tương lai) =====================
+    function pointToX(p) {
+      if (!p) return null;
+      const timeScale = chart.timeScale();
+      if (p.logicalIndex !== undefined && p.logicalIndex !== null) {
+        return timeScale.logicalToCoordinate(p.logicalIndex);
+      }
+      if (p.time !== undefined && p.time !== null) {
+        const x = timeScale.timeToCoordinate(p.time);
+        if (x !== null) return x;
+      }
+      return null;
     }
+
     function priceToY(price) {
       return candleSeries.priceToCoordinate(price);
     }
-    function xToTime(x) {
-      return chart.timeScale().coordinateToTime(x);
+
+    function xToPointInfo(x) {
+      const timeScale = chart.timeScale();
+      return { logicalIndex: timeScale.coordinateToLogical(x), time: timeScale.coordinateToTime(x) };
     }
+
     function yToPrice(y) {
       return candleSeries.coordinateToPrice(y);
     }
 
-    // ===================== LƯU / NẠP HÌNH VẼ CỤC BỘ =====================
+    // ===================== LƯU / NẠP HÌNH VẼ =====================
     function drawingsKey(sym) {
       return 'drawings:' + sym;
     }
 
-    /** Ghi ngay xuống máy (nếu dữ liệu đã đổi so với lần ghi gần nhất). */
     function flushSave() {
       clearTimeout(saveTimer);
       saveTimer = null;
       if (!currentSymbol || !hasLocalStore()) return;
       const str = JSON.stringify(drawings);
-      if (str === lastSavedStr) return; // không đổi -> không ghi
-      LocalStore.write(drawingsKey(currentSymbol), drawings); // ghi cả mảng rỗng (để "xoá hết" cũng được nhớ)
+      if (str === lastSavedStr) return;
+      LocalStore.write(drawingsKey(currentSymbol), drawings);
       lastSavedStr = str;
     }
 
@@ -147,10 +352,7 @@ const DrawingModule = (function () {
       saveTimer = setTimeout(flushSave, SAVE_DEBOUNCE_MS);
     }
 
-    /** Chuyển sang bộ hình vẽ của 1 symbol (lưu bộ của symbol cũ trước). */
-    function loadForSymbol(symbol) {
-      flushSave();
-      currentSymbol = symbol || null;
+    function resetInteractionState() {
       selectedDrawingIndex = null;
       hoveredDrawingIndex = null;
       hideToolbar();
@@ -159,40 +361,37 @@ const DrawingModule = (function () {
       pendingThirdPoint = null;
       pendingTouchPlacement = null;
       isDraggingShape = false;
+      isDraggingHandle = false;
       draggedDrawingIndex = null;
       draggedDrawingOriginal = null;
       dragStartPixel = null;
+    }
 
+    function loadForSymbol(symbol) {
+      flushSave();
+      currentSymbol = symbol || null;
+      resetInteractionState();
       const saved = currentSymbol && hasLocalStore() ? LocalStore.read(drawingsKey(currentSymbol), []) : [];
       drawings = Array.isArray(saved) ? saved : [];
       lastSavedStr = JSON.stringify(drawings);
       redraw();
     }
 
-    // Lưu nốt khi người dùng rời trang / chuyển app nền (đặc biệt quan trọng trên iOS)
     window.addEventListener('pagehide', flushSave);
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') flushSave();
     });
 
-    /** Màu chữ mặc định theo theme hiện tại. */
     function getThemeTextColor() {
       const theme = (typeof ThemeModule !== 'undefined' && ThemeModule.getTheme()) || 'dark';
       return theme === 'light' ? '#12151c' : '#e6e9f0';
     }
 
-    /** Màu viền halo vẽ NGAY DƯỚI chữ để chữ luôn đọc rõ. */
     function getThemeHaloColor() {
       const theme = (typeof ThemeModule !== 'undefined' && ThemeModule.getTheme()) || 'dark';
       return theme === 'light' ? '#ffffff' : '#0c0d14';
     }
 
-    /**
-     * Toạ độ màn hình (px trong canvas) của 1 sự kiện con trỏ. Trên CẢM ỨNG
-     * và khi đang ở 1 công cụ VẼ (không phải 'cursor'), y được đẩy lên
-     * TOUCH_CROSSHAIR_OFFSET px để điểm sẽ vẽ không bị ngón tay che mất.
-     * KHÔNG áp dụng cho tool 'cursor' (cần chạm ĐÚNG vào hình).
-     */
     function getScreenXY(e) {
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
@@ -209,12 +408,11 @@ const DrawingModule = (function () {
       canvas.style.pointerEvents = isInteractive ? 'auto' : 'none';
       canvas.style.cursor = isInteractive ? 'crosshair' : 'default';
       if (isInteractive) {
+        toolStartCount = drawings.length;
         selectedDrawingIndex = null;
         hideToolbar();
-        // Đang "Ẩn tất cả" mà chọn công cụ vẽ mới (khác Tẩy) -> tự hiện lại.
         if (allDrawingsHidden && tool !== 'eraser') allDrawingsHidden = false;
       }
-      // Đổi tool huỷ mọi thao tác dở dang.
       dragStart = null;
       previewDrawing = null;
       pendingThirdPoint = null;
@@ -222,10 +420,15 @@ const DrawingModule = (function () {
       redraw();
     }
 
-    /** Sau khi vẽ xong 1 hình / đặt xong cảnh báo / ghi chú -> TỰ ĐỘNG quay
-     * về "Con trỏ" (chỉ Tẩy ở lại chế độ liên tục). */
     function returnToCursorAfterDraw() {
+      const created = drawings.length > toolStartCount;
       setTool('cursor');
+      if (created) {
+        // Giống TradingView: vẽ xong thì chọn luôn hình đó và hiện toolbar cài đặt
+        selectedDrawingIndex = drawings.length - 1;
+        showToolbar(selectedDrawingIndex);
+        redraw();
+      }
       if (typeof onToolChanged === 'function') onToolChanged();
     }
 
@@ -241,21 +444,24 @@ const DrawingModule = (function () {
       return { width: rect.width, height: rect.height };
     }
 
+    function isVisibleNow(d) {
+      if (!Array.isArray(d.tfs) || typeof getTimeframe !== 'function') return true;
+      return d.tfs.includes(getTimeframe());
+    }
+
     function drawHandle(x, y) {
       if (x === null || y === null || x === undefined || y === undefined) return;
       ctx.save();
       ctx.beginPath();
-      ctx.arc(x, y, 4.5, 0, 2 * Math.PI);
+      ctx.arc(x, y, HANDLE_RADIUS, 0, 2 * Math.PI);
       ctx.fillStyle = '#ffffff';
       ctx.fill();
-      ctx.strokeStyle = '#f2a339';
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = '#2962ff';
+      ctx.lineWidth = 2;
       ctx.stroke();
       ctx.restore();
     }
 
-    /** Điểm mở rộng theo hướng (x1,y1)->(x2,y2) ra xa gấp `factor` lần -
-     * canvas tự cắt phần ngoài khung nhìn nên không cần clip chính xác. */
     function extendPointBeyond(x1, y1, x2, y2, factor) {
       return { x: x1 + (x2 - x1) * factor, y: y1 + (y2 - y1) * factor };
     }
@@ -278,11 +484,13 @@ const DrawingModule = (function () {
       const { width, height } = getRect();
       ctx.clearRect(0, 0, width, height);
       if (!allDrawingsHidden) {
-        drawings.forEach((d, idx) => drawShape(d, false, idx));
+        drawings.forEach((d, idx) => {
+          if (isVisibleNow(d)) drawShape(d, false, idx);
+        });
       }
       if (previewDrawing) drawShape(previewDrawing, true);
       drawCrosshair();
-      scheduleSave(); // debounce 500ms, chỉ ghi khi dữ liệu thật sự đổi
+      scheduleSave();
     }
 
     function toRGBA(baseColor, alpha) {
@@ -296,6 +504,117 @@ const DrawingModule = (function () {
       return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     }
 
+    // ===================== FIB RETRACEMENT =====================
+    // Giống TradingView: mức 0 nằm ở điểm 2 (điểm thả), mức 1 ở điểm 1. "Reverse" đảo ngược lại.
+    function computeFib(d, isPreview) {
+      const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
+      const x2 = pointToX(d.p2), y2 = priceToY(d.p2.price);
+      if ([x1, y1, x2, y2].some((v) => v === null || v === undefined)) return null;
+
+      const cfg = { ...FIB_DEFAULTS, ...(isPreview ? styleOf('fib') : {}), ...d };
+      const { width } = getRect();
+      let xl = Math.min(x1, x2), xr = Math.max(x1, x2);
+      if (cfg.extend === 'left' || cfg.extend === 'both') xl = 0;
+      if (cfg.extend === 'right' || cfg.extend === 'both') xr = width;
+
+      const pA = d.p1.price, pB = d.p2.price;
+      const priceAt = (lvl) => (cfg.reverse ? pA + lvl * (pB - pA) : pB + lvl * (pA - pB));
+
+      const rows = [];
+      (cfg.levels || [])
+        .filter((l) => l && l.enabled && Number.isFinite(l.level))
+        .sort((a, b) => a.level - b.level)
+        .forEach((l) => {
+          const price = priceAt(l.level);
+          const y = priceToY(price);
+          if (y !== null && y !== undefined) rows.push({ lvl: l.level, price, y, color: hex6(l.color, '#787b86') });
+        });
+
+      return { cfg, x1, y1, x2, y2, xl, xr, rows };
+    }
+
+    function drawFib(g) {
+      const { cfg, x1, y1, x2, y2, xl, xr, rows } = g;
+      const { width } = getRect();
+      const fs = Number(cfg.fontSize) || 10;
+      ctx.shadowBlur = 0;
+
+      // Nền giữa các mức
+      if (cfg.bg) {
+        for (let i = 0; i < rows.length - 1; i++) {
+          ctx.fillStyle = toRGBA(rows[i + 1].color, cfg.bgOpacity);
+          ctx.fillRect(xl, Math.min(rows[i].y, rows[i + 1].y), xr - xl, Math.abs(rows[i + 1].y - rows[i].y));
+        }
+      }
+
+      // Đường xu hướng nối 2 điểm
+      if (cfg.showTrendline) {
+        ctx.strokeStyle = hex6(cfg.trendColor, '#787b86');
+        ctx.lineWidth = 1;
+        ctx.setLineDash(dashFor(cfg.trendStyle));
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+      }
+
+      // Đường các mức
+      ctx.lineWidth = Number(cfg.levelsWidth) || 1;
+      ctx.setLineDash(dashFor(cfg.levelsStyle));
+      rows.forEach((r) => {
+        ctx.strokeStyle = r.color;
+        ctx.beginPath();
+        ctx.moveTo(xl, r.y);
+        ctx.lineTo(xr, r.y);
+        ctx.stroke();
+      });
+      ctx.setLineDash([]);
+
+      // Nhãn
+      ctx.font = `${fs}px sans-serif`;
+      ctx.textBaseline = 'alphabetic';
+      rows.forEach((r) => {
+        const parts = [];
+        if (cfg.showLevels) {
+          parts.push(cfg.levelsMode === 'percents' ? (r.lvl * 100).toFixed(1).replace(/\.0$/, '') + '%' : String(r.lvl));
+        }
+        if (cfg.showPrices) parts.push(cfg.showLevels ? `(${formatPrice(r.price)})` : formatPrice(r.price));
+        if (!parts.length) return;
+        const label = parts.join(' ');
+        const w = ctx.measureText(label).width;
+
+        let lx, align;
+        if (cfg.labelH === 'right') {
+          lx = xr + 6; align = 'left';
+          if (lx + w > width) { lx = xr - 4; align = 'right'; }
+        } else {
+          lx = xl - 6; align = 'right';
+          if (lx - w < 0) { lx = xl + 4; align = 'left'; }
+        }
+        const ly = cfg.labelV === 'middle' ? r.y + fs * 0.35 : cfg.labelV === 'bottom' ? r.y + fs + 2 : r.y - 3;
+
+        ctx.textAlign = align;
+        ctx.fillStyle = r.color;
+        ctx.fillText(label, lx, ly);
+      });
+
+      // Chữ ghi chú trên hình
+      if (cfg.showText && cfg.text) {
+        const ys = rows.map((r) => r.y).concat([y1, y2]);
+        const minY = Math.min(...ys), maxY = Math.max(...ys);
+        let tx, align;
+        if (cfg.textH === 'left') { tx = xl + 6; align = 'left'; }
+        else if (cfg.textH === 'right') { tx = xr - 6; align = 'right'; }
+        else { tx = (xl + xr) / 2; align = 'center'; }
+        const ty = cfg.textV === 'top' ? minY + fs + 4 : cfg.textV === 'bottom' ? maxY - 6 : (minY + maxY) / 2 + fs * 0.35;
+        ctx.textAlign = align;
+        ctx.fillStyle = getThemeTextColor();
+        ctx.fillText(cfg.text, tx, ty);
+      }
+      ctx.textAlign = 'start';
+    }
+
+    // ===================== VẼ HÌNH =====================
     function drawShape(d, isPreview, idx) {
       const isHovered = idx !== undefined && idx === hoveredDrawingIndex;
       const isSelected = idx !== undefined && idx === selectedDrawingIndex;
@@ -330,7 +649,7 @@ const DrawingModule = (function () {
         if (isSelected) drawHandle(getRect().width / 2, y);
 
       } else if (d.type === 'vline') {
-        const x = timeToX(d.time);
+        const x = pointToX(d);
         if (x === null || x === undefined) { ctx.restore(); return; }
         const { height } = getRect();
         if (d.dashed !== false) ctx.setLineDash([4, 3]);
@@ -342,7 +661,7 @@ const DrawingModule = (function () {
         if (isSelected) drawHandle(x, height / 2);
 
       } else if (d.type === 'hray') {
-        const x = timeToX(d.p.time);
+        const x = pointToX(d.p);
         const y = priceToY(d.p.price);
         if ([x, y].some((v) => v === null || v === undefined)) { ctx.restore(); return; }
         const { width } = getRect();
@@ -358,8 +677,8 @@ const DrawingModule = (function () {
         if (isSelected) drawHandle(x, y);
 
       } else if (d.type === 'trendline' || d.type === 'ray' || d.type === 'extendedline') {
-        const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
-        const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
+        const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
+        const x2 = pointToX(d.p2), y2 = priceToY(d.p2.price);
         if ([x1, y1, x2, y2].some((v) => v === null || v === undefined)) { ctx.restore(); return; }
 
         let startX = x1, startY = y1, endX = x2, endY = y2;
@@ -382,19 +701,21 @@ const DrawingModule = (function () {
         if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); }
 
       } else if (d.type === 'arrow') {
-        const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
-        const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
+        const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
+        const x2 = pointToX(d.p2), y2 = priceToY(d.p2.price);
         if ([x1, y1, x2, y2].some((v) => v === null || v === undefined)) { ctx.restore(); return; }
+        if (d.dashed) ctx.setLineDash([6, 4]);
         ctx.beginPath();
         ctx.moveTo(x1, y1);
         ctx.lineTo(x2, y2);
         ctx.stroke();
+        ctx.setLineDash([]);
         drawArrowHead(x2, y2, x1, y1, ctx.strokeStyle);
         if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); }
 
       } else if (d.type === 'rectangle') {
-        const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
-        const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
+        const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
+        const x2 = pointToX(d.p2), y2 = priceToY(d.p2.price);
         if ([x1, y1, x2, y2].some((v) => v === null || v === undefined)) { ctx.restore(); return; }
         const rx = Math.min(x1, x2), ry = Math.min(y1, y2);
         const rw = Math.abs(x2 - x1), rh = Math.abs(y2 - y1);
@@ -407,8 +728,8 @@ const DrawingModule = (function () {
         if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); }
 
       } else if (d.type === 'circle') {
-        const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
-        const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
+        const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
+        const x2 = pointToX(d.p2), y2 = priceToY(d.p2.price);
         if ([x1, y1, x2, y2].some((v) => v === null || v === undefined)) { ctx.restore(); return; }
         const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
         const rxRad = Math.abs(x2 - x1) / 2, ryRad = Math.abs(y2 - y1) / 2;
@@ -423,7 +744,7 @@ const DrawingModule = (function () {
         if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); }
 
       } else if (d.type === 'triangle') {
-        const pts = [d.p1, d.p2, d.p3].map((p) => ({ x: timeToX(p.time), y: priceToY(p.price) }));
+        const pts = [d.p1, d.p2, d.p3].map((p) => ({ x: pointToX(p), y: priceToY(p.price) }));
         if (pts.some((p) => p.x === null || p.y === null || p.x === undefined || p.y === undefined)) { ctx.restore(); return; }
 
         ctx.fillStyle = toRGBA(baseColor, 0.12);
@@ -439,25 +760,26 @@ const DrawingModule = (function () {
         if (isSelected) pts.forEach((p) => drawHandle(p.x, p.y));
 
       } else if (d.type === 'channel') {
-        const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
-        const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
-        const x3 = timeToX(d.p3.time), y3 = priceToY(d.p3.price);
+        const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
+        const x2 = pointToX(d.p2), y2 = priceToY(d.p2.price);
+        const x3 = pointToX(d.p3), y3 = priceToY(d.p3.price);
         if ([x1, y1, x2, y2, x3, y3].some((v) => v === null || v === undefined)) { ctx.restore(); return; }
 
         const lineYAt = (x) => (x2 === x1 ? y1 : y1 + ((x - x1) / (x2 - x1)) * (y2 - y1));
         const offsetY = y3 - lineYAt(x3);
 
-        // Đường trục chính
+        if (d.dashed) ctx.setLineDash([6, 4]);
         ctx.beginPath();
         ctx.moveTo(x1, y1);
         ctx.lineTo(x2, y2);
         ctx.stroke();
-        // Đường song song (qua điểm neo thứ 3)
+
         ctx.beginPath();
         ctx.moveTo(x1, y1 + offsetY);
         ctx.lineTo(x2, y2 + offsetY);
         ctx.stroke();
-        // Dải màu giữa 2 đường
+        ctx.setLineDash([]);
+
         ctx.fillStyle = toRGBA(baseColor, 0.1);
         ctx.beginPath();
         ctx.moveTo(x1, y1);
@@ -470,57 +792,15 @@ const DrawingModule = (function () {
         if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); drawHandle(x3, y3); }
 
       } else if (d.type === 'fib') {
-        const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
-        const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
-        if ([x1, y1, x2, y2].some((v) => v === null || v === undefined)) { ctx.restore(); return; }
-
-        const priceStart = d.p1.price;
-        const priceEnd = d.p2.price;
-        const diff = priceEnd - priceStart;
-        const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0];
-
-        const colors = [];
-        for (let i = 0; i < levels.length; i++) colors.push(toRGBA(baseColor, 0.05 + i * 0.015));
-
-        ctx.strokeStyle = isPreview ? 'rgba(242, 163, 57, 0.4)' : 'rgba(124, 132, 150, 0.6)';
-        ctx.setLineDash([4, 4]);
-        ctx.beginPath();
-        ctx.moveTo(x1, y1);
-        ctx.lineTo(x2, y2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        levels.forEach((lvl) => {
-          const currentPrice = priceStart + lvl * diff;
-          const y = priceToY(currentPrice);
-          if (y === null || y === undefined) return;
-
-          ctx.strokeStyle = isPreview ? 'rgba(242, 163, 57, 0.4)' : 'rgba(124, 132, 150, 0.8)';
-          ctx.beginPath();
-          ctx.moveTo(Math.min(x1, x2), y);
-          ctx.lineTo(Math.max(x1, x2), y);
-          ctx.stroke();
-
-          ctx.fillStyle = isPreview ? 'rgba(242, 163, 57, 0.6)' : '#7c8496';
-          ctx.font = '9px sans-serif';
-          ctx.fillText(`Fib ${lvl.toFixed(3)} (${formatPrice(currentPrice)})`, Math.max(x1, x2) + 6, y + 3);
-        });
-
-        for (let i = 0; i < levels.length - 1; i++) {
-          const yA = priceToY(priceStart + levels[i] * diff);
-          const yB = priceToY(priceStart + levels[i + 1] * diff);
-          if (yA === null || yB === null) continue;
-          ctx.fillStyle = colors[i % colors.length];
-          ctx.fillRect(Math.min(x1, x2), Math.min(yA, yB), Math.abs(x2 - x1), Math.abs(yB - yA));
-        }
-        if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); }
+        const g = computeFib(d, isPreview);
+        if (!g) { ctx.restore(); return; }
+        drawFib(g);
+        if (isSelected) { drawHandle(g.x1, g.y1); drawHandle(g.x2, g.y2); }
 
       } else if (d.type === 'fibextension') {
-        // p1 = đầu con sóng, p2 = cuối con sóng (đo biên độ), p3 = điểm thoái
-        // lui - các mức mở rộng được tính TỪ p3, theo biên độ p1->p2.
-        const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
-        const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
-        const x3 = timeToX(d.p3.time), y3 = priceToY(d.p3.price);
+        const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
+        const x2 = pointToX(d.p2), y2 = priceToY(d.p2.price);
+        const x3 = pointToX(d.p3), y3 = priceToY(d.p3.price);
         if ([x1, y1, x2, y2, x3, y3].some((v) => v === null || v === undefined)) { ctx.restore(); return; }
 
         const diff = d.p2.price - d.p1.price;
@@ -545,14 +825,14 @@ const DrawingModule = (function () {
           ctx.lineTo(spanEnd, y);
           ctx.stroke();
           ctx.fillStyle = isPreview ? 'rgba(242, 163, 57, 0.6)' : '#7c8496';
-          ctx.font = '9px sans-serif';
+          ctx.font = '10px sans-serif';
           ctx.fillText(`${lvl.toFixed(3)} (${formatPrice(price)})`, spanEnd + 4, y + 3);
         });
         if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); drawHandle(x3, y3); }
 
       } else if (d.type === 'long' || d.type === 'short') {
-        const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price); // vào lệnh
-        const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price); // dừng lỗ
+        const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
+        const x2 = pointToX(d.p2), y2 = priceToY(d.p2.price);
         if ([x1, y1, x2, y2].some((v) => v === null || v === undefined)) { ctx.restore(); return; }
 
         const rr = d.rr || 2;
@@ -575,7 +855,6 @@ const DrawingModule = (function () {
         ctx.fillStyle = 'rgba(255, 90, 103, 0.16)';
         ctx.fillRect(rx, Math.min(yEntry, yStop), rw, Math.abs(yStop - yEntry));
 
-        // Đường vào lệnh / dừng lỗ / chốt lời
         ctx.strokeStyle = baseColor;
         ctx.beginPath(); ctx.moveTo(rx, yEntry); ctx.lineTo(rx + rw, yEntry); ctx.stroke();
         ctx.strokeStyle = '#ff5a67';
@@ -597,9 +876,9 @@ const DrawingModule = (function () {
         if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); }
 
       } else if (d.type === 'text') {
-        const x = timeToX(d.p.time);
+        const x = pointToX(d.p);
         const y = priceToY(d.p.price);
-        if (x === null || y === null) { ctx.restore(); return; }
+        if (x === null || y === null || x === undefined || y === undefined) { ctx.restore(); return; }
 
         const fontSize = 13;
         ctx.font = `500 ${fontSize}px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
@@ -608,7 +887,6 @@ const DrawingModule = (function () {
         const fillColor = d.color || getThemeTextColor();
         const haloColor = getThemeHaloColor();
 
-        // Viền mảnh cùng màu nền (halo) vẽ TRƯỚC - giúp chữ luôn đọc rõ.
         ctx.lineJoin = 'round';
         ctx.miterLimit = 2;
         ctx.strokeStyle = haloColor;
@@ -618,7 +896,6 @@ const DrawingModule = (function () {
         ctx.fillStyle = fillColor;
         ctx.fillText(d.text, x, y);
 
-        // Chỉ khi ĐANG CHỌN/HOVER mới hiện khung chấm chấm mảnh quanh chữ.
         if (isSelected || isHovered) {
           const textWidth = ctx.measureText(d.text).width;
           ctx.strokeStyle = baseColor;
@@ -683,7 +960,6 @@ const DrawingModule = (function () {
         ctx.fillText(label, width - boxW + 4, boxY + 11);
       }
 
-      // Đang chờ chốt điểm neo thứ 3 - gợi ý nhỏ.
       if (pendingThirdPoint) {
         ctx.font = '10px sans-serif';
         ctx.fillStyle = '#f2a339';
@@ -695,9 +971,9 @@ const DrawingModule = (function () {
 
     function pointFromEvent(e) {
       const { x, y } = getScreenXY(e);
-      const time = xToTime(x);
+      const info = xToPointInfo(x);
       const price = yToPrice(y);
-      return { time, price };
+      return { logicalIndex: info.logicalIndex, time: info.time, price: price };
     }
 
     function distToSegment(xp, yp, x1, y1, x2, y2) {
@@ -706,9 +982,7 @@ const DrawingModule = (function () {
       if (dx === 0 && dy === 0) return Math.hypot(xp - x1, yp - y1);
       const t = ((xp - x1) * dx + (yp - y1) * dy) / (dx * dx + dy * dy);
       const clampedT = Math.max(0, Math.min(1, t));
-      const projX = x1 + clampedT * dx;
-      const projY = y1 + clampedT * dy;
-      return Math.hypot(xp - projX, yp - projY);
+      return Math.hypot(xp - (x1 + clampedT * dx), yp - (y1 + clampedT * dy));
     }
 
     function boundsHit(x, y, xs, ys, margin) {
@@ -718,30 +992,68 @@ const DrawingModule = (function () {
       return x >= rx && x <= rx + rw && y >= ry && y <= ry + rh;
     }
 
+    // ===================== HIT TEST =====================
+    function findHandleAt(pt) {
+      if (allDrawingsHidden || selectedDrawingIndex === null) return null;
+      const d = drawings[selectedDrawingIndex];
+      if (!d || d.locked) return null;
+
+      const clickX = pointToX(pt);
+      const clickY = priceToY(pt.price);
+      if (clickX === null || clickY === null) return null;
+
+      const checkHandle = (p) => {
+        if (!p) return false;
+        const hx = pointToX(p);
+        const hy = priceToY(p.price);
+        if (hx === null || hy === null) return false;
+        return Math.hypot(clickX - hx, clickY - hy) <= HANDLE_RADIUS + 6;
+      };
+
+      if (d.type === 'hline') {
+        const hy = priceToY(d.price);
+        if (hy !== null && Math.hypot(clickX - getRect().width / 2, clickY - hy) <= HANDLE_RADIUS + 6) return 'price';
+      } else if (d.type === 'vline') {
+        const hx = pointToX(d);
+        if (hx !== null && Math.hypot(clickX - hx, clickY - getRect().height / 2) <= HANDLE_RADIUS + 6) return 'time';
+      } else if (d.type === 'hray' || d.type === 'text') {
+        if (checkHandle(d.p)) return 'p';
+      } else if (d.p3) {
+        if (checkHandle(d.p1)) return 'p1';
+        if (checkHandle(d.p2)) return 'p2';
+        if (checkHandle(d.p3)) return 'p3';
+      } else if (d.p1 && d.p2) {
+        if (checkHandle(d.p1)) return 'p1';
+        if (checkHandle(d.p2)) return 'p2';
+      }
+      return null;
+    }
+
     function findDrawingAt(pt) {
       if (allDrawingsHidden) return null;
-      const x = timeToX(pt.time);
+      const x = pointToX(pt);
       const y = priceToY(pt.price);
       if (x === null || y === null) return null;
 
       for (let i = drawings.length - 1; i >= 0; i--) {
         const d = drawings[i];
+        if (!isVisibleNow(d)) continue;
 
         if (d.type === 'hline') {
           const dy = priceToY(d.price);
           if (dy !== null && Math.abs(dy - y) < 10) return { index: i };
 
         } else if (d.type === 'vline') {
-          const dx_ = timeToX(d.time);
+          const dx_ = pointToX(d);
           if (dx_ !== null && Math.abs(dx_ - x) < 10) return { index: i };
 
         } else if (d.type === 'hray') {
-          const px = timeToX(d.p.time), py = priceToY(d.p.price);
+          const px = pointToX(d.p), py = priceToY(d.p.price);
           if (px !== null && py !== null && Math.abs(py - y) < 10 && x >= px - 10) return { index: i };
 
         } else if (d.type === 'trendline' || d.type === 'ray' || d.type === 'extendedline' || d.type === 'arrow') {
-          const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
-          const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
+          const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
+          const x2 = pointToX(d.p2), y2 = priceToY(d.p2.price);
           if (x1 !== null && y1 !== null && x2 !== null && y2 !== null) {
             let sx = x1, sy = y1, ex = x2, ey = y2;
             if (d.type === 'ray') { const e_ = extendPointBeyond(x1, y1, x2, y2, EXTEND_FACTOR); ex = e_.x; ey = e_.y; }
@@ -753,21 +1065,28 @@ const DrawingModule = (function () {
             if (distToSegment(x, y, sx, sy, ex, ey) < 10) return { index: i };
           }
 
-        } else if (d.type === 'rectangle' || d.type === 'circle' || d.type === 'fib' || d.type === 'long' || d.type === 'short') {
-          const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
-          const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
+        } else if (d.type === 'fib') {
+          const g = computeFib(d, false);
+          if (g) {
+            const ys = g.rows.map((r) => r.y).concat([g.y1, g.y2]);
+            if (x >= g.xl - 8 && x <= g.xr + 8 && y >= Math.min(...ys) - 8 && y <= Math.max(...ys) + 8) return { index: i };
+          }
+
+        } else if (d.type === 'rectangle' || d.type === 'circle' || d.type === 'long' || d.type === 'short') {
+          const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
+          const x2 = pointToX(d.p2), y2 = priceToY(d.p2.price);
           if (x1 !== null && y1 !== null && x2 !== null && y2 !== null) {
             if (boundsHit(x, y, [x1, x2], [y1, y2], 8)) return { index: i };
           }
 
         } else if (d.type === 'triangle' || d.type === 'channel' || d.type === 'fibextension') {
-          const pts = [d.p1, d.p2, d.p3].map((p) => ({ x: timeToX(p.time), y: priceToY(p.price) }));
+          const pts = [d.p1, d.p2, d.p3].map((p) => ({ x: pointToX(p), y: priceToY(p.price) }));
           if (pts.every((p) => p.x !== null && p.y !== null)) {
             if (boundsHit(x, y, pts.map((p) => p.x), pts.map((p) => p.y), 8)) return { index: i };
           }
 
         } else if (d.type === 'text') {
-          const tx = timeToX(d.p.time), ty = priceToY(d.p.price);
+          const tx = pointToX(d.p), ty = priceToY(d.p.price);
           if (tx !== null && ty !== null) {
             ctx.font = '500 13px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
             const w = ctx.measureText(d.text).width;
@@ -779,6 +1098,9 @@ const DrawingModule = (function () {
       return null;
     }
 
+    // ===================== FLOATING TOOLBAR (giống TradingView: giữa-trên chart, kéo được) =====================
+    let toolbarPos = null; // {left, top} sau khi người dùng kéo
+
     function hideToolbar() {
       if (toolbarEl) {
         toolbarEl.remove();
@@ -786,58 +1108,61 @@ const DrawingModule = (function () {
       }
     }
 
-    /** Tính điểm neo trung tâm (tx,ty theo px) dùng để định vị bảng thuộc
-     * tính bên trên hình - tách riêng khỏi phần dựng DOM để gọi lại RẺ mỗi
-     * khi hình bị kéo di chuyển. */
-    function computeToolbarAnchor(d) {
-      const rect = container.getBoundingClientRect();
-      let tx = rect.width / 2;
-      let ty = 100;
+    function placeToolbar() {
+      if (!toolbarEl || !toolbarPos) return;
+      toolbarEl.style.left = toolbarPos.left + 'px';
+      toolbarEl.style.top = toolbarPos.top + 'px';
+      toolbarEl.style.transform = 'none';
+    }
 
-      if (d.type === 'hline') {
-        const y = priceToY(d.price);
-        tx = rect.width / 2; ty = y !== null ? y : 100;
-      } else if (d.type === 'vline') {
-        const x = timeToX(d.time);
-        tx = x !== null ? x : rect.width / 2; ty = 100;
-      } else if (d.type === 'hray') {
-        const x = timeToX(d.p.time), y = priceToY(d.p.price);
-        tx = x !== null ? x : rect.width / 2; ty = y !== null ? y : 100;
-      } else if (d.p3) {
-        const xs = [d.p1, d.p2, d.p3].map((p) => timeToX(p.time)).filter((v) => v !== null);
-        const ys = [d.p1, d.p2, d.p3].map((p) => priceToY(p.price)).filter((v) => v !== null);
-        if (xs.length) tx = xs.reduce((a, b) => a + b, 0) / xs.length;
-        if (ys.length) ty = Math.min(...ys);
-      } else if (d.p1 && d.p2) {
-        const x1 = timeToX(d.p1.time), y1 = priceToY(d.p1.price);
-        const x2 = timeToX(d.p2.time), y2 = priceToY(d.p2.price);
-        if (x1 !== null && x2 !== null && y1 !== null && y2 !== null) {
-          tx = (x1 + x2) / 2; ty = Math.min(y1, y2);
-        }
-      } else if (d.type === 'text') {
-        const x = timeToX(d.p.time), y = priceToY(d.p.price);
-        tx = x !== null ? x : rect.width / 2; ty = y !== null ? y : 100;
+    // Toolbar cố định một chỗ (như TradingView) nên không cần đổi vị trí theo hình
+    function repositionToolbarOnly() {}
+
+    function makeToolbarBtn(iconSvg, title, onClick, active) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'dtv-tb-btn' + (active ? ' active' : '');
+      btn.title = title;
+      btn.innerHTML = iconSvg;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        onClick(btn);
+      });
+      return btn;
+    }
+
+    function makeToolbarSep() {
+      const s = document.createElement('div');
+      s.className = 'dtv-tb-sep';
+      return s;
+    }
+
+    function cloneDrawing(idx) {
+      const src = drawings[idx];
+      if (!src) return;
+      const c = clone(src);
+      delete c.locked;
+      const shift = (p) => {
+        const x = pointToX(p), y = priceToY(p.price);
+        if (x === null || y === null || x === undefined || y === undefined) return p;
+        const i = xToPointInfo(x + 20);
+        return { logicalIndex: i.logicalIndex, time: i.time, price: yToPrice(y + 20) };
+      };
+      if (c.type === 'hline') {
+        const y = priceToY(c.price);
+        if (y !== null && y !== undefined) c.price = yToPrice(y + 20);
+      } else if (c.type === 'vline') {
+        const x = pointToX(c);
+        if (x !== null && x !== undefined) { const i = xToPointInfo(x + 20); c.logicalIndex = i.logicalIndex; c.time = i.time; }
+      } else if (c.p) {
+        c.p = shift(c.p);
+      } else {
+        ['p1', 'p2', 'p3'].forEach((k) => { if (c[k]) c[k] = shift(c[k]); });
       }
-      return { tx, ty, rect };
-    }
-
-    function computeToolbarTopLeft(d, estHeight) {
-      const { tx, ty, rect } = computeToolbarAnchor(d);
-      const toolbarWidth = 232;
-      const top = Math.max(10, Math.min(ty - estHeight - 12, rect.height - estHeight - 10));
-      const left = Math.max(10, Math.min(tx - toolbarWidth / 2, rect.width - toolbarWidth - 10));
-      return { top, left, toolbarWidth };
-    }
-
-    /** Gọi RẺ mỗi khung hình khi đang KÉO DI CHUYỂN 1 hình - chỉ cập nhật
-     * lại top/left của bảng thuộc tính đã có sẵn, KHÔNG dựng lại DOM. */
-    function repositionToolbarOnly(idx) {
-      if (!toolbarEl) return;
-      const d = drawings[idx];
-      if (!d) return;
-      const { top, left } = computeToolbarTopLeft(d, toolbarEl.offsetHeight || 260);
-      toolbarEl.style.top = top + 'px';
-      toolbarEl.style.left = left + 'px';
+      drawings.push(c);
+      selectedDrawingIndex = drawings.length - 1;
+      showToolbar(selectedDrawingIndex);
+      redraw();
     }
 
     function showToolbar(idx) {
@@ -845,308 +1170,491 @@ const DrawingModule = (function () {
       const d = drawings[idx];
       if (!d) return;
 
-      const { top, left, toolbarWidth } = computeToolbarTopLeft(d, 260);
-
       toolbarEl = document.createElement('div');
-      toolbarEl.className = 'drawing-toolbar';
-      toolbarEl.style.position = 'absolute';
-      toolbarEl.style.top = top + 'px';
-      toolbarEl.style.left = left + 'px';
-      toolbarEl.style.width = toolbarWidth + 'px';
-      toolbarEl.style.background = 'var(--bg-elevated)';
-      toolbarEl.style.border = '1px solid var(--border-color)';
-      toolbarEl.style.borderRadius = 'var(--radius-md)';
-      toolbarEl.style.padding = '8px';
-      toolbarEl.style.display = 'flex';
-      toolbarEl.style.flexDirection = 'column';
-      toolbarEl.style.gap = '8px';
-      toolbarEl.style.boxShadow = 'var(--shadow-md)';
-      toolbarEl.style.zIndex = '100';
-      toolbarEl.style.fontFamily = 'var(--font)';
-      toolbarEl.addEventListener('pointerdown', (e) => e.stopPropagation());
+      toolbarEl.className = 'dtv-tb';
+      ['pointerdown', 'mousedown', 'click', 'dblclick', 'contextmenu'].forEach((ev) =>
+        toolbarEl.addEventListener(ev, (e) => e.stopPropagation())
+      );
 
-      // ---- Header: tên hình + khoá vị trí + đặt làm mặc định + đóng ----
-      const header = document.createElement('div');
-      header.className = 'dt-toolbar-header';
+      // Tay nắm để kéo toolbar
+      const grip = document.createElement('div');
+      grip.className = 'dtv-tb-grip';
+      grip.title = 'Kéo để di chuyển';
+      grip.innerHTML = ICON.grip;
+      grip.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        const tr = toolbarEl.getBoundingClientRect();
+        const cr = container.getBoundingClientRect();
+        const offX = e.clientX - tr.left, offY = e.clientY - tr.top;
+        const move = (ev) => {
+          const w = toolbarEl ? toolbarEl.offsetWidth : 0;
+          toolbarPos = {
+            left: Math.max(0, Math.min(ev.clientX - cr.left - offX, cr.width - w)),
+            top: Math.max(0, Math.min(ev.clientY - cr.top - offY, cr.height - 40)),
+          };
+          placeToolbar();
+        };
+        const up = () => {
+          document.removeEventListener('pointermove', move);
+          document.removeEventListener('pointerup', up);
+        };
+        document.addEventListener('pointermove', move);
+        document.addEventListener('pointerup', up);
+      });
+      toolbarEl.appendChild(grip);
+      toolbarEl.appendChild(makeToolbarSep());
 
-      const titleEl = document.createElement('span');
-      titleEl.className = 'dt-toolbar-title';
-      titleEl.textContent = TOOL_DISPLAY_NAMES[d.type] || d.type;
-      header.appendChild(titleEl);
+      // Màu nét (Fib dùng màu riêng từng mức nên không hiện)
+      if (d.type !== 'fib') {
+        const colorWrap = document.createElement('label');
+        colorWrap.className = 'dtv-tb-color';
+        colorWrap.title = 'Màu';
+        const colorInput = document.createElement('input');
+        colorInput.type = 'color';
+        colorInput.value = hex6(d.color, '#f2a339');
+        colorInput.addEventListener('input', () => { d.color = colorInput.value; redraw(); });
+        colorInput.addEventListener('change', () => { d.color = colorInput.value; rememberStyle(d); });
+        colorWrap.appendChild(colorInput);
+        toolbarEl.appendChild(colorWrap);
+      }
 
-      const headerActions = document.createElement('div');
-      headerActions.className = 'dt-toolbar-header-actions';
-
+      // Độ dày nét
       if (d.type !== 'text') {
-        const lockBtn = document.createElement('button');
-        lockBtn.type = 'button';
-        lockBtn.className = 'dt-icon-btn' + (d.locked ? ' active' : '');
-        setIcon(lockBtn, d.locked ? 'lock' : 'unlock');
-        lockBtn.title = d.locked ? 'Đã khoá vị trí - bấm để mở khoá (cho phép kéo lại)' : 'Khoá vị trí - không cho kéo di chuyển nữa';
-        lockBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
+        const isFibT = d.type === 'fib';
+        const cur = isFibT ? d.levelsWidth || 1 : d.width || 1.5;
+        const widths = [1, 1.5, 2, 3, 4];
+        if (!widths.includes(cur)) widths.push(cur);
+        const sel = document.createElement('select');
+        sel.className = 'dtv-tb-select';
+        sel.title = 'Độ dày nét';
+        widths.sort((a, b) => a - b).forEach((w) => {
+          const o = document.createElement('option');
+          o.value = w;
+          o.textContent = w + 'px';
+          if (w === cur) o.selected = true;
+          sel.appendChild(o);
+        });
+        sel.addEventListener('change', () => {
+          const v = parseFloat(sel.value);
+          if (isFibT) d.levelsWidth = v; else d.width = v;
+          redraw();
+          rememberStyle(d);
+        });
+        toolbarEl.appendChild(sel);
+      }
+
+      // Nét liền / nét đứt
+      if (DASHED_STYLE_TOOLS.includes(d.type)) {
+        const dashedNow = () => (d.type === 'hline' || d.type === 'vline' || d.type === 'hray' ? d.dashed !== false : !!d.dashed);
+        toolbarEl.appendChild(
+          makeToolbarBtn(dashedNow() ? ICON.dashed : ICON.solid, 'Nét liền / nét đứt', (btn) => {
+            d.dashed = !dashedNow();
+            btn.innerHTML = dashedNow() ? ICON.dashed : ICON.solid;
+            redraw();
+            rememberStyle(d);
+          })
+        );
+      }
+
+      toolbarEl.appendChild(makeToolbarSep());
+
+      // Cài đặt chi tiết (bánh răng)
+      toolbarEl.appendChild(makeToolbarBtn(ICON.gear, 'Cài đặt chi tiết', () => openSettingsModal(idx)));
+      toolbarEl.appendChild(makeToolbarBtn(ICON.copy, 'Nhân bản', () => cloneDrawing(idx)));
+      toolbarEl.appendChild(
+        makeToolbarBtn(d.locked ? ICON.lock : ICON.unlock, d.locked ? 'Mở khoá' : 'Khoá vị trí', () => {
           d.locked = !d.locked;
           showToolbar(idx);
-        });
-        headerActions.appendChild(lockBtn);
-      }
-
-      const defaultBtn = document.createElement('button');
-      defaultBtn.type = 'button';
-      defaultBtn.className = 'dt-icon-btn';
-      setIcon(defaultBtn, 'star');
-      defaultBtn.title = 'Đặt màu & độ dày hiện tại làm mặc định cho MỌI hình vẽ mới';
-      defaultBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        defaultStyle.color = d.color || defaultStyle.color;
-        defaultStyle.width = d.width || defaultStyle.width;
-        if (hasLocalStore()) LocalStore.write('drawing_default_style', defaultStyle);
-        setIcon(defaultBtn, 'check');
-        setTimeout(() => setIcon(defaultBtn, 'star'), 700);
-      });
-      headerActions.appendChild(defaultBtn);
-
-      const closeBtn = document.createElement('button');
-      closeBtn.type = 'button';
-      closeBtn.className = 'dt-icon-btn';
-      setIcon(closeBtn, 'close');
-      closeBtn.title = 'Đóng bảng thuộc tính';
-      closeBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        selectedDrawingIndex = null;
-        hideToolbar();
-        redraw();
-      });
-      headerActions.appendChild(closeBtn);
-
-      header.appendChild(headerActions);
-      toolbarEl.appendChild(header);
-      toolbarEl.appendChild(Object.assign(document.createElement('div'), { className: 'dt-toolbar-divider' }));
-
-      // ---- Hàng màu: mẫu có sẵn + ô chọn màu tuỳ ý ----
-      const colorRow = document.createElement('div');
-      colorRow.className = 'dt-color-row';
-
-      PRESET_COLORS.forEach((col) => {
-        const dot = document.createElement('button');
-        dot.type = 'button';
-        dot.className = 'dt-color-dot' + ((d.color || '#f2a339') === col ? ' active' : '');
-        dot.style.background = col;
-        dot.addEventListener('click', (e) => {
-          e.stopPropagation();
-          d.color = col;
+        }, !!d.locked)
+      );
+      toolbarEl.appendChild(
+        makeToolbarBtn(ICON.trash, 'Xoá', () => {
+          drawings.splice(idx, 1);
+          selectedDrawingIndex = null;
+          hideToolbar();
           redraw();
-          showToolbar(idx);
-        });
-        colorRow.appendChild(dot);
-      });
-
-      const customColor = document.createElement('input');
-      customColor.type = 'color';
-      customColor.className = 'dt-custom-color';
-      customColor.title = 'Chọn màu tuỳ ý';
-      customColor.value = /^#[0-9a-fA-F]{6}$/.test(d.color || '') ? d.color : '#f2a339';
-      customColor.addEventListener('pointerdown', (e) => e.stopPropagation());
-      customColor.addEventListener('input', () => {
-        d.color = customColor.value;
-        redraw();
-      });
-      customColor.addEventListener('change', () => showToolbar(idx));
-      colorRow.appendChild(customColor);
-
-      toolbarEl.appendChild(colorRow);
-
-      // ---- Hàng độ mờ (opacity) ----
-      const opacityRow = document.createElement('div');
-      opacityRow.className = 'dt-opacity-row';
-      const opLabel = document.createElement('span');
-      opLabel.className = 'dt-row-label';
-      opLabel.textContent = 'Độ mờ';
-      const opValue = document.createElement('span');
-      opValue.className = 'dt-opacity-value';
-      const currentOpacityPct = Math.round((d.opacity === undefined ? 1 : d.opacity) * 100);
-      opValue.textContent = currentOpacityPct + '%';
-      const opInput = document.createElement('input');
-      opInput.type = 'range';
-      opInput.min = '10';
-      opInput.max = '100';
-      opInput.value = String(currentOpacityPct);
-      opInput.className = 'dt-opacity-slider';
-      opInput.addEventListener('pointerdown', (e) => e.stopPropagation());
-      opInput.addEventListener('input', () => {
-        d.opacity = parseInt(opInput.value, 10) / 100;
-        opValue.textContent = opInput.value + '%';
-        redraw();
-      });
-      opacityRow.appendChild(opLabel);
-      opacityRow.appendChild(opInput);
-      opacityRow.appendChild(opValue);
-      toolbarEl.appendChild(opacityRow);
-
-      // ---- Hàng độ dày nét (không áp dụng cho ghi chú) ----
-      if (d.type !== 'text') {
-        const widthRow = document.createElement('div');
-        widthRow.className = 'dt-swatch-row';
-        [1, 1.5, 2.5].forEach((wVal) => {
-          const active = (d.width || 1.5) === wVal;
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'dt-swatch-btn' + (active ? ' active' : '');
-          btn.title = wVal === 1 ? 'Nét mảnh' : wVal === 1.5 ? 'Nét vừa' : 'Nét đậm';
-          const bar = document.createElement('span');
-          bar.className = 'dt-swatch-bar';
-          bar.style.height = wVal + 0.5 + 'px';
-          btn.appendChild(bar);
-          btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            d.width = wVal;
-            redraw();
-            showToolbar(idx);
-          });
-          widthRow.appendChild(btn);
-        });
-
-        // ---- Kiểu nét (liền/đứt) ghép chung hàng ----
-        if (DASHED_STYLE_TOOLS.includes(d.type)) {
-          const isDashed = d.type === 'hline' || d.type === 'vline' || d.type === 'hray' ? d.dashed !== false : !!d.dashed;
-          [{ dashed: false, title: 'Nét liền' }, { dashed: true, title: 'Nét đứt' }].forEach((opt) => {
-            const active = isDashed === opt.dashed;
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'dt-swatch-btn' + (active ? ' active' : '');
-            btn.title = opt.title;
-            const bar = document.createElement('span');
-            bar.className = 'dt-swatch-bar' + (opt.dashed ? ' dashed' : '');
-            btn.appendChild(bar);
-            btn.addEventListener('click', (e) => {
-              e.stopPropagation();
-              d.dashed = opt.dashed;
-              redraw();
-              showToolbar(idx);
-            });
-            widthRow.appendChild(btn);
-          });
-        }
-        toolbarEl.appendChild(widthRow);
-      }
-
-      // ---- Hàng sửa giá trực tiếp ----
-      function makePriceInput(labelText, value, onCommit) {
-        const wrap = document.createElement('div');
-        wrap.style.display = 'flex';
-        wrap.style.alignItems = 'center';
-        wrap.style.gap = '6px';
-
-        const label = document.createElement('span');
-        label.textContent = labelText;
-        label.style.fontSize = '10.5px';
-        label.style.color = 'var(--text-secondary)';
-        label.style.width = '52px';
-        label.style.flexShrink = '0';
-
-        const input = document.createElement('input');
-        input.type = 'number';
-        input.value = value;
-        input.style.flex = '1';
-        input.style.minWidth = '0';
-        input.style.background = 'var(--bg-main)';
-        input.style.border = '1px solid var(--border-color)';
-        input.style.borderRadius = 'var(--radius-sm)';
-        input.style.color = 'var(--text-primary)';
-        input.style.fontFamily = 'var(--font-mono)';
-        input.style.fontSize = '11px';
-        input.style.padding = '3px 5px';
-        input.addEventListener('pointerdown', (e) => e.stopPropagation());
-        input.addEventListener('keydown', (e) => {
-          e.stopPropagation();
-          if (e.key === 'Enter') input.blur();
-        });
-        input.addEventListener('change', () => {
-          const v = parseFloat(input.value);
-          if (!Number.isNaN(v)) onCommit(v);
-        });
-
-        wrap.appendChild(label);
-        wrap.appendChild(input);
-        return wrap;
-      }
-
-      const priceCol = document.createElement('div');
-      priceCol.style.display = 'flex';
-      priceCol.style.flexDirection = 'column';
-      priceCol.style.gap = '4px';
-
-      if (d.type === 'hline') {
-        priceCol.appendChild(makePriceInput('Giá', d.price, (v) => { d.price = v; redraw(); }));
-      } else if (d.type === 'hray') {
-        priceCol.appendChild(makePriceInput('Giá', d.p.price, (v) => { d.p.price = v; redraw(); }));
-      } else if (d.type === 'vline') {
-        // Đường dọc chỉ neo theo THỜI GIAN - không có ô sửa số.
-      } else if (d.p3) {
-        priceCol.appendChild(makePriceInput('Điểm 1', d.p1.price, (v) => { d.p1.price = v; redraw(); }));
-        priceCol.appendChild(makePriceInput('Điểm 2', d.p2.price, (v) => { d.p2.price = v; redraw(); }));
-        priceCol.appendChild(makePriceInput('Điểm 3', d.p3.price, (v) => { d.p3.price = v; redraw(); }));
-      } else if (d.type === 'long' || d.type === 'short') {
-        priceCol.appendChild(makePriceInput('Vào lệnh', d.p1.price, (v) => { d.p1.price = v; redraw(); }));
-        priceCol.appendChild(makePriceInput('Dừng lỗ', d.p2.price, (v) => { d.p2.price = v; redraw(); }));
-        priceCol.appendChild(makePriceInput('Tỷ lệ R:R', d.rr || 2, (v) => { d.rr = v; redraw(); }));
-      } else if (d.p1 && d.p2) {
-        priceCol.appendChild(makePriceInput('Điểm 1', d.p1.price, (v) => { d.p1.price = v; redraw(); }));
-        priceCol.appendChild(makePriceInput('Điểm 2', d.p2.price, (v) => { d.p2.price = v; redraw(); }));
-      } else if (d.type === 'text') {
-        const wrap = document.createElement('div');
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.value = d.text;
-        input.style.width = '100%';
-        input.style.background = 'var(--bg-main)';
-        input.style.border = '1px solid var(--border-color)';
-        input.style.borderRadius = 'var(--radius-sm)';
-        input.style.color = 'var(--text-primary)';
-        input.style.fontSize = '11px';
-        input.style.padding = '3px 5px';
-        input.addEventListener('pointerdown', (e) => e.stopPropagation());
-        input.addEventListener('keydown', (e) => e.stopPropagation());
-        input.addEventListener('change', () => {
-          if (input.value.trim()) { d.text = input.value.trim(); redraw(); }
-        });
-        wrap.appendChild(input);
-        priceCol.appendChild(wrap);
-      }
-      toolbarEl.appendChild(priceCol);
-
-      // ---- Xoá hình ----
-      const actionRow = document.createElement('div');
-      actionRow.style.display = 'flex';
-      actionRow.style.justifyContent = 'flex-end';
-
-      const delBtn = document.createElement('button');
-      delBtn.type = 'button';
-      delBtn.title = 'Xoá hình';
-      delBtn.style.display = 'inline-flex';
-      delBtn.style.alignItems = 'center';
-      delBtn.style.gap = '4px';
-      delBtn.innerHTML = Icons.trash.replace('<svg ', '<svg class="icon-svg" ') + '<span>Xoá</span>';
-      delBtn.style.background = 'transparent';
-      delBtn.style.border = '1px solid var(--border-color)';
-      delBtn.style.borderRadius = 'var(--radius-sm)';
-      delBtn.style.color = 'var(--red)';
-      delBtn.style.fontSize = '11px';
-      delBtn.style.cursor = 'pointer';
-      delBtn.style.padding = '3px 8px';
-      delBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        drawings.splice(idx, 1);
-        selectedDrawingIndex = null;
-        hideToolbar();
-        redraw();
-      });
-      actionRow.appendChild(delBtn);
-      toolbarEl.appendChild(actionRow);
+        })
+      );
 
       container.appendChild(toolbarEl);
+      placeToolbar();
     }
 
+    // ===================== MODAL CÀI ĐẶT (Style / Coordinates / Visibility) =====================
+    function getAnchorDefs(d) {
+      if (d.type === 'hline') return [{ key: 'self', label: 'Giá', price: true }];
+      if (d.type === 'vline') return [{ key: 'self', label: 'Thanh nến', bar: true }];
+      if (d.type === 'hray' || d.type === 'text') return [{ key: 'p', label: 'Điểm', price: true, bar: true }];
+      if (d.type === 'long' || d.type === 'short') {
+        return [
+          { key: 'p1', label: 'Vào lệnh', price: true, bar: true },
+          { key: 'p2', label: 'Dừng lỗ', price: true, bar: true },
+        ];
+      }
+      if (d.p3) {
+        return [
+          { key: 'p1', label: 'Điểm 1', price: true, bar: true },
+          { key: 'p2', label: 'Điểm 2', price: true, bar: true },
+          { key: 'p3', label: 'Điểm 3', price: true, bar: true },
+        ];
+      }
+      if (d.p1 && d.p2) {
+        return [
+          { key: 'p1', label: 'Điểm 1', price: true, bar: true },
+          { key: 'p2', label: 'Điểm 2', price: true, bar: true },
+        ];
+      }
+      return [];
+    }
+
+    function renderFibStyleHTML(cfg) {
+      const levelItems = (cfg.levels || [])
+        .map(
+          (l) => `
+        <div class="dtv-fib-item">
+          <input type="checkbox" class="fib-chk" ${l.enabled ? 'checked' : ''}>
+          <input type="number" step="any" class="fib-val" value="${esc(l.level)}">
+          <input type="color" class="fib-col" value="${hex6(l.color, '#787b86')}">
+        </div>`
+        )
+        .join('');
+
+      return `
+        <div class="dtv-modal-row">
+          <label class="dtv-check"><input type="checkbox" id="fTrend" ${cfg.showTrendline ? 'checked' : ''}><span>Trend line</span></label>
+          <div class="dtv-ctrls">
+            <input type="color" id="fTrendColor" class="dtv-color" value="${hex6(cfg.trendColor, '#787b86')}">
+            ${selectHTML('fTrendStyle', LINE_STYLES, cfg.trendStyle)}
+          </div>
+        </div>
+        <div class="dtv-modal-row">
+          <span>Levels line</span>
+          <div class="dtv-ctrls">
+            ${selectHTML('fLevelsWidth', [[1, '1px'], [1.5, '1.5px'], [2, '2px'], [3, '3px']], cfg.levelsWidth)}
+            ${selectHTML('fLevelsStyle', LINE_STYLES, cfg.levelsStyle)}
+          </div>
+        </div>
+        <div class="dtv-modal-row">
+          <span>Extend</span>
+          <div class="dtv-ctrls">
+            ${selectHTML('fExtend', [['none', "Don't extend"], ['left', 'Extend left'], ['right', 'Extend right'], ['both', 'Extend both']], cfg.extend)}
+          </div>
+        </div>
+        <div class="dtv-modal-sep"></div>
+        <div class="dtv-modal-grid-2">${levelItems}</div>
+        <div class="dtv-modal-sep"></div>
+        <div class="dtv-modal-row">
+          <span>Use one color</span>
+          <div class="dtv-ctrls"><input type="color" id="fOneColor" class="dtv-color" value="#2962ff"></div>
+        </div>
+        <div class="dtv-modal-row">
+          <label class="dtv-check"><input type="checkbox" id="fBg" ${cfg.bg ? 'checked' : ''}><span>Background</span></label>
+          <div class="dtv-ctrls">
+            <input type="range" id="fBgOpacity" class="dtv-range" min="0" max="100" value="${Math.round(cfg.bgOpacity * 100)}">
+          </div>
+        </div>
+        <div class="dtv-modal-row">
+          <label class="dtv-check"><input type="checkbox" id="fReverse" ${cfg.reverse ? 'checked' : ''}><span>Reverse</span></label>
+        </div>
+        <div class="dtv-modal-row">
+          <label class="dtv-check"><input type="checkbox" id="fPrices" ${cfg.showPrices ? 'checked' : ''}><span>Prices</span></label>
+        </div>
+        <div class="dtv-modal-row">
+          <label class="dtv-check"><input type="checkbox" id="fLevels" ${cfg.showLevels ? 'checked' : ''}><span>Levels</span></label>
+          <div class="dtv-ctrls">${selectHTML('fLevelsMode', [['values', 'Values'], ['percents', 'Percents']], cfg.levelsMode)}</div>
+        </div>
+        <div class="dtv-modal-row">
+          <span>Labels</span>
+          <div class="dtv-ctrls">
+            ${selectHTML('fLabelH', [['left', 'Left'], ['right', 'Right']], cfg.labelH)}
+            ${selectHTML('fLabelV', [['top', 'Top'], ['middle', 'Middle'], ['bottom', 'Bottom']], cfg.labelV)}
+          </div>
+        </div>
+        <div class="dtv-modal-row">
+          <label class="dtv-check"><input type="checkbox" id="fShowText" ${cfg.showText ? 'checked' : ''}><span>Text</span></label>
+          <div class="dtv-ctrls">
+            <input type="text" id="fText" class="dtv-input" style="width:120px" value="${esc(cfg.text)}" placeholder="Nội dung...">
+          </div>
+        </div>
+        <div class="dtv-modal-row">
+          <span></span>
+          <div class="dtv-ctrls">
+            ${selectHTML('fTextH', [['left', 'Left'], ['center', 'Center'], ['right', 'Right']], cfg.textH)}
+            ${selectHTML('fTextV', [['top', 'Top'], ['middle', 'Middle'], ['bottom', 'Bottom']], cfg.textV)}
+          </div>
+        </div>
+        <div class="dtv-modal-row">
+          <span>Font size</span>
+          <div class="dtv-ctrls">${selectHTML('fFontSize', [8, 9, 10, 11, 12, 14, 16, 20].map((n) => [n, n]), cfg.fontSize)}</div>
+        </div>
+      `;
+    }
+
+    function renderGeneralStyleHTML(d) {
+      const opacityPct = Math.round((d.opacity === undefined ? 1 : d.opacity) * 100);
+      let html = '';
+
+      if (d.type === 'text') {
+        html += `
+          <div class="dtv-modal-row">
+            <span>Nội dung</span>
+            <input type="text" id="gText" class="dtv-input" style="width:220px" value="${esc(d.text)}">
+          </div>`;
+      }
+
+      html += `
+        <div class="dtv-modal-row">
+          <span>Màu sắc</span>
+          <div class="dtv-ctrls"><input type="color" id="gColor" class="dtv-color" value="${hex6(d.color, '#f2a339')}"></div>
+        </div>
+        <div class="dtv-modal-row">
+          <span>Độ mờ</span>
+          <div class="dtv-ctrls"><input type="range" id="gOpacity" class="dtv-range" min="10" max="100" value="${opacityPct}"></div>
+        </div>`;
+
+      if (d.type !== 'text') {
+        html += `
+        <div class="dtv-modal-row">
+          <span>Độ dày</span>
+          <div class="dtv-ctrls">${selectHTML('gWidth', [[1, '1px'], [1.5, '1.5px'], [2.5, '2.5px'], [4, '4px']], d.width || 1.5)}</div>
+        </div>`;
+      }
+
+      if (DASHED_STYLE_TOOLS.includes(d.type)) {
+        const isDashed = d.type === 'hline' || d.type === 'vline' || d.type === 'hray' ? d.dashed !== false : !!d.dashed;
+        html += `
+        <div class="dtv-modal-row">
+          <span>Kiểu nét</span>
+          <div class="dtv-ctrls">${selectHTML('gDash', [['solid', 'Nét liền'], ['dashed', 'Nét đứt']], isDashed ? 'dashed' : 'solid')}</div>
+        </div>`;
+      }
+      return html;
+    }
+
+    function renderCoordinatesHTML(d) {
+      const defs = getAnchorDefs(d);
+      let html = defs
+        .map((a) => {
+          const target = a.key === 'self' ? d : d[a.key];
+          if (!target) return '';
+          const bar = target.logicalIndex !== undefined && target.logicalIndex !== null ? Math.round(target.logicalIndex * 100) / 100 : '';
+          return `
+          <div class="dtv-modal-row">
+            <span>${a.label}</span>
+            <div class="dtv-ctrls">
+              ${a.price ? `<label class="dtv-mini">Giá <input type="number" step="any" class="dtv-input coord" data-key="${a.key}" data-field="price" value="${esc(target.price)}"></label>` : ''}
+              ${a.bar ? `<label class="dtv-mini">Nến <input type="number" step="any" class="dtv-input coord" data-key="${a.key}" data-field="logicalIndex" value="${esc(bar)}"></label>` : ''}
+            </div>
+          </div>`;
+        })
+        .join('');
+
+      if (d.type === 'long' || d.type === 'short') {
+        html += `
+          <div class="dtv-modal-row">
+            <span>Tỷ lệ R:R</span>
+            <div class="dtv-ctrls"><label class="dtv-mini">1 : <input type="number" step="any" min="0.1" id="coordRR" class="dtv-input" value="${esc(d.rr || 2)}"></label></div>
+          </div>`;
+      }
+      return html || '<div class="dtv-modal-row"><span>Hình này không có toạ độ để chỉnh.</span></div>';
+    }
+
+    function renderVisibilityHTML(d) {
+      if (!Array.isArray(timeframes) || typeof getTimeframe !== 'function') {
+        return '<div class="dtv-modal-row"><span>Hình vẽ hiển thị trên mọi khung thời gian.</span></div>';
+      }
+      const active = Array.isArray(d.tfs) ? d.tfs : timeframes;
+      return timeframes
+        .map(
+          (tf) => `
+        <div class="dtv-modal-row">
+          <label class="dtv-check"><input type="checkbox" class="tf-chk" value="${esc(tf)}" ${active.includes(tf) ? 'checked' : ''}><span>${esc(tf)}</span></label>
+        </div>`
+        )
+        .join('');
+    }
+
+    function openSettingsModal(idx) {
+      const d = drawings[idx];
+      if (!d) return;
+      hideToolbar();
+
+      const isFib = d.type === 'fib';
+      const cfg = isFib ? computeFibCfg(d) : null;
+
+      const backdrop = document.createElement('div');
+      backdrop.className = 'dtv-modal-backdrop';
+      backdrop.innerHTML = `
+        <div class="dtv-modal">
+          <div class="dtv-modal-header">
+            <span class="dtv-modal-title">${esc(TOOL_DISPLAY_NAMES[d.type] || 'Cài đặt đường vẽ')}</span>
+            <button type="button" class="dtv-modal-close">×</button>
+          </div>
+          <div class="dtv-modal-tabs">
+            <button type="button" class="dtv-modal-tab active" data-tab="style">Style</button>
+            <button type="button" class="dtv-modal-tab" data-tab="coordinates">Coordinates</button>
+            <button type="button" class="dtv-modal-tab" data-tab="visibility">Visibility</button>
+          </div>
+          <div class="dtv-modal-body">
+            <div class="tab-pane" id="pane-style">${isFib ? renderFibStyleHTML(cfg) : renderGeneralStyleHTML(d)}</div>
+            <div class="tab-pane" id="pane-coordinates" style="display:none;">${renderCoordinatesHTML(d)}</div>
+            <div class="tab-pane" id="pane-visibility" style="display:none;">${renderVisibilityHTML(d)}</div>
+          </div>
+          <div class="dtv-modal-footer">
+            <div>
+              ${isFib ? `<select id="fTemplate" class="dtv-select">
+                <option value="">Template</option>
+                <option value="save">Lưu làm mặc định</option>
+                <option value="reset">Đặt lại mặc định</option>
+              </select>` : ''}
+            </div>
+            <div class="dtv-modal-btn-group">
+              <button type="button" class="dtv-modal-btn cancel" id="modalCancel">Huỷ</button>
+              <button type="button" class="dtv-modal-btn primary" id="modalOk">Ok</button>
+            </div>
+          </div>
+        </div>`;
+      document.body.appendChild(backdrop);
+
+      const q = (sel) => backdrop.querySelector(sel);
+      const qa = (sel) => Array.from(backdrop.querySelectorAll(sel));
+
+      // Tabs
+      const tabs = qa('.dtv-modal-tab');
+      tabs.forEach((tab) => {
+        tab.addEventListener('click', () => {
+          tabs.forEach((t) => t.classList.remove('active'));
+          tab.classList.add('active');
+          qa('.tab-pane').forEach((p) => { p.style.display = 'none'; });
+          q(`#pane-${tab.dataset.tab}`).style.display = 'block';
+        });
+      });
+
+      // Use one color -> đổi toàn bộ màu các mức
+      if (isFib) {
+        q('#fOneColor').addEventListener('input', (e) => {
+          qa('.fib-col').forEach((c) => { c.value = e.target.value; });
+        });
+      }
+
+      const closeModal = () => {
+        document.removeEventListener('keydown', onKey, true);
+        backdrop.remove();
+        if (drawings[idx] === d) {
+          selectedDrawingIndex = idx;
+          showToolbar(idx);
+        }
+        redraw();
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.stopPropagation(); closeModal(); }
+      };
+      document.addEventListener('keydown', onKey, true);
+      backdrop.addEventListener('keydown', (e) => e.stopPropagation());
+      backdrop.addEventListener('pointerdown', (e) => e.stopPropagation());
+      backdrop.addEventListener('mousedown', (e) => { if (e.target === backdrop) closeModal(); });
+      q('.dtv-modal-close').addEventListener('click', closeModal);
+      q('#modalCancel').addEventListener('click', closeModal);
+
+      // Gom giá trị của form Fib vào object đích (hình vẽ hoặc template)
+      const collectFibInto = (t) => {
+        t.showTrendline = q('#fTrend').checked;
+        t.trendColor = q('#fTrendColor').value;
+        t.trendStyle = q('#fTrendStyle').value;
+        t.levelsWidth = parseFloat(q('#fLevelsWidth').value) || 1;
+        t.levelsStyle = q('#fLevelsStyle').value;
+        t.extend = q('#fExtend').value;
+        t.levels = qa('.dtv-fib-item')
+          .map((item) => ({
+            level: parseFloat(item.querySelector('.fib-val').value),
+            color: item.querySelector('.fib-col').value,
+            enabled: item.querySelector('.fib-chk').checked,
+          }))
+          .filter((l) => Number.isFinite(l.level));
+        t.bg = q('#fBg').checked;
+        t.bgOpacity = parseInt(q('#fBgOpacity').value, 10) / 100;
+        t.reverse = q('#fReverse').checked;
+        t.showPrices = q('#fPrices').checked;
+        t.showLevels = q('#fLevels').checked;
+        t.levelsMode = q('#fLevelsMode').value;
+        t.labelH = q('#fLabelH').value;
+        t.labelV = q('#fLabelV').value;
+        t.showText = q('#fShowText').checked;
+        t.text = q('#fText').value;
+        t.textH = q('#fTextH').value;
+        t.textV = q('#fTextV').value;
+        t.fontSize = parseInt(q('#fFontSize').value, 10) || 10;
+      };
+
+      if (isFib) {
+        q('#fTemplate').addEventListener('change', (e) => {
+          const action = e.target.value;
+          e.target.value = '';
+          if (action === 'save') {
+            const t = {};
+            collectFibInto(t);
+            delete t.text; // chữ ghi chú là riêng từng hình
+            setToolStyle('fib', t);
+          } else if (action === 'reset') {
+            resetToolStyles('fib');
+            Object.assign(d, clone({ ...FIB_DEFAULTS, levels: DEFAULT_FIB_LEVELS }));
+            backdrop.remove();
+            document.removeEventListener('keydown', onKey, true);
+            redraw();
+            openSettingsModal(idx);
+          }
+        });
+      }
+
+      q('#modalOk').addEventListener('click', () => {
+        // Style
+        if (isFib) {
+          collectFibInto(d);
+        } else {
+          d.color = q('#gColor').value;
+          d.opacity = parseInt(q('#gOpacity').value, 10) / 100;
+          if (q('#gWidth')) d.width = parseFloat(q('#gWidth').value) || d.width;
+          if (q('#gDash')) d.dashed = q('#gDash').value === 'dashed';
+          if (q('#gText')) {
+            const v = q('#gText').value.trim();
+            if (v) d.text = v;
+          }
+        }
+
+        // Coordinates (chỉ ghi đè ô nào người dùng đã sửa)
+        qa('.coord').forEach((input) => {
+          if (input.value === input.defaultValue) return;
+          const v = parseFloat(input.value);
+          if (!Number.isFinite(v)) return;
+          const target = input.dataset.key === 'self' ? d : d[input.dataset.key];
+          if (target) target[input.dataset.field] = v;
+        });
+        const rrInput = q('#coordRR');
+        if (rrInput) {
+          const rr = parseFloat(rrInput.value);
+          if (Number.isFinite(rr) && rr > 0) d.rr = rr;
+        }
+
+        // Visibility theo khung thời gian
+        const tfChecks = qa('.tf-chk');
+        if (tfChecks.length) {
+          const picked = tfChecks.filter((c) => c.checked).map((c) => c.value);
+          if (picked.length === tfChecks.length || picked.length === 0) delete d.tfs;
+          else d.tfs = picked;
+        }
+
+        // Nhớ style này cho các hình mới cùng loại
+        rememberStyle(d);
+        closeModal();
+      });
+    }
+
+    // Lấy cấu hình Fib hiện tại của hình (đã điền mặc định cho hình cũ)
+    function computeFibCfg(d) {
+      return { ...clone({ ...FIB_DEFAULTS, levels: DEFAULT_FIB_LEVELS }), ...clone(d) };
+    }
+
+    // ===================== NHẬP GHI CHÚ =====================
     function openTextInputAt(screenXY, pt) {
       const input = document.createElement('input');
       input.type = 'text';
@@ -1163,7 +1671,6 @@ const DrawingModule = (function () {
       input.style.zIndex = '9999';
 
       container.appendChild(input);
-
       setTimeout(() => { input.focus(); }, 50);
 
       let submitted = false;
@@ -1172,7 +1679,7 @@ const DrawingModule = (function () {
         submitted = true;
         const val = input.value.trim();
         if (val) {
-          drawings.push({ type: 'text', text: val, p: pt });
+          drawings.push(newDrawing('text', { text: val, p: pt }));
           redraw();
         }
         input.remove();
@@ -1192,16 +1699,14 @@ const DrawingModule = (function () {
       input.addEventListener('pointerdown', (ev) => ev.stopPropagation());
       input.addEventListener('mousedown', (ev) => ev.stopPropagation());
       input.addEventListener('click', (ev) => ev.stopPropagation());
-
       input.addEventListener('blur', submitText);
     }
 
+    // ===================== SỰ KIỆN CON TRỎ =====================
     function onPointerDown(e) {
-      // Đang chờ chốt điểm neo thứ 3 - cú chạm/click này CHỐT LUÔN điểm neo
-      // thứ 3 rồi tạo hình hoàn chỉnh.
       if (pendingThirdPoint) {
         const pt = pointFromEvent(e);
-        if (pt.time !== null && pt.time !== undefined && pt.price !== null && pt.price !== undefined) {
+        if (pt.price !== null && pt.price !== undefined) {
           drawings.push({ ...pendingThirdPoint, p3: pt });
           pendingThirdPoint = null;
           previewDrawing = null;
@@ -1214,16 +1719,27 @@ const DrawingModule = (function () {
       const pt = pointFromEvent(e);
 
       if (currentTool === 'cursor') {
+        const handleName = findHandleAt(pt);
+        if (handleName) {
+          isDraggingHandle = true;
+          draggedHandleName = handleName;
+          draggedDrawingIndex = selectedDrawingIndex;
+          draggedDrawingOriginal = clone(drawings[selectedDrawingIndex]);
+          dragStartPixel = { x: e.clientX, y: e.clientY };
+          canvas.setPointerCapture(e.pointerId);
+          e.stopPropagation();
+          e.preventDefault();
+          return;
+        }
+
         const match = findDrawingAt(pt);
         if (match !== null) {
           selectedDrawingIndex = match.index;
           showToolbar(match.index);
-          // Hình đã khoá (🔒): vẫn chọn được để xem/sửa màu/xoá, nhưng
-          // KHÔNG cho kéo di chuyển.
           if (!drawings[match.index].locked) {
             isDraggingShape = true;
             draggedDrawingIndex = match.index;
-            draggedDrawingOriginal = JSON.parse(JSON.stringify(drawings[match.index]));
+            draggedDrawingOriginal = clone(drawings[match.index]);
             dragStartPixel = { x: e.clientX, y: e.clientY };
             canvas.setPointerCapture(e.pointerId);
           }
@@ -1237,7 +1753,6 @@ const DrawingModule = (function () {
         return;
       }
 
-      // Eraser tool
       if (currentTool === 'eraser') {
         const match = findDrawingAt(pt);
         if (match !== null && !drawings[match.index].locked) {
@@ -1247,15 +1762,12 @@ const DrawingModule = (function () {
         return;
       }
 
-      // Mobile: công cụ 1 điểm neo/Cảnh báo/Ghi chú không commit ngay lúc
-      // chạm xuống - giữ tay + kéo để chỉnh, commit khi NHẤC TAY (onPointerUp).
       if (e.pointerType === 'touch' && (SINGLE_ANCHOR_TOOLS.includes(currentTool) || currentTool === 'alert' || currentTool === 'text')) {
         pendingTouchPlacement = currentTool;
         canvas.setPointerCapture(e.pointerId);
         return;
       }
 
-      // Price alert tool
       if (currentTool === 'alert') {
         if (pt.price === null || pt.price === undefined || Number.isNaN(pt.price)) return;
         if (onAlertRequested) onAlertRequested(pt.price);
@@ -1263,42 +1775,34 @@ const DrawingModule = (function () {
         return;
       }
 
-      // Text note tool
       if (currentTool === 'text') {
-        if (pt.time === null || pt.time === undefined || pt.price === null || pt.price === undefined) return;
         e.preventDefault();
         e.stopPropagation();
         openTextInputAt(getScreenXY(e), pt);
         return;
       }
 
-      // Công cụ 1 điểm neo trên CHUỘT: đặt ngay lúc bấm xuống
       if (currentTool === 'hline') {
         if (pt.price === null || pt.price === undefined) return;
-        drawings.push({ type: 'hline', price: pt.price, color: defaultStyle.color, width: defaultStyle.width, dashed: true });
+        drawings.push(newDrawing('hline', { price: pt.price }, { dashed: true }));
         redraw();
         returnToCursorAfterDraw();
         return;
       }
       if (currentTool === 'vline') {
-        if (pt.time === null || pt.time === undefined) return;
-        drawings.push({ type: 'vline', time: pt.time, color: defaultStyle.color, width: defaultStyle.width, dashed: true });
+        drawings.push(newDrawing('vline', { logicalIndex: pt.logicalIndex, time: pt.time }, { dashed: true }));
         redraw();
         returnToCursorAfterDraw();
         return;
       }
       if (currentTool === 'hray') {
-        if (pt.time === null || pt.time === undefined || pt.price === null || pt.price === undefined) return;
-        drawings.push({ type: 'hray', p: { time: pt.time, price: pt.price }, color: defaultStyle.color, width: defaultStyle.width, dashed: true });
+        if (pt.price === null || pt.price === undefined) return;
+        drawings.push(newDrawing('hray', { p: pt }, { dashed: true }));
         redraw();
         returnToCursorAfterDraw();
         return;
       }
 
-      if (pt.time === null || pt.time === undefined || pt.price === null || pt.price === undefined) return;
-
-      // Mọi công cụ 2 điểm neo (kể cả bước đầu của công cụ 3 điểm neo) bắt
-      // đầu bằng thao tác kéo dragStart -> pt.
       dragStart = pt;
       canvas.setPointerCapture(e.pointerId);
     }
@@ -1328,27 +1832,42 @@ const DrawingModule = (function () {
         touchRawPoint = null;
       }
 
-      // Đang chờ chốt điểm neo thứ 3 - preview bám theo con trỏ/ngón tay
       if (pendingThirdPoint) {
         previewDrawing = { ...pendingThirdPoint, p3: pt };
         redraw();
         return;
       }
 
-      // Đang giữ tay để đặt công cụ 1 điểm neo - cập nhật xem trước, chưa commit
       if (pendingTouchPlacement) {
         if (pendingTouchPlacement === 'hline') {
-          previewDrawing = { type: 'hline', price: pt.price };
+          previewDrawing = newDrawing('hline', { price: pt.price }, { dashed: true });
         } else if (pendingTouchPlacement === 'vline') {
-          previewDrawing = { type: 'vline', time: pt.time };
+          previewDrawing = newDrawing('vline', { logicalIndex: pt.logicalIndex, time: pt.time }, { dashed: true });
         } else if (pendingTouchPlacement === 'hray') {
-          previewDrawing = { type: 'hray', p: { time: pt.time, price: pt.price } };
+          previewDrawing = newDrawing('hray', { p: pt }, { dashed: true });
         }
         redraw();
         return;
       }
 
       if (currentTool === 'cursor') {
+        // Kéo nút tròn điểm neo
+        if (isDraggingHandle && draggedDrawingIndex !== null) {
+          const d = drawings[draggedDrawingIndex];
+          if (d) {
+            if (draggedHandleName === 'p1') d.p1 = pt;
+            else if (draggedHandleName === 'p2') d.p2 = pt;
+            else if (draggedHandleName === 'p3') d.p3 = pt;
+            else if (draggedHandleName === 'p') d.p = pt;
+            else if (draggedHandleName === 'price') d.price = pt.price;
+            else if (draggedHandleName === 'time') { d.time = pt.time; d.logicalIndex = pt.logicalIndex; }
+            repositionToolbarOnly(draggedDrawingIndex);
+          }
+          redraw();
+          return;
+        }
+
+        // Kéo cả hình
         if (isDraggingShape && draggedDrawingOriginal) {
           const dx = e.clientX - dragStartPixel.x;
           const dy = e.clientY - dragStartPixel.y;
@@ -1356,70 +1875,51 @@ const DrawingModule = (function () {
           const d = drawings[draggedDrawingIndex];
 
           if (d) {
+            const shiftPoint = (pOrig) => {
+              const xO = pointToX(pOrig);
+              const yO = priceToY(pOrig.price);
+              if (xO === null || yO === null) return pOrig;
+              const info = xToPointInfo(xO + dx);
+              return { logicalIndex: info.logicalIndex, time: info.time, price: yToPrice(yO + dy) };
+            };
+
             if (d.type === 'hline') {
               const yOrig = priceToY(orig.price);
-              if (yOrig !== null && yOrig !== undefined) {
-                const newPrice = yToPrice(yOrig + dy);
-                if (newPrice !== null && !Number.isNaN(newPrice)) d.price = newPrice;
-              }
+              if (yOrig !== null) d.price = yToPrice(yOrig + dy);
             } else if (d.type === 'vline') {
-              const xOrig = timeToX(orig.time);
-              if (xOrig !== null && xOrig !== undefined) {
-                const newTime = xToTime(xOrig + dx);
-                if (newTime !== null) d.time = newTime;
+              const xOrig = pointToX(orig);
+              if (xOrig !== null) {
+                const info = xToPointInfo(xOrig + dx);
+                d.time = info.time; d.logicalIndex = info.logicalIndex;
               }
-            } else if (d.type === 'hray') {
-              const xOrig = timeToX(orig.p.time), yOrig = priceToY(orig.p.price);
-              if (xOrig !== null && yOrig !== null) {
-                const t = xToTime(xOrig + dx), p = yToPrice(yOrig + dy);
-                if (t !== null && p !== null) d.p = { time: t, price: p };
-              }
-            } else if (d.type === 'text') {
-              const xOrig = timeToX(orig.p.time), yOrig = priceToY(orig.p.price);
-              if (xOrig !== null && yOrig !== null) {
-                const t = xToTime(xOrig + dx), p = yToPrice(yOrig + dy);
-                if (t !== null && p !== null) d.p = { time: t, price: p };
-              }
+            } else if (d.type === 'hray' || d.type === 'text') {
+              d.p = shiftPoint(orig.p);
             } else if (d.p3) {
-              // Công cụ 3 điểm neo: dịch chuyển cả 3
-              const x1o = timeToX(orig.p1.time), y1o = priceToY(orig.p1.price);
-              const x2o = timeToX(orig.p2.time), y2o = priceToY(orig.p2.price);
-              const x3o = timeToX(orig.p3.time), y3o = priceToY(orig.p3.price);
-              if ([x1o, y1o, x2o, y2o, x3o, y3o].every((v) => v !== null && v !== undefined)) {
-                const t1 = xToTime(x1o + dx), pr1 = yToPrice(y1o + dy);
-                const t2 = xToTime(x2o + dx), pr2 = yToPrice(y2o + dy);
-                const t3 = xToTime(x3o + dx), pr3 = yToPrice(y3o + dy);
-                if ([t1, pr1, t2, pr2, t3, pr3].every((v) => v !== null && v !== undefined)) {
-                  d.p1 = { time: t1, price: pr1 };
-                  d.p2 = { time: t2, price: pr2 };
-                  d.p3 = { time: t3, price: pr3 };
-                }
-              }
+              d.p1 = shiftPoint(orig.p1);
+              d.p2 = shiftPoint(orig.p2);
+              d.p3 = shiftPoint(orig.p3);
             } else if (d.p1 && d.p2) {
-              // Công cụ 2 điểm neo
-              const x1Orig = timeToX(orig.p1.time), y1Orig = priceToY(orig.p1.price);
-              const x2Orig = timeToX(orig.p2.time), y2Orig = priceToY(orig.p2.price);
-              if (x1Orig !== null && y1Orig !== null && x2Orig !== null && y2Orig !== null) {
-                const t1 = xToTime(x1Orig + dx), p1 = yToPrice(y1Orig + dy);
-                const t2 = xToTime(x2Orig + dx), p2 = yToPrice(y2Orig + dy);
-                if (t1 !== null && p1 !== null && t2 !== null && p2 !== null) {
-                  d.p1 = { time: t1, price: p1 };
-                  d.p2 = { time: t2, price: p2 };
-                }
-              }
+              d.p1 = shiftPoint(orig.p1);
+              d.p2 = shiftPoint(orig.p2);
             }
             repositionToolbarOnly(draggedDrawingIndex);
           }
         } else {
-          const match = findDrawingAt(pt);
-          if (match !== null) {
-            hoveredDrawingIndex = match.index;
+          const matchHandle = findHandleAt(pt);
+          if (matchHandle) {
             canvas.style.pointerEvents = 'auto';
-            canvas.style.cursor = 'move';
+            canvas.style.cursor = 'pointer';
           } else {
-            hoveredDrawingIndex = null;
-            canvas.style.pointerEvents = 'none';
-            canvas.style.cursor = 'default';
+            const match = findDrawingAt(pt);
+            if (match !== null) {
+              hoveredDrawingIndex = match.index;
+              canvas.style.pointerEvents = 'auto';
+              canvas.style.cursor = 'move';
+            } else {
+              hoveredDrawingIndex = null;
+              canvas.style.pointerEvents = 'none';
+              canvas.style.cursor = 'default';
+            }
           }
         }
         redraw();
@@ -1428,49 +1928,43 @@ const DrawingModule = (function () {
 
       if (dragStart && currentTool !== 'alert' && currentTool !== 'text' && currentTool !== 'eraser' &&
           !SINGLE_ANCHOR_TOOLS.includes(currentTool)) {
-        if (pt.time === null || pt.time === undefined || pt.price === null || pt.price === undefined) {
-          redraw();
-          return;
-        }
-        previewDrawing = { type: currentTool, p1: dragStart, p2: pt };
+        // Preview dùng luôn style đã nhớ của công cụ
+        previewDrawing = newDrawing(currentTool, { p1: dragStart, p2: pt });
       }
       redraw();
     }
 
     function onPointerUp(e) {
-      // Trên cảm ứng, ngón tay nhấc lên - xoá crosshair NGAY tại đây.
       if (e.pointerType === 'touch') {
         hoverPoint = null;
         touchRawPoint = null;
       }
 
-      // Commit công cụ 1 điểm neo đã giữ tay để chỉnh trên cảm ứng
       if (pendingTouchPlacement) {
         const tool = pendingTouchPlacement;
         const pt = pointFromEvent(e);
         pendingTouchPlacement = null;
         previewDrawing = null;
 
-        if (tool === 'hline' && pt.price !== null && pt.price !== undefined && !Number.isNaN(pt.price)) {
-          drawings.push({ type: 'hline', price: pt.price, color: defaultStyle.color, width: defaultStyle.width, dashed: true });
+        if (tool === 'hline' && pt.price !== null && !Number.isNaN(pt.price)) {
+          drawings.push(newDrawing('hline', { price: pt.price }, { dashed: true }));
           redraw();
           returnToCursorAfterDraw();
-        } else if (tool === 'vline' && pt.time !== null && pt.time !== undefined) {
-          drawings.push({ type: 'vline', time: pt.time, color: defaultStyle.color, width: defaultStyle.width, dashed: true });
+        } else if (tool === 'vline') {
+          drawings.push(newDrawing('vline', { logicalIndex: pt.logicalIndex, time: pt.time }, { dashed: true }));
           redraw();
           returnToCursorAfterDraw();
-        } else if (tool === 'hray' && pt.time !== null && pt.time !== undefined && pt.price !== null && pt.price !== undefined) {
-          drawings.push({ type: 'hray', p: { time: pt.time, price: pt.price }, color: defaultStyle.color, width: defaultStyle.width, dashed: true });
+        } else if (tool === 'hray' && pt.price !== null) {
+          drawings.push(newDrawing('hray', { p: pt }, { dashed: true }));
           redraw();
           returnToCursorAfterDraw();
-        } else if (tool === 'alert' && pt.price !== null && pt.price !== undefined && !Number.isNaN(pt.price)) {
+        } else if (tool === 'alert' && pt.price !== null) {
           if (onAlertRequested) onAlertRequested(pt.price);
           redraw();
           returnToCursorAfterDraw();
-        } else if (tool === 'text' && pt.time !== null && pt.time !== undefined && pt.price !== null && pt.price !== undefined) {
+        } else if (tool === 'text') {
           redraw();
           openTextInputAt(getScreenXY(e), pt);
-          // returnToCursorAfterDraw() được gọi bên trong openTextInputAt()
         } else {
           redraw();
         }
@@ -1478,18 +1972,14 @@ const DrawingModule = (function () {
       }
 
       if (currentTool === 'cursor') {
-        if (isDraggingShape) {
+        if (isDraggingHandle || isDraggingShape) {
           canvas.releasePointerCapture(e.pointerId);
+          isDraggingHandle = false;
+          draggedHandleName = null;
           isDraggingShape = false;
           draggedDrawingIndex = null;
           draggedDrawingOriginal = null;
           dragStartPixel = null;
-          const pt = pointFromEvent(e);
-          const match = findDrawingAt(pt);
-          if (match === null) {
-            canvas.style.pointerEvents = 'none';
-            canvas.style.cursor = 'default';
-          }
           redraw();
         }
         return;
@@ -1503,35 +1993,33 @@ const DrawingModule = (function () {
       const pt = pointFromEvent(e);
       let shapeCreated = false;
 
-      if (pt.time !== null && pt.time !== undefined && pt.price !== null && pt.price !== undefined) {
-        if (TWO_ANCHOR_TOOLS.includes(currentTool)) {
-          const extra = {};
-          if (currentTool === 'long' || currentTool === 'short') extra.rr = 2;
-          drawings.push({ type: currentTool, p1: dragStart, p2: pt, color: defaultStyle.color, width: defaultStyle.width, dashed: false, ...extra });
-          shapeCreated = true;
-        } else if (THREE_ANCHOR_TOOLS.includes(currentTool)) {
-          pendingThirdPoint = { type: currentTool, p1: dragStart, p2: pt, color: defaultStyle.color, width: defaultStyle.width, dashed: false };
-        }
+      if (TWO_ANCHOR_TOOLS.includes(currentTool)) {
+        const extra = {};
+        if (currentTool === 'long' || currentTool === 'short') extra.rr = 2;
+        // Fib: "đóng băng" cấu hình đầy đủ vào hình vừa vẽ (style đã nhớ sẽ ghi đè lên mặc định)
+        if (currentTool === 'fib') Object.assign(extra, clone({ ...FIB_DEFAULTS, levels: DEFAULT_FIB_LEVELS }));
+        drawings.push(newDrawing(currentTool, { p1: dragStart, p2: pt }, { dashed: false, ...extra }));
+        shapeCreated = true;
+      } else if (THREE_ANCHOR_TOOLS.includes(currentTool)) {
+        pendingThirdPoint = newDrawing(currentTool, { p1: dragStart, p2: pt }, { dashed: false });
       }
 
       dragStart = null;
       previewDrawing = null;
       redraw();
       if (shapeCreated) returnToCursorAfterDraw();
-      // Nếu cần điểm neo thứ 3: giữ nguyên tool, chờ cú chạm/click tiếp theo
-      // ở onPointerDown để chốt.
     }
 
     function onContainerPointerMove(e) {
-      if (currentTool !== 'cursor' || isDraggingShape) return;
+      if (currentTool !== 'cursor' || isDraggingShape || isDraggingHandle) return;
 
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
-      const time = xToTime(x);
+      const info = xToPointInfo(x);
       const price = yToPrice(y);
 
-      if (time === null || price === null || Number.isNaN(price)) {
+      if (price === null || Number.isNaN(price)) {
         canvas.style.pointerEvents = 'none';
         canvas.style.cursor = 'default';
         if (hoveredDrawingIndex !== null) {
@@ -1541,7 +2029,15 @@ const DrawingModule = (function () {
         return;
       }
 
-      const match = findDrawingAt({ time, price });
+      const pt = { logicalIndex: info.logicalIndex, time: info.time, price: price };
+      const matchHandle = findHandleAt(pt);
+      if (matchHandle) {
+        canvas.style.pointerEvents = 'auto';
+        canvas.style.cursor = 'pointer';
+        return;
+      }
+
+      const match = findDrawingAt(pt);
       if (match !== null) {
         canvas.style.pointerEvents = 'auto';
         canvas.style.cursor = 'move';
@@ -1576,15 +2072,50 @@ const DrawingModule = (function () {
       pendingTouchPlacement = null;
       pendingThirdPoint = null;
       isDraggingShape = false;
+      isDraggingHandle = false;
       draggedDrawingIndex = null;
       draggedDrawingOriginal = null;
       dragStartPixel = null;
       redraw();
     });
     canvas.addEventListener('pointerleave', () => { hoverPoint = null; touchRawPoint = null; redraw(); });
-    container.addEventListener('pointermove', onContainerPointerMove);
 
-    /** Đóng toolbar khi bấm vào chỗ TRỐNG trên chart. */
+    // Nhấp đúp vào hình = mở cài đặt chi tiết (giống TradingView)
+    canvas.addEventListener('dblclick', (e) => {
+      if (currentTool !== 'cursor') return;
+      const match = findDrawingAt(pointFromEvent(e));
+      if (match !== null) {
+        selectedDrawingIndex = match.index;
+        openSettingsModal(match.index);
+      }
+    });
+
+    // Chuột phải vào hình = mở cài đặt chi tiết
+    canvas.addEventListener('contextmenu', (e) => {
+      if (currentTool !== 'cursor') return;
+      const match = findDrawingAt(pointFromEvent(e));
+      if (match !== null) {
+        e.preventDefault();
+        selectedDrawingIndex = match.index;
+        openSettingsModal(match.index);
+      }
+    });
+
+    // Chọn hình ngay khi bấm, không cần canvas đã bật pointer-events từ trước.
+    // Chạy ở pha capture nên chặn được chart kéo/cuộn khi bấm trúng hình.
+    container.addEventListener('pointerdown', (e) => {
+      if (currentTool !== 'cursor' || e.target === canvas) return;
+      if (e.target.closest && e.target.closest('.dtv-tb, input, select, button, textarea')) return;
+      if (e.button !== undefined && e.button !== 0) return;
+      const pt = pointFromEvent(e);
+      if (pt.price === null || pt.price === undefined || Number.isNaN(pt.price)) return;
+      if (findHandleAt(pt) || findDrawingAt(pt)) {
+        canvas.style.pointerEvents = 'auto';
+        onPointerDown(e);
+      }
+    }, true);
+
+    container.addEventListener('pointermove', onContainerPointerMove);
     container.addEventListener('pointerdown', (e) => {
       if (currentTool !== 'cursor') return;
       if (e.target === canvas) return;
@@ -1595,7 +2126,10 @@ const DrawingModule = (function () {
       }
     });
 
-    chart.timeScale().subscribeVisibleLogicalRangeChange(() => redraw());
+    chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+      redraw();
+      if (selectedDrawingIndex !== null) repositionToolbarOnly(selectedDrawingIndex);
+    });
 
     const resizeObs = new ResizeObserver(() => {
       requestAnimationFrame(() => {
@@ -1613,6 +2147,7 @@ const DrawingModule = (function () {
       }
       redraw();
     }
+
     function getAllHidden() {
       return allDrawingsHidden;
     }
@@ -1635,5 +2170,9 @@ const DrawingModule = (function () {
     return Number(v).toLocaleString('en-US', { maximumFractionDigits: 6 });
   }
 
-  return { create };
+  return {
+    create,
+    getToolStyle: styleOf,
+    resetToolStyles,
+  };
 })();

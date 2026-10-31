@@ -4,25 +4,19 @@
  * nhưng khi chọn 1 symbol thì áp dụng cho PANE ĐANG FOCUS (activePaneId).
  *
  * ============================================================================
- * CẬP NHẬT (đợt nâng cấp "bộ công cụ vẽ chuyên nghiệp" - THU GỌN TOOLBAR):
+ * THANH CÔNG CỤ VẼ (THU GỌN) - chỉ còn nút cố định, không phụ thuộc số công cụ:
  *
- *   Trước đây mỗi công cụ vẽ là 1 nút riêng trong #sharedDrawGroup -> với
- *   ~20 công cụ mới sẽ tràn dòng, đặc biệt trên mobile. Giờ thanh công cụ
- *   chỉ còn CỐ ĐỊNH 5 nút, không phụ thuộc số lượng công cụ:
+ *     [↖ Con trỏ] [ icon-công-cụ-vẽ ▾ ] [🔔 Cảnh báo] [⌫ Tẩy] [👁 Ẩn/hiện] [🗑 Xoá hết]
  *
- *     [↖ Con trỏ] [ icon-công-cụ-vẽ ▾ ] [🔔 Cảnh báo] [⌫ Tẩy] [🗑 Xoá hết]
+ *   Nút "combo" ở giữa hiện icon công cụ vẽ hình đang dùng/gần nhất - bấm vào là
+ *   chọn lại đúng công cụ đó ngay (không cần mở bảng). Bấm mũi tên ▾ để mở BẢNG
+ *   (flyout) liệt kê toàn bộ công cụ theo nhóm.
  *
- *   Nút "combo" ở giữa LUÔN hiện icon của công cụ vẽ hình đang dùng/gần
- *   nhất (mặc định Đường xu hướng) - bấm vào là chọn lại đúng công cụ đó
- *   ngay lập tức (không cần mở bảng), giống hành vi "nhớ công cụ cuối" của
- *   TradingView. Bấm mũi tên ▾ cạnh bên mới MỞ BẢNG (flyout) liệt kê toàn
- *   bộ công cụ theo từng NHÓM (Đường kẻ / Fibonacci / Hình vẽ / Lệnh giao
- *   dịch / Ghi chú) - bảng này định vị TUYỆT ĐỐI (position: fixed) ngay
- *   dưới nút, tự dịch vào trong nếu gần sát mép màn hình, và tự đóng khi
- *   chọn xong 1 công cụ hoặc bấm ra ngoài - xem hideFlyout()/toggleFlyout().
- *
- *   Cảnh báo giá (🔔) và Tẩy (⌫) vẫn giữ làm nút riêng vì là 2 công cụ dùng
- *   RẤT thường xuyên, không đáng để giấu vào trong bảng.
+ * CẬP NHẬT - NHỚ STYLE THEO CÔNG CỤ (xem drawing.js):
+ *   - Nút combo hiện chấm màu = màu đã nhớ của công cụ đang chọn.
+ *   - Trong bảng, công cụ nào đã có style nhớ sẽ có chấm xanh nhỏ ở góc icon.
+ *   - Chân bảng có nút "Đặt lại style đã nhớ" (xoá style nhớ của TẤT CẢ công cụ).
+ *   - Tự cập nhật khi drawing.js phát sự kiện 'drawing:styleChanged'.
  * ============================================================================
  */
 
@@ -79,6 +73,41 @@ const UI = (function () {
   let lastDrawShapeTool = 'trendline'; // nhớ công cụ vẽ hình gần nhất để hiện icon trên nút combo
   let flyoutEl = null;
 
+  // CSS nhỏ cho chấm màu / dấu "đã nhớ style" / nút đặt lại (tự nạp, không cần sửa file css)
+  const UI_EXTRA_CSS = `
+.draw-tool-btn.has-color-dot{position:relative}
+.draw-tool-btn.has-color-dot::after{content:'';position:absolute;right:3px;bottom:3px;width:7px;height:7px;border-radius:50%;background:var(--dot-color,#f2a339);border:1px solid var(--bg-elevated,#1a1d26);pointer-events:none}
+.draw-flyout-item .dfi-icon{position:relative}
+.draw-flyout-item.has-style .dfi-icon::after{content:'';position:absolute;top:3px;right:3px;width:6px;height:6px;border-radius:50%;background:var(--accent-blue,#2962ff)}
+.draw-flyout-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:10px;border-top:1px solid var(--border-color,rgba(255,255,255,.12))}
+.draw-flyout-hint{font-size:10.5px;color:var(--text-secondary,#9aa3b8);line-height:1.3}
+.draw-flyout-reset{flex-shrink:0;background:transparent;border:1px solid var(--border-color,rgba(255,255,255,.2));color:var(--text-primary,#fff);border-radius:8px;padding:6px 10px;font-size:11.5px;cursor:pointer}
+.draw-flyout-reset:disabled{opacity:.4;cursor:default}
+@media (hover:hover){.draw-flyout-reset:not(:disabled):hover{background:var(--bg-hover,rgba(255,255,255,.08))}}
+`;
+
+  function ensureUiStyles() {
+    if (document.getElementById('ui-extra-styles')) return;
+    const st = document.createElement('style');
+    st.id = 'ui-extra-styles';
+    st.textContent = UI_EXTRA_CSS;
+    document.head.appendChild(st);
+  }
+
+  /** Style đã nhớ của 1 công cụ (rỗng nếu chưa có hoặc drawing.js chưa nạp). */
+  function getRememberedStyle(toolId) {
+    if (typeof DrawingModule === 'undefined' || typeof DrawingModule.getToolStyle !== 'function') return {};
+    try {
+      return DrawingModule.getToolStyle(toolId) || {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function hasRememberedStyle(toolId) {
+    return Object.keys(getRememberedStyle(toolId)).length > 0;
+  }
+
   function findToolMeta(id) {
     for (const cat of DRAW_TOOL_CATEGORIES) {
       const t = cat.tools.find((t) => t.id === id);
@@ -98,6 +127,7 @@ const UI = (function () {
   }
 
   function init() {
+    ensureUiStyles();
     renderPopularSymbols();
     renderLayoutButtons();
     renderSharedTimeframeGroup();
@@ -356,6 +386,8 @@ const UI = (function () {
     flyoutEl = document.createElement('div');
     flyoutEl.className = 'draw-flyout';
 
+    let anyRemembered = false;
+
     DRAW_TOOL_CATEGORIES.forEach((cat) => {
       const catEl = document.createElement('div');
       catEl.className = 'draw-flyout-category';
@@ -368,9 +400,14 @@ const UI = (function () {
       const grid = document.createElement('div');
       grid.className = 'draw-flyout-grid';
       cat.tools.forEach((t) => {
+        const remembered = hasRememberedStyle(t.id);
+        if (remembered) anyRemembered = true;
+
         const b = document.createElement('button');
         b.type = 'button';
-        b.className = 'draw-flyout-item' + (t.id === lastDrawShapeTool ? ' active' : '');
+        b.className =
+          'draw-flyout-item' + (t.id === lastDrawShapeTool ? ' active' : '') + (remembered ? ' has-style' : '');
+        b.title = remembered ? t.title + ' - đã nhớ style của bạn' : t.title;
         const iconSvg = (typeof Icons !== 'undefined' && Icons[t.icon]) ? Icons[t.icon] : (t.label || '');
         b.innerHTML = `<span class="dfi-icon">${iconSvg}</span><span class="dfi-label">${t.title}</span>`;
         b.addEventListener('click', (e) => {
@@ -382,6 +419,26 @@ const UI = (function () {
       catEl.appendChild(grid);
       flyoutEl.appendChild(catEl);
     });
+
+    // Chân bảng: đặt lại toàn bộ style đã nhớ
+    const footer = document.createElement('div');
+    footer.className = 'draw-flyout-footer';
+    footer.innerHTML = '<span class="draw-flyout-hint">Chấm xanh = công cụ đã nhớ style của bạn</span>';
+    const resetBtn = document.createElement('button');
+    resetBtn.type = 'button';
+    resetBtn.className = 'draw-flyout-reset';
+    resetBtn.textContent = 'Đặt lại style đã nhớ';
+    resetBtn.disabled = !anyRemembered;
+    resetBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!confirm('Xoá style đã nhớ của TẤT CẢ công cụ vẽ? (Hình đã vẽ không bị ảnh hưởng)')) return;
+      hideFlyout();
+      if (typeof DrawingModule !== 'undefined' && typeof DrawingModule.resetToolStyles === 'function') {
+        DrawingModule.resetToolStyles();
+      }
+    });
+    footer.appendChild(resetBtn);
+    flyoutEl.appendChild(footer);
 
     document.body.appendChild(flyoutEl);
     positionFlyout(flyoutEl, anchorBtn);
@@ -419,20 +476,20 @@ const UI = (function () {
     });
   }
 
-  // Thay hàm makeToolbarBtn cũ bằng bản hỗ trợ cả icon SVG lẫn text (glyph vẽ hình vẫn giữ text như cũ)
-function makeToolbarBtn(labelOrIcon, title, active, onClick, isIcon) {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'draw-tool-btn' + (active ? ' active' : '');
-  if (isIcon && Icons[labelOrIcon]) {
-    setIcon(btn, labelOrIcon);
-  } else {
-    btn.textContent = labelOrIcon;
+  // Nút thanh công cụ: hỗ trợ cả icon SVG lẫn text
+  function makeToolbarBtn(labelOrIcon, title, active, onClick, isIcon) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'draw-tool-btn' + (active ? ' active' : '');
+    if (isIcon && Icons[labelOrIcon]) {
+      setIcon(btn, labelOrIcon);
+    } else {
+      btn.textContent = labelOrIcon;
+    }
+    btn.title = title;
+    btn.addEventListener('click', onClick);
+    return btn;
   }
-  btn.title = title;
-  btn.addEventListener('click', onClick);
-  return btn;
-}
 
   function renderSharedDrawGroup() {
     const groupEl = document.getElementById('sharedDrawGroup');
@@ -447,7 +504,7 @@ function makeToolbarBtn(labelOrIcon, title, active, onClick, isIcon) {
     if (findToolMeta(activeTool)) lastDrawShapeTool = activeTool;
 
     // 1. Con trỏ - dùng icon SVG
-groupEl.appendChild(makeToolbarBtn('cursor', 'Con trỏ', activeTool === 'cursor', () => selectDrawTool('cursor'), true));
+    groupEl.appendChild(makeToolbarBtn('cursor', 'Con trỏ', activeTool === 'cursor', () => selectDrawTool('cursor'), true));
 
     // 2. Combo: icon công cụ vẽ hình gần nhất + mũi tên mở bảng chọn
     const meta = findToolMeta(lastDrawShapeTool) || { icon: 'trendline', title: 'Đường xu hướng' };
@@ -464,6 +521,14 @@ groupEl.appendChild(makeToolbarBtn('cursor', 'Con trỏ', activeTool === 'cursor
     );
     mainBtn.classList.add('draw-tool-combo-main');
 
+    // Chấm màu = màu đã nhớ của công cụ này (Fib không có màu chung nên không hiện)
+    const remembered = getRememberedStyle(lastDrawShapeTool);
+    if (typeof remembered.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(remembered.color)) {
+      mainBtn.classList.add('has-color-dot');
+      mainBtn.style.setProperty('--dot-color', remembered.color);
+      mainBtn.title += ' · màu đã nhớ: ' + remembered.color;
+    }
+
     const caretBtn = document.createElement('button');
     caretBtn.type = 'button';
     caretBtn.className = 'draw-tool-btn draw-tool-combo-caret';
@@ -479,22 +544,28 @@ groupEl.appendChild(makeToolbarBtn('cursor', 'Con trỏ', activeTool === 'cursor
     groupEl.appendChild(combo);
 
     // 3. Cảnh báo giá
-groupEl.appendChild(makeToolbarBtn('bell', 'Đặt cảnh báo giá (click lên chart)', activeTool === 'alert', () => selectDrawTool('alert'), true));
+    groupEl.appendChild(makeToolbarBtn('bell', 'Đặt cảnh báo giá (click lên chart)', activeTool === 'alert', () => selectDrawTool('alert'), true));
 
     // 4. Tẩy
-groupEl.appendChild(makeToolbarBtn('eraser', 'Tẩy / Xoá từng hình (click vào hình)', activeTool === 'eraser', () => selectDrawTool('eraser'), true));
+    groupEl.appendChild(makeToolbarBtn('eraser', 'Tẩy / Xoá từng hình (click vào hình)', activeTool === 'eraser', () => selectDrawTool('eraser'), true));
 
-// 5. Ẩn/hiện tất cả
-const isHidden = drawing ? drawing.getAllHidden() : false;
-const hideBtn = makeToolbarBtn(
-  isHidden ? 'eyeOff' : 'eye',
-  isHidden ? 'Đang ẩn tất cả hình vẽ - bấm để hiện lại' : 'Ẩn tạm thời tất cả hình vẽ (ô đang chọn)',
-  isHidden, () => { if (!drawing) return; drawing.setAllHidden(!isHidden); renderSharedDrawGroup(); }, true
-);
-groupEl.appendChild(hideBtn);
+    // 5. Ẩn/hiện tất cả
+    const isHidden = drawing ? drawing.getAllHidden() : false;
+    const hideBtn = makeToolbarBtn(
+      isHidden ? 'eyeOff' : 'eye',
+      isHidden ? 'Đang ẩn tất cả hình vẽ - bấm để hiện lại' : 'Ẩn tạm thời tất cả hình vẽ (ô đang chọn)',
+      isHidden,
+      () => {
+        if (!drawing) return;
+        drawing.setAllHidden(!isHidden);
+        renderSharedDrawGroup();
+      },
+      true
+    );
+    groupEl.appendChild(hideBtn);
 
-// 6. Xoá tất cả
-groupEl.appendChild(makeToolbarBtn('trash', 'Xoá tất cả hình vẽ (ô đang chọn)', false, () => selectDrawTool('clear'), true));
+    // 6. Xoá tất cả
+    groupEl.appendChild(makeToolbarBtn('trash', 'Xoá tất cả hình vẽ (ô đang chọn)', false, () => selectDrawTool('clear'), true));
   }
 
   /* ===================== LAYOUT (1/2/3/4 Ô) ===================== */
@@ -505,7 +576,6 @@ groupEl.appendChild(makeToolbarBtn('trash', 'Xoá tất cả hình vẽ (ô đan
     groupEl.innerHTML = '';
 
     const orientation = Store.getState().orientation;
-    const labels = { '1': '1 ô', '2': '2 ô', '3': '3 ô', '4': '4 ô' };
 
     LayoutModule.getAvailableLayouts(orientation).forEach((n) => {
       const btn = document.createElement('button');
@@ -625,6 +695,9 @@ groupEl.appendChild(makeToolbarBtn('trash', 'Xoá tất cả hình vẽ (ô đan
     EventBus.on('pane:drawToolChanged', ({ paneId }) => {
       if (paneId === Store.getState().activePaneId) renderSharedDrawGroup();
     });
+
+    // Kho style nhớ thay đổi (drawing.js phát) -> cập nhật chấm màu trên nút combo
+    window.addEventListener('drawing:styleChanged', () => renderSharedDrawGroup());
   }
 
   return { init, renderSharedDrawGroup, renderSharedTimeframeGroup };

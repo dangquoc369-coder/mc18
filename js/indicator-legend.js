@@ -78,7 +78,8 @@ const IndicatorLegend = (function () {
     }
 
     container.appendChild(buildBBGroupChip(paneId, instance));
-    container.appendChild(buildRSIGroupChip(paneId, instance));
+    container.appendChild(buildRSIGroupChip(paneId, instance, RSI_CLASSIC));
+    container.appendChild(buildRSIGroupChip(paneId, instance, RSI_NDQ));
     container.appendChild(buildMACDGroupChip(paneId, instance));
 
     container.appendChild(buildSimpleToggleChip('#787b86', 'Volume', instance.getVolumeVisible(), (next) => {
@@ -904,12 +905,161 @@ const IndicatorLegend = (function () {
     row.style.gap = '6px';
   }
 
+  /**
+   * Phần cài đặt bổ sung của RSI (giống chỉ báo "RSI by NĐQ" trên TradingView):
+   * nguồn giá, 7 mức RSI, bảng giá theo mức RSI, nền 30-70, RSI SnR tự động.
+   * Trả về { element, read } - read() lấy giá trị hiện tại của các ô nhập.
+   */
+  function buildRsiExtrasSection(ex) {
+    const wrap = document.createElement('div');
+    wrap.style.display = 'flex';
+    wrap.style.flexDirection = 'column';
+    wrap.style.gap = '6px';
+    wrap.style.marginTop = '8px';
+    wrap.style.paddingTop = '8px';
+    wrap.style.borderTop = '1px solid var(--border-color)';
+
+    function sectionTitle(text) {
+      const t = document.createElement('label');
+      t.textContent = text;
+      t.style.fontWeight = 'bold';
+      t.style.color = 'var(--text-primary)';
+      return t;
+    }
+
+    function smallLabel(text) {
+      const s = document.createElement('span');
+      s.textContent = text;
+      s.style.fontSize = '11px';
+      s.style.color = 'var(--text-secondary)';
+      return s;
+    }
+
+    function colorInput(value) {
+      const c = document.createElement('input');
+      c.type = 'color';
+      c.value = value;
+      c.style.width = '32px';
+      c.style.padding = '0';
+      return c;
+    }
+
+    function numberInput(value, min, max, width) {
+      const n = document.createElement('input');
+      n.type = 'number';
+      n.min = String(min);
+      n.max = String(max);
+      n.value = value;
+      n.style.width = width;
+      return n;
+    }
+
+    function checkboxRow(text, checked) {
+      const row = document.createElement('div');
+      row.className = 'indicator-popover-row';
+      const label = document.createElement('label');
+      label.className = 'ip-checkbox-label';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = checked;
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(text));
+      row.appendChild(label);
+      return { row, cb };
+    }
+
+    function wrapRow(...children) {
+      const row = document.createElement('div');
+      row.style.display = 'flex';
+      row.style.alignItems = 'center';
+      row.style.flexWrap = 'wrap';
+      row.style.gap = '6px';
+      children.forEach((c) => row.appendChild(c));
+      return row;
+    }
+
+    wrap.appendChild(sectionTitle('RSI by NĐQ:'));
+
+    // ---- Nguồn giá ----
+    const sourceSelect = document.createElement('select');
+    ['close', 'open', 'high', 'low'].forEach((s) => {
+      const o = document.createElement('option');
+      o.value = s;
+      o.textContent = s;
+      if (s === ex.source) o.selected = true;
+      sourceSelect.appendChild(o);
+    });
+    sourceSelect.style.width = '90px';
+    wrap.appendChild(wrapRow(smallLabel('Nguồn giá RSI'), sourceSelect));
+
+    // ---- 7 mức RSI ----
+    wrap.appendChild(smallLabel('Mức RSI (đường ngang + bảng giá):'));
+    const levelInputs = ex.levels.map((v) => numberInput(v, 1, 99, '44px'));
+    wrap.appendChild(wrapRow(...levelInputs));
+
+    // ---- Nền mờ 30-70 ----
+    const fill = checkboxRow('Nền mờ giữa mức 30 và 70', ex.showFill);
+    wrap.appendChild(fill.row);
+
+    // ---- Bảng giá theo mức RSI ----
+    const ladder = checkboxRow('Bảng giá theo mức RSI', ex.showLadder);
+    wrap.appendChild(ladder.row);
+    const ladderColor = colorInput(ex.ladderColor);
+    const ladderWmaColor = colorInput(ex.ladderWmaColor);
+    wrap.appendChild(
+      wrapRow(smallLabel('Màu chữ'), ladderColor, smallLabel('Màu chữ WMA'), ladderWmaColor)
+    );
+
+    // ---- RSI hỗ trợ / kháng cự tự động ----
+    const snr = checkboxRow('RSI hỗ trợ / kháng cự tự động', ex.showSnr);
+    wrap.appendChild(snr.row);
+    const lookbackInputs = ex.snrLookbacks.map((v) => numberInput(v, 2, 1000, '52px'));
+    wrap.appendChild(wrapRow(smallLabel('Số nến'), ...lookbackInputs));
+    const snrResColor = colorInput(ex.snrResistanceColor);
+    const snrSupColor = colorInput(ex.snrSupportColor);
+    wrap.appendChild(wrapRow(smallLabel('Kháng cự'), snrResColor, smallLabel('Hỗ trợ'), snrSupColor));
+
+    return {
+      element: wrap,
+      read() {
+        return {
+          source: sourceSelect.value,
+          levels: levelInputs.map((i) => i.value),
+          showFill: fill.cb.checked,
+          showLadder: ladder.cb.checked,
+          ladderColor: ladderColor.value,
+          ladderWmaColor: ladderWmaColor.value,
+          showSnr: snr.cb.checked,
+          snrLookbacks: lookbackInputs.map((i) => i.value),
+          snrResistanceColor: snrResColor.value,
+          snrSupportColor: snrSupColor.value,
+        };
+      },
+    };
+  }
+
   // --- RSI GROUP CHIP & POPOVER ---
-  function buildRSIGroupChip(paneId, instance) {
+  // Hai biến thể: RSI cổ điển (bản cũ) và RSI NĐQ (có bảng giá, SnR...).
+  const RSI_CLASSIC = {
+    keys: ['rsiC', 'emaRsiC', 'wmaRsiC'],
+    label: 'RSI',
+    title: 'Cấu hình RSI:',
+    gearTitle: 'Cài đặt RSI, EMA(RSI) và WMA(RSI)',
+    extras: false,
+  };
+  const RSI_NDQ = {
+    keys: ['rsi', 'emaRsi', 'wmaRsi'],
+    label: 'RSI NĐQ',
+    title: 'Cấu hình RSI NĐQ:',
+    gearTitle: 'Cài đặt RSI NĐQ (bảng giá, hỗ trợ/kháng cự RSI...)',
+    extras: true,
+  };
+
+  function buildRSIGroupChip(paneId, instance, variant) {
     const config = instance.getIndicatorConfig();
-    const rsi = config.rsi;
-    const emaRsi = config.emaRsi;
-    const wmaRsi = config.wmaRsi;
+    const rsi = config[variant.keys[0]];
+    const emaRsi = config[variant.keys[1]];
+    const wmaRsi = config[variant.keys[2]];
 
     const isAnyEnabled = rsi.enabled || emaRsi.enabled || wmaRsi.enabled;
 
@@ -922,23 +1072,23 @@ const IndicatorLegend = (function () {
 
     const name = document.createElement('span');
     name.className = 'indicator-name';
-    name.textContent = `RSI ${rsi.period}`;
+    name.textContent = `${variant.label} ${rsi.period}`;
 
     const gear = document.createElement('span');
     gear.className = 'indicator-gear';
-    gear.title = 'Cài đặt RSI, EMA(RSI) và WMA(RSI)';
+    gear.title = variant.gearTitle;
     gear.textContent = '⚙';
 
     function toggle(e) {
       e.stopPropagation();
       if (isAnyEnabled) {
-        instance.setIndicatorVisible('rsi', false);
-        instance.setIndicatorVisible('emaRsi', false);
-        instance.setIndicatorVisible('wmaRsi', false);
+        instance.setIndicatorVisible(variant.keys[0], false);
+        instance.setIndicatorVisible(variant.keys[1], false);
+        instance.setIndicatorVisible(variant.keys[2], false);
       } else {
-        instance.setIndicatorVisible('rsi', true);
-        instance.setIndicatorVisible('emaRsi', true);
-        instance.setIndicatorVisible('wmaRsi', true);
+        instance.setIndicatorVisible(variant.keys[0], true);
+        instance.setIndicatorVisible(variant.keys[1], true);
+        instance.setIndicatorVisible(variant.keys[2], true);
       }
       render(paneId, instance);
     }
@@ -947,7 +1097,7 @@ const IndicatorLegend = (function () {
     name.addEventListener('click', toggle);
     gear.addEventListener('click', (e) => {
       e.stopPropagation();
-      openRSIGroupPopover(chip, paneId, instance);
+      openRSIGroupPopover(chip, paneId, instance, variant);
     });
 
     chip.appendChild(dot);
@@ -956,20 +1106,20 @@ const IndicatorLegend = (function () {
     return chip;
   }
 
-  function openRSIGroupPopover(chip, paneId, instance) {
+  function openRSIGroupPopover(chip, paneId, instance, variant) {
     closeAnyOpenPopover();
 
     const config = instance.getIndicatorConfig();
-    const rsi = config.rsi;
-    const emaRsi = config.emaRsi;
-    const wmaRsi = config.wmaRsi;
+    const rsi = config[variant.keys[0]];
+    const emaRsi = config[variant.keys[1]];
+    const wmaRsi = config[variant.keys[2]];
 
     const popover = document.createElement('div');
     popover.className = 'indicator-popover wide';
     popover.addEventListener('click', (e) => e.stopPropagation());
 
     const rsiTitle = document.createElement('label');
-    rsiTitle.textContent = 'Cấu hình RSI:';
+    rsiTitle.textContent = variant.title;
     rsiTitle.style.fontWeight = 'bold';
     rsiTitle.style.color = 'var(--text-primary)';
 
@@ -1044,6 +1194,10 @@ const IndicatorLegend = (function () {
     wmaRow.appendChild(wmaStyle.width);
     styleRow(wmaRow);
 
+    // Phần bổ sung giống "RSI by NĐQ" (nguồn giá, mức RSI, bảng giá, SnR...)
+    const extrasUI = variant.extras ? buildRsiExtrasSection(config.rsiExtras) : null;
+    if (extrasUI) popover.style.width = '280px';
+
     const actions = document.createElement('div');
     actions.className = 'indicator-popover-actions';
     actions.style.marginTop = '8px';
@@ -1061,17 +1215,18 @@ const IndicatorLegend = (function () {
       const emaP = parseInt(emaPeriodInput.value, 10);
       const wmaP = parseInt(wmaPeriodInput.value, 10);
 
-      if (rsiP && rsiP > 0) instance.setIndicatorPeriod('rsi', rsiP);
-      if (emaP && emaP > 0) instance.setIndicatorPeriod('emaRsi', emaP);
-      if (wmaP && wmaP > 0) instance.setIndicatorPeriod('wmaRsi', wmaP);
+      if (rsiP && rsiP > 0) instance.setIndicatorPeriod(variant.keys[0], rsiP);
+      if (emaP && emaP > 0) instance.setIndicatorPeriod(variant.keys[1], emaP);
+      if (wmaP && wmaP > 0) instance.setIndicatorPeriod(variant.keys[2], wmaP);
 
-      instance.setIndicatorStyle('rsi', { color: rsiStyle.color.value, width: rsiStyle.width.value });
-      instance.setIndicatorStyle('emaRsi', { color: emaStyle.color.value, width: emaStyle.width.value });
-      instance.setIndicatorStyle('wmaRsi', { color: wmaStyle.color.value, width: wmaStyle.width.value });
+      instance.setIndicatorStyle(variant.keys[0], { color: rsiStyle.color.value, width: rsiStyle.width.value });
+      instance.setIndicatorStyle(variant.keys[1], { color: emaStyle.color.value, width: emaStyle.width.value });
+      instance.setIndicatorStyle(variant.keys[2], { color: wmaStyle.color.value, width: wmaStyle.width.value });
+      if (extrasUI) instance.setRsiExtras(extrasUI.read());
 
-      instance.setIndicatorVisible('rsi', rsiCheckbox.checked);
-      instance.setIndicatorVisible('emaRsi', emaCheckbox.checked);
-      instance.setIndicatorVisible('wmaRsi', wmaCheckbox.checked);
+      instance.setIndicatorVisible(variant.keys[0], rsiCheckbox.checked);
+      instance.setIndicatorVisible(variant.keys[1], emaCheckbox.checked);
+      instance.setIndicatorVisible(variant.keys[2], wmaCheckbox.checked);
 
       popover.remove();
       render(paneId, instance);
@@ -1087,6 +1242,7 @@ const IndicatorLegend = (function () {
     popover.appendChild(rsiRow);
     popover.appendChild(emaRow);
     popover.appendChild(wmaRow);
+    if (extrasUI) popover.appendChild(extrasUI.element);
     popover.appendChild(actions);
 
     positionPopover(popover, chip);

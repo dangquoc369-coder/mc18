@@ -1,6 +1,12 @@
 /**
  * indicator.js
  * Chỉ chứa các hàm TÍNH TOÁN thuần (không đụng vào chart/DOM).
+ *
+ * CẬP NHẬT - RSI giống chỉ báo "RSI by NĐQ" trên TradingView:
+ *   - calcRSI: thêm tham số `source` (close/open/high/low) giống ô "Source" bên Pine.
+ *   - calcRSIState: trả về avgGain / avgLoss (RMA kiểu Wilder) tại từng nến.
+ *   - calcRSITargetPrice: công thức tính "giá cần đạt để RSI chạm 1 mức" (bảng giá
+ *     theo mức RSI), giữ ĐÚNG công thức của Pine (nhân với length).
  */
 
 const IndicatorModule = (function () {
@@ -59,8 +65,9 @@ const IndicatorModule = (function () {
     return result;
   }
 
-  function calcRSI(candles, period = 14) {
-    const closes = candles.map((c) => c.close);
+  /** RSI (Wilder, seed bằng SMA - giống ta.rsi của Pine). `source` = close/open/high/low. */
+  function calcRSI(candles, period = 14, source = 'close') {
+    const closes = candles.map((c) => (c[source] !== undefined ? c[source] : c.close));
     const rsi = new Array(closes.length).fill(null);
     if (closes.length <= period) return rsi;
 
@@ -84,6 +91,56 @@ const IndicatorModule = (function () {
       rsi[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
     }
     return rsi;
+  }
+
+  /**
+   * avgGain / avgLoss (RMA kiểu Wilder) SAU KHI xử lý nến i, tính theo giá đóng cửa.
+   * Giá trị null cho các nến đầu (chưa đủ `period` nến).
+   */
+  function calcRSIState(candles, period = 14) {
+    const n = candles.length;
+    const avgGain = new Array(n).fill(null);
+    const avgLoss = new Array(n).fill(null);
+    if (n <= period) return { avgGain, avgLoss };
+
+    let gainSum = 0;
+    let lossSum = 0;
+    for (let i = 1; i <= period; i++) {
+      const diff = candles[i].close - candles[i - 1].close;
+      if (diff >= 0) gainSum += diff;
+      else lossSum -= diff;
+    }
+    let ag = gainSum / period;
+    let al = lossSum / period;
+    avgGain[period] = ag;
+    avgLoss[period] = al;
+
+    for (let i = period + 1; i < n; i++) {
+      const diff = candles[i].close - candles[i - 1].close;
+      const gain = diff > 0 ? diff : 0;
+      const loss = diff < 0 ? -diff : 0;
+      ag = (ag * (period - 1) + gain) / period;
+      al = (al * (period - 1) + loss) / period;
+      avgGain[i] = ag;
+      avgLoss[i] = al;
+    }
+    return { avgGain, avgLoss };
+  }
+
+  /**
+   * Giá cần đạt để RSI chạm `targetRSI` - GIỮ ĐÚNG công thức f_calc_target_price của Pine:
+   *   RS = 100/(100 - targetRSI) - 1
+   *   targetRSI >= 50: giá = closePrev + (RS*avgLoss - avgGain) * length
+   *   targetRSI <  50: giá = closePrev - (avgGain/RS - avgLoss) * length
+   */
+  function calcRSITargetPrice(targetRSI, closePrev, avgGain, avgLoss, length) {
+    const targetRS = 100 / (100 - targetRSI) - 1;
+    if (targetRSI >= 50) {
+      const requiredGain = targetRS * avgLoss - avgGain;
+      return closePrev + requiredGain * length;
+    }
+    const requiredLoss = avgGain / targetRS - avgLoss;
+    return closePrev - requiredLoss * length;
   }
 
   function calcATR(candles, period = 14) {
@@ -167,5 +224,16 @@ const IndicatorModule = (function () {
       .filter((d) => d.value !== null && d.value !== undefined);
   }
 
-  return { calcSMA, calcEMA, calcWMA, calcRSI, calcATR, calcBB, calcMACD, toSeriesData };
+  return {
+    calcSMA,
+    calcEMA,
+    calcWMA,
+    calcRSI,
+    calcRSIState,
+    calcRSITargetPrice,
+    calcATR,
+    calcBB,
+    calcMACD,
+    toSeriesData,
+  };
 })();
