@@ -239,3 +239,55 @@ html.tb-merged #backupPanel {
 .ms-close { display: inline-flex; align-items: center; }
 #backupPanel .alert-remove-btn { display: inline-flex; align-items: center; gap: 5px; }
 #backupPanel .alert-remove-btn .icon-svg { width: 13px; height: 13px; }
+/* ===== NÚT THU GỌN / MỞ RỘNG SIDEBAR: nhỏ, mờ, ngang tầm logo, sát mép phải sidebar ===== */
+@media (min-width: 901px) {
+  #sidebarToggleBtn {
+    position: fixed;                 /* thoát khỏi overflow:hidden của #sidebar */
+    top: calc(var(--safe-top) + 28px);   /* ngang tầm logo */
+    left: var(--sidebar-width);      /* bám theo mép sidebar (kể cả lúc kéo / thu gọn) */
+    transform: translate(-50%, -50%);
+    width: 15px;
+    height: 27px;
+    margin: 0;
+    padding: 0;
+    border-radius: 7px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    box-shadow: none;
+    opacity: 0.68;                   /* mờ để không gây chú ý / che logo */
+    z-index: 40;                     /* cao hơn thanh kéo #sidebarResizeHandle (30) */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  }
+
+  #sidebarToggleBtn .icon-svg {
+    width: 10px;
+    height: 10px;
+  }
+
+  /* Vùng chạm rộng hơn nút thật (iPad / điện thoại xoay ngang) */
+  #sidebarToggleBtn::before {
+    content: '';
+    position: absolute;
+    inset: -10px -12px;
+  }
+
+  #sidebarToggleBtn:hover,
+  #sidebar:hover ~ #sidebarToggleBtn {
+    opacity: 1;
+  }
+
+  #sidebarToggleBtn:hover {
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+  }
+
+  /* Nút không còn nằm trong header -> logo canh giữa khi thu gọn */
+  #sidebar.collapsed .sidebar-header {
+    padding: 14px 0;
+    justify-content: center;
+  }
+}

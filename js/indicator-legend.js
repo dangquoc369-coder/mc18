@@ -1,36 +1,43 @@
 /**
  * indicator-legend.js
  * Vẽ 1 legend nhỏ (giống TradingView) đè lên góc trên-trái của mỗi pane,
- * liệt kê các indicator (EMA21, EMA200, RSI14, EMA9(RSI), WMA45(RSI)) +
- * Volume + chip BUY/SELL.
+ * liệt kê các indicator (EMA, SMA50, BB, RSI, MACD) + Volume + chip BUY/SELL.
  *
- * CẬP NHẬT (đợt fix này) - THÊM CHECKBOX "THÔNG BÁO TÍN HIỆU BUY/SELL":
+ * CẬP NHẬT (đợt này) - GỘP EMA THÀNH 1 CHIP:
+ *   - Các chip EMA riêng lẻ (EMA21, EMA200) được gộp thành 1 chip "EMA".
+ *     Bấm vào chip = bật/tắt tất cả đường EMA. Bấm ⚙ = mở cài đặt.
+ *   - Popover cài đặt EMA: danh sách tối đa 10 đường, có nút "+ Thêm đường"
+ *     và nút ✕ xoá từng đường. Mỗi đường có: công tắc bật/tắt riêng, chu kỳ,
+ *     màu, độ dày nét, nguồn giá (close/open/high/low).
+ *   - Popover chỉnh trên bản nháp, chỉ áp vào chart khi bấm "Áp dụng".
+ *
+ * CẬP NHẬT - THÊM CHECKBOX "THÔNG BÁO TÍN HIỆU BUY/SELL":
  *   - Trong popover cài đặt breakout (mở qua bánh răng ⚙ của chip BUY/SELL),
- *     thêm 1 checkbox để bật/tắt việc gửi thông báo hệ thống mỗi khi pane
- *     này có tín hiệu BUY/SELL MỚI. Lưu qua Store.setPaneSignalAlertEnabled()
- *     - app.js đọc field này (pane.signalAlertEnabled) khi nhận sự kiện
- *     'pane:newSignal' để quyết định có gửi thông báo hay không.
+ *     có checkbox chọn khung thời gian nhận thông báo tín hiệu BUY/SELL mới.
  *
- * CẬP NHẬT (đợt fix này) - FIX POPOVER BỊ CHE/CẮT TRÊN IPHONE/IPAD:
- *   - TRƯỚC ĐÂY: popover là `position: absolute` và là CON của chính cái
- *     chip (chip.appendChild(popover)). Vì .pane-chart-container có
- *     `overflow: hidden`, nên hễ popover tràn ra ngoài rìa pane (đặc biệt
- *     ở layout nhiều ô, pane nhỏ) là bị CẮT CỤT - không cuộn được, không
- *     bấm được nút "Áp dụng" nằm ở phần bị cắt.
- *   - FIX: thêm hàm positionPopover() - append popover thẳng vào
- *     document.body (thoát khỏi overflow:hidden của pane cha), dùng
- *     `position: fixed` (khai báo ở CSS), rồi tự tính toạ độ dựa trên vị
- *     trí thật của cái chip trên màn hình (getBoundingClientRect), có
- *     clamp để không tràn mép trái/phải/trên/dưới và tự lật lên trên nếu
- *     không đủ chỗ bên dưới. CSS cũng thêm max-height + overflow-y: auto
- *     để phòng trường hợp nội dung dài hơn cả màn hình.
- *   - Tất cả các hàm mở popover (openPeriodPopover, openBreakoutSettingsPopover,
- *     openBBGroupPopover, openRSIGroupPopover, openMACDGroupPopover) đều đổi
- *     dòng `chip.appendChild(popover)` thành `positionPopover(popover, chip)`.
+ * CẬP NHẬT - FIX POPOVER BỊ CHE/CẮT TRÊN IPHONE/IPAD:
+ *   - positionPopover() append popover thẳng vào document.body (thoát khỏi
+ *     overflow:hidden của pane), dùng position: fixed và tự tính toạ độ dựa
+ *     trên vị trí thật của chip (getBoundingClientRect), có clamp để không
+ *     tràn mép màn hình và tự lật lên trên nếu không đủ chỗ bên dưới.
  */
 
 const IndicatorLegend = (function () {
   const collapsedState = {};
+
+  const MAX_EMA_LINES = 10;
+  const EMA_PALETTE = [
+    '#f5c518',
+    '#ff5f5f',
+    '#2962ff',
+    '#26a69a',
+    '#ff9800',
+    '#7e57c2',
+    '#e91e63',
+    '#00bcd4',
+    '#8bc34a',
+    '#9e9e9e',
+  ];
 
   const SL_MODE_LABELS = {
     entry: 'Khung vào lệnh (mặc định)',
@@ -59,16 +66,16 @@ const IndicatorLegend = (function () {
 
     if (collapsed) return;
 
-    // ĐỢT FIX NÀY: đưa chip BUY/SELL lên ĐẦU danh sách (trước EMA21, EMA200...)
-    // theo yêu cầu người dùng - đây là chỉ báo chính, nên dễ thấy/dễ bấm nhất.
+    // Chip BUY/SELL ở ĐẦU danh sách - đây là chỉ báo chính, nên dễ thấy/dễ bấm nhất.
     container.appendChild(buildBreakoutChip(paneId, instance));
 
+    // 1 chip EMA duy nhất cho toàn bộ các đường EMA
+    container.appendChild(buildEMAGroupChip(paneId, instance));
+
     const config = instance.getIndicatorConfig();
-    ['ema21', 'ema200', 'sma50'].forEach((key) => {
-      if (config[key]) {
-        container.appendChild(buildChip(paneId, instance, key, config[key]));
-      }
-    });
+    if (config.sma50) {
+      container.appendChild(buildChip(paneId, instance, 'sma50', config.sma50));
+    }
 
     container.appendChild(buildBBGroupChip(paneId, instance));
     container.appendChild(buildRSIGroupChip(paneId, instance));
@@ -291,7 +298,7 @@ const IndicatorLegend = (function () {
 
   /**
    * Popover cài đặt breakout của 1 pane: số nến breakout + nguồn tính SL +
-   * (đợt fix này) checkbox bật/tắt thông báo tín hiệu BUY/SELL mới.
+   * khung thời gian nhận thông báo tín hiệu BUY/SELL mới.
    */
   function openBreakoutSettingsPopover(chip, paneId, instance) {
     closeAnyOpenPopover();
@@ -301,7 +308,6 @@ const IndicatorLegend = (function () {
       slMode: 'entry',
       slTimeframe: null,
     };
-    const pane = Store.getPane(paneId);
 
     const popover = document.createElement('div');
     popover.className = 'indicator-popover wide';
@@ -495,6 +501,218 @@ const IndicatorLegend = (function () {
     lookbackInput.select();
   }
 
+  // --- EMA GROUP CHIP & POPOVER ---
+  function buildEMAGroupChip(paneId, instance) {
+    const lines = instance.getIndicatorConfig().emaLines || [];
+    const isAnyEnabled = lines.some((l) => l.enabled);
+
+    const chip = document.createElement('div');
+    chip.className = 'indicator-chip' + (isAnyEnabled ? '' : ' disabled');
+
+    const dot = document.createElement('span');
+    dot.className = 'indicator-dot';
+    dot.style.background = (lines[0] && lines[0].color) || '#f5c518';
+
+    const name = document.createElement('span');
+    name.className = 'indicator-name';
+    name.textContent = 'EMA';
+
+    const gear = document.createElement('span');
+    gear.className = 'indicator-gear';
+    gear.title = 'Cài đặt các đường EMA';
+    gear.textContent = '⚙';
+
+    function toggle(e) {
+      e.stopPropagation();
+      // Danh sách trống thì không có gì để bật -> mở cài đặt luôn
+      if (lines.length === 0) {
+        openEMAGroupPopover(chip, paneId, instance);
+        return;
+      }
+      instance.setEmaGroupVisible(!isAnyEnabled);
+      render(paneId, instance);
+    }
+
+    dot.addEventListener('click', toggle);
+    name.addEventListener('click', toggle);
+    gear.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openEMAGroupPopover(chip, paneId, instance);
+    });
+
+    chip.appendChild(dot);
+    chip.appendChild(name);
+    chip.appendChild(gear);
+    return chip;
+  }
+
+  function openEMAGroupPopover(chip, paneId, instance) {
+    closeAnyOpenPopover();
+
+    // Bản nháp - chỉ áp vào chart khi bấm "Áp dụng"
+    const draft = (instance.getIndicatorConfig().emaLines || []).map((l) => ({ ...l }));
+
+    const popover = document.createElement('div');
+    popover.className = 'indicator-popover wide';
+    popover.addEventListener('click', (e) => e.stopPropagation());
+
+    const title = document.createElement('label');
+    title.textContent = 'Cấu hình EMA:';
+    title.style.fontWeight = 'bold';
+    title.style.color = 'var(--text-primary)';
+
+    const list = document.createElement('div');
+    list.style.display = 'flex';
+    list.style.flexDirection = 'column';
+    list.style.gap = '8px';
+    list.style.margin = '8px 0';
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'ip-cancel';
+    addBtn.style.alignSelf = 'flex-start';
+
+    function refreshAddBtn() {
+      addBtn.textContent = `+ Thêm đường (${draft.length}/${MAX_EMA_LINES})`;
+      addBtn.disabled = draft.length >= MAX_EMA_LINES;
+      addBtn.style.opacity = addBtn.disabled ? '0.5' : '1';
+    }
+
+    function buildRow(line, index) {
+      const row = document.createElement('div');
+      row.style.display = 'flex';
+      row.style.alignItems = 'center';
+      row.style.flexWrap = 'wrap';
+      row.style.gap = '6px';
+
+      // Công tắc bật/tắt riêng của đường này
+      const enabled = document.createElement('input');
+      enabled.type = 'checkbox';
+      enabled.title = 'Bật/tắt đường này';
+      enabled.checked = line.enabled;
+      enabled.addEventListener('change', () => {
+        line.enabled = enabled.checked;
+      });
+
+      // Chu kỳ
+      const period = document.createElement('input');
+      period.type = 'number';
+      period.min = '1';
+      period.max = '1000';
+      period.value = line.period;
+      period.title = 'Chu kỳ';
+      period.style.width = '64px';
+      period.addEventListener('input', () => {
+        const v = parseInt(period.value, 10);
+        if (v > 0) line.period = v;
+      });
+
+      // Màu
+      const color = document.createElement('input');
+      color.type = 'color';
+      color.title = 'Màu';
+      color.value = /^#[0-9a-f]{6}$/i.test(line.color) ? line.color : '#f5c518';
+      color.style.width = '32px';
+      color.style.padding = '0';
+      color.addEventListener('input', () => {
+        line.color = color.value;
+      });
+
+      // Độ dày nét
+      const width = document.createElement('select');
+      width.title = 'Độ dày nét';
+      [1, 2, 3, 4].forEach((w) => {
+        const o = document.createElement('option');
+        o.value = w;
+        o.textContent = `${w}px`;
+        if (w === line.width) o.selected = true;
+        width.appendChild(o);
+      });
+      width.addEventListener('change', () => {
+        line.width = parseInt(width.value, 10);
+      });
+
+      // Nguồn giá
+      const source = document.createElement('select');
+      source.title = 'Nguồn giá';
+      ['close', 'open', 'high', 'low'].forEach((s) => {
+        const o = document.createElement('option');
+        o.value = s;
+        o.textContent = s;
+        if (s === line.source) o.selected = true;
+        source.appendChild(o);
+      });
+      source.addEventListener('change', () => {
+        line.source = source.value;
+      });
+
+      // Xoá đường
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'ip-cancel';
+      del.title = 'Xóa đường này';
+      del.textContent = '✕';
+      del.addEventListener('click', () => {
+        draft.splice(index, 1);
+        renderRows();
+        positionPopover(popover, chip);
+      });
+
+      [enabled, period, color, width, source, del].forEach((el) => row.appendChild(el));
+      return row;
+    }
+
+    function renderRows() {
+      list.innerHTML = '';
+      draft.forEach((line, i) => list.appendChild(buildRow(line, i)));
+      refreshAddBtn();
+    }
+
+    addBtn.addEventListener('click', () => {
+      if (draft.length >= MAX_EMA_LINES) return;
+      draft.push({
+        id: `ema-${Date.now()}-${draft.length}`,
+        period: 50,
+        color: EMA_PALETTE[draft.length % EMA_PALETTE.length],
+        width: 1,
+        source: 'close',
+        enabled: true,
+      });
+      renderRows();
+      positionPopover(popover, chip);
+    });
+
+    const actions = document.createElement('div');
+    actions.className = 'indicator-popover-actions';
+    actions.style.marginTop = '8px';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'ip-cancel';
+    cancelBtn.textContent = 'Hủy';
+
+    const applyBtn = document.createElement('button');
+    applyBtn.className = 'ip-apply';
+    applyBtn.textContent = 'Áp dụng';
+
+    applyBtn.addEventListener('click', () => {
+      instance.setEmaLines(draft);
+      popover.remove();
+      render(paneId, instance);
+    });
+    cancelBtn.addEventListener('click', () => popover.remove());
+
+    actions.appendChild(cancelBtn);
+    actions.appendChild(applyBtn);
+
+    popover.appendChild(title);
+    popover.appendChild(list);
+    popover.appendChild(addBtn);
+    popover.appendChild(actions);
+
+    renderRows();
+    positionPopover(popover, chip);
+  }
+
   // --- BOLINGER BANDS GROUP CHIP & POPOVER ---
   function buildBBGroupChip(paneId, instance) {
     const config = instance.getIndicatorConfig();
@@ -657,6 +875,35 @@ const IndicatorLegend = (function () {
     periodInput.select();
   }
 
+  /** Ô chọn màu + độ dày nét (1-4px) dùng chung cho RSI / EMA(RSI) / WMA(RSI). */
+  function buildLineStyleControls(item) {
+    const color = document.createElement('input');
+    color.type = 'color';
+    color.title = 'Màu';
+    color.value = /^#[0-9a-f]{6}$/i.test(item.color) ? item.color : '#7e57c2';
+    color.style.width = '32px';
+    color.style.padding = '0';
+
+    const width = document.createElement('select');
+    width.title = 'Độ dày nét';
+    [1, 2, 3, 4].forEach((w) => {
+      const o = document.createElement('option');
+      o.value = w;
+      o.textContent = `${w}px`;
+      if (w === Math.round(item.width || 1)) o.selected = true;
+      width.appendChild(o);
+    });
+
+    return { color, width };
+  }
+
+  function styleRow(row) {
+    row.style.display = 'flex';
+    row.style.alignItems = 'center';
+    row.style.flexWrap = 'wrap';
+    row.style.gap = '6px';
+  }
+
   // --- RSI GROUP CHIP & POPOVER ---
   function buildRSIGroupChip(paneId, instance) {
     const config = instance.getIndicatorConfig();
@@ -743,6 +990,10 @@ const IndicatorLegend = (function () {
     rsiPeriodInput.value = rsi.period;
     rsiRow.appendChild(rsiCheckboxLabel);
     rsiRow.appendChild(rsiPeriodInput);
+    const rsiStyle = buildLineStyleControls(rsi);
+    rsiRow.appendChild(rsiStyle.color);
+    rsiRow.appendChild(rsiStyle.width);
+    styleRow(rsiRow);
 
     const emaRow = document.createElement('div');
     emaRow.className = 'indicator-popover-row';
@@ -767,6 +1018,10 @@ const IndicatorLegend = (function () {
     emaPeriodInput.value = emaRsi.period;
     emaRow.appendChild(emaCheckboxLabel);
     emaRow.appendChild(emaPeriodInput);
+    const emaStyle = buildLineStyleControls(emaRsi);
+    emaRow.appendChild(emaStyle.color);
+    emaRow.appendChild(emaStyle.width);
+    styleRow(emaRow);
 
     const wmaRow = document.createElement('div');
     wmaRow.className = 'indicator-popover-row';
@@ -784,6 +1039,10 @@ const IndicatorLegend = (function () {
     wmaPeriodInput.value = wmaRsi.period;
     wmaRow.appendChild(wmaCheckboxLabel);
     wmaRow.appendChild(wmaPeriodInput);
+    const wmaStyle = buildLineStyleControls(wmaRsi);
+    wmaRow.appendChild(wmaStyle.color);
+    wmaRow.appendChild(wmaStyle.width);
+    styleRow(wmaRow);
 
     const actions = document.createElement('div');
     actions.className = 'indicator-popover-actions';
@@ -805,6 +1064,10 @@ const IndicatorLegend = (function () {
       if (rsiP && rsiP > 0) instance.setIndicatorPeriod('rsi', rsiP);
       if (emaP && emaP > 0) instance.setIndicatorPeriod('emaRsi', emaP);
       if (wmaP && wmaP > 0) instance.setIndicatorPeriod('wmaRsi', wmaP);
+
+      instance.setIndicatorStyle('rsi', { color: rsiStyle.color.value, width: rsiStyle.width.value });
+      instance.setIndicatorStyle('emaRsi', { color: emaStyle.color.value, width: emaStyle.width.value });
+      instance.setIndicatorStyle('wmaRsi', { color: wmaStyle.color.value, width: wmaStyle.width.value });
 
       instance.setIndicatorVisible('rsi', rsiCheckbox.checked);
       instance.setIndicatorVisible('emaRsi', emaCheckbox.checked);

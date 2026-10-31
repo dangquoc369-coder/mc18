@@ -9,6 +9,14 @@
  *     việc báo cho drawing nạp đúng bộ hình khi pane đổi symbol
  *     (handleSymbolChangedForDrawing) và lưu nốt khi destroy().
  *   - Màu theme: đọc từ ThemeModule (cũng lưu cục bộ).
+ *
+ * CẬP NHẬT - NHÓM EMA:
+ *   - Các đường EMA riêng lẻ (ema21, ema200) được thay bằng 1 danh sách
+ *     `emaLines` (tối đa 10 đường). Mỗi đường có: period, color, width
+ *     (độ dày nét), source (close/open/high/low) và enabled (bật/tắt riêng).
+ *   - API mới: setEmaLines(lines), setEmaGroupVisible(visible); đọc danh
+ *     sách qua getIndicatorConfig().emaLines.
+ *   - Dữ liệu đã lưu kiểu cũ (ema21/ema200) tự được chuyển thành 2 đường đầu.
  */
 const ChartModule = (function () {
   const ENTRY_TO_HIGHER_TF = {
@@ -41,6 +49,9 @@ const ChartModule = (function () {
     },
   };
 
+  const MAX_EMA_LINES = 10;
+  const EMA_SOURCES = ['close', 'open', 'high', 'low'];
+
   function create(paneId) {
     let chart = null;
     let containerRef = null;
@@ -49,8 +60,13 @@ const ChartModule = (function () {
     let resizeObserver = null;
     let volumeVisible = true;
 
-    let ema21Series = null;
-    let ema200Series = null;
+    // Mỗi đường EMA có 1 series riêng, key theo id của đường.
+    const emaSeriesMap = new Map();
+    let emaLines = [
+      { id: 'ema-1', period: 21, color: '#f5c518', width: 1, source: 'close', enabled: false },
+      { id: 'ema-2', period: 200, color: '#ff5f5f', width: 1, source: 'close', enabled: false },
+    ];
+
     let sma50Series = null;
     let bbUpperSeries = null;
     let bbMiddleSeries = null;
@@ -76,15 +92,13 @@ const ChartModule = (function () {
     let needIndicatorRecompute = false;
 
     const indicatorConfig = {
-      ema21: { label: 'EMA', color: '#f5c518', period: 21, enabled: false },
-      ema200: { label: 'EMA', color: '#ff5f5f', period: 200, enabled: false },
       sma50: { label: 'SMA', color: '#2962ff', period: 50, enabled: false },
       bbUpper: { label: 'BB Upper', color: '#26a69a', period: 20, enabled: false },
       bbMiddle: { label: 'BB Middle', color: '#787b86', period: 20, enabled: false },
       bbLower: { label: 'BB Lower', color: '#ef5350', period: 20, enabled: false },
-      rsi: { label: 'RSI', color: '#7e57c2', period: 14, enabled: false },
-      emaRsi: { label: 'EMA(RSI)', color: '#26a69a', period: 9, enabled: false },
-      wmaRsi: { label: 'WMA(RSI)', color: '#ef5350', period: 45, enabled: false },
+      rsi: { label: 'RSI', color: '#7e57c2', width: 2, period: 14, enabled: false },
+      emaRsi: { label: 'EMA(RSI)', color: '#26a69a', width: 2, period: 9, enabled: false },
+      wmaRsi: { label: 'WMA(RSI)', color: '#ef5350', width: 2, period: 45, enabled: false },
       macdLine: { label: 'MACD Line', color: '#2962ff', period: 12, enabled: false },
       macdSignal: { label: 'MACD Signal', color: '#ff9800', period: 9, enabled: false },
       macdHist: { label: 'MACD Hist', color: '#26a69a', period: 26, enabled: false },
@@ -225,12 +239,13 @@ const ChartModule = (function () {
         crosshairMarkerVisible: false,
         visible: false,
       };
-      ema21Series = chart.addSeries(LightweightCharts.LineSeries, { ...overlayOpts, color: '#f5c518' }, 0);
-      ema200Series = chart.addSeries(LightweightCharts.LineSeries, { ...overlayOpts, color: '#ff5f5f' }, 0);
       sma50Series = chart.addSeries(LightweightCharts.LineSeries, { ...overlayOpts, color: '#2962ff' }, 0);
       bbUpperSeries = chart.addSeries(LightweightCharts.LineSeries, { ...overlayOpts, color: '#26a69a' }, 0);
       bbMiddleSeries = chart.addSeries(LightweightCharts.LineSeries, { ...overlayOpts, color: '#787b86' }, 0);
       bbLowerSeries = chart.addSeries(LightweightCharts.LineSeries, { ...overlayOpts, color: '#ef5350' }, 0);
+
+      // Tạo series cho các đường EMA hiện có
+      syncEmaSeries();
 
       updatePaneStretchFactors();
 
@@ -301,14 +316,80 @@ const ChartModule = (function () {
       applyResize();
     }
 
+    // ===== NHÓM EMA =====
+
+    /** Chuẩn hoá 1 đường EMA (chặn giá trị sai khi đọc từ localStorage / popover). */
+    function sanitizeEmaLine(l, i) {
+      const period = parseInt(l.period, 10);
+      const width = parseInt(l.width, 10);
+      return {
+        id: l.id || `ema-${Date.now()}-${i}`,
+        period: period > 0 ? Math.min(period, 1000) : 21,
+        color: typeof l.color === 'string' && l.color ? l.color : '#f5c518',
+        width: width >= 1 && width <= 4 ? width : 1,
+        source: EMA_SOURCES.includes(l.source) ? l.source : 'close',
+        enabled: !!l.enabled,
+      };
+    }
+
+    /** Đồng bộ series trên chart với danh sách emaLines (thêm/xóa/cập nhật style). */
+    function syncEmaSeries() {
+      if (!chart) return;
+      const ids = new Set(emaLines.map((l) => l.id));
+      emaSeriesMap.forEach((s, id) => {
+        if (!ids.has(id)) {
+          try {
+            chart.removeSeries(s);
+          } catch (err) {
+            // Series có thể đã bị huỷ - bỏ qua an toàn.
+          }
+          emaSeriesMap.delete(id);
+        }
+      });
+      emaLines.forEach((l) => {
+        const opts = {
+          color: l.color,
+          lineWidth: l.width,
+          visible: l.enabled,
+          title: '',
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        };
+        const s = emaSeriesMap.get(l.id);
+        if (s) s.applyOptions(opts);
+        else emaSeriesMap.set(l.id, chart.addSeries(LightweightCharts.LineSeries, opts, 0));
+      });
+    }
+
+    /** Thay toàn bộ danh sách đường EMA (tối đa MAX_EMA_LINES). */
+    function setEmaLines(lines) {
+      emaLines = (lines || []).slice(0, MAX_EMA_LINES).map(sanitizeEmaLine);
+      syncEmaSeries();
+      renderIndicators(currentCandles);
+      persistIndicatorPrefs();
+    }
+
+    /** Bật/tắt TẤT CẢ đường EMA cùng lúc (khi bấm chip "EMA"). */
+    function setEmaGroupVisible(visible) {
+      setEmaLines(emaLines.map((l) => ({ ...l, enabled: visible })));
+    }
+
+    function getEmaLines() {
+      return emaLines.map((l) => ({ ...l }));
+    }
+
     function renderIndicators(candles) {
       if (!candles || candles.length === 0) return;
       const closes = candles.map((c) => c.close);
 
-      const ema21 = IndicatorModule.calcEMA(closes, indicatorConfig.ema21.period);
-      const ema200 = IndicatorModule.calcEMA(closes, indicatorConfig.ema200.period);
-      if (ema21Series) ema21Series.setData(IndicatorModule.toSeriesData(candles, ema21));
-      if (ema200Series) ema200Series.setData(IndicatorModule.toSeriesData(candles, ema200));
+      // Chỉ tính các đường EMA đang bật
+      emaLines.forEach((l) => {
+        const s = emaSeriesMap.get(l.id);
+        if (!s || !l.enabled) return;
+        const vals = candles.map((c) => (c[l.source] !== undefined ? c[l.source] : c.close));
+        s.setData(IndicatorModule.toSeriesData(candles, IndicatorModule.calcEMA(vals, l.period)));
+      });
 
       const sma50 = IndicatorModule.calcSMA(closes, indicatorConfig.sma50.period);
       if (sma50Series) sma50Series.setData(IndicatorModule.toSeriesData(candles, sma50));
@@ -351,13 +432,20 @@ const ChartModule = (function () {
     }
 
     /** Lưu lại toàn bộ trạng thái bật/tắt + period của mọi chỉ báo trong
-     * pane này (cục bộ, theo tài khoản) - gọi mỗi khi bật/tắt hoặc đổi period. */
+     * pane này (cục bộ, theo tài khoản) - gọi mỗi khi bật/tắt hoặc đổi period.
+     * Danh sách EMA lưu riêng ở key `emaLines`. */
     function persistIndicatorPrefs() {
       if (typeof IndicatorPrefsModule === 'undefined') return;
       const prefs = {};
       Object.keys(indicatorConfig).forEach((k) => {
-        prefs[k] = { enabled: indicatorConfig[k].enabled, period: indicatorConfig[k].period };
+        prefs[k] = {
+          enabled: indicatorConfig[k].enabled,
+          period: indicatorConfig[k].period,
+          color: indicatorConfig[k].color,
+          width: indicatorConfig[k].width,
+        };
       });
+      prefs.emaLines = emaLines.map((l) => ({ ...l }));
       IndicatorPrefsModule.setPanePrefs(paneId, prefs);
     }
 
@@ -368,17 +456,39 @@ const ChartModule = (function () {
       if (typeof IndicatorPrefsModule === 'undefined') return;
       const saved = IndicatorPrefsModule.getPanePrefs(paneId);
       if (!saved) return;
+
+      // EMA: đọc danh sách mới, hoặc di trú dữ liệu cũ ema21/ema200.
+      // (Không gọi persist ở đây để khỏi ghi đè prefs khi các chỉ báo khác
+      // chưa được khôi phục xong.)
+      if (Array.isArray(saved.emaLines)) {
+        emaLines = saved.emaLines.slice(0, MAX_EMA_LINES).map(sanitizeEmaLine);
+        syncEmaSeries();
+        scheduleRecompute(true);
+      } else if (saved.ema21 || saved.ema200) {
+        emaLines = emaLines.map((l, i) => {
+          const s = i === 0 ? saved.ema21 : saved.ema200;
+          return s ? { ...l, period: s.period || l.period, enabled: !!s.enabled } : l;
+        });
+        syncEmaSeries();
+        scheduleRecompute(true);
+      }
+
       Object.keys(saved).forEach((k) => {
         if (!indicatorConfig[k]) return;
         if (saved[k].period) indicatorConfig[k].period = saved[k].period;
+        if (STYLABLE_KEYS.includes(k)) {
+          if (typeof saved[k].color === 'string' && /^#[0-9a-f]{6}$/i.test(saved[k].color)) {
+            indicatorConfig[k].color = saved[k].color;
+          }
+          const w = parseInt(saved[k].width, 10);
+          if (w >= 1 && w <= 4) indicatorConfig[k].width = w;
+        }
         if (saved[k].enabled) setIndicatorVisible(k, true);
       });
     }
 
     function seriesForKey(key) {
       return {
-        ema21: ema21Series,
-        ema200: ema200Series,
         sma50: sma50Series,
         bbMiddle: bbMiddleSeries,
         bbUpper: bbUpperSeries,
@@ -555,8 +665,30 @@ const ChartModule = (function () {
         }
       }
 
+      applyLineStyle(key);
       scheduleRecompute(true);
       updatePaneStretchFactors();
+      persistIndicatorPrefs();
+    }
+
+    const STYLABLE_KEYS = ['rsi', 'emaRsi', 'wmaRsi'];
+
+    /** Áp màu + độ dày nét đã lưu trong indicatorConfig lên series (nếu series đang tồn tại). */
+    function applyLineStyle(key) {
+      const cfg = indicatorConfig[key];
+      if (!cfg || !STYLABLE_KEYS.includes(key)) return;
+      const s = seriesForKey(key);
+      if (s) s.applyOptions({ color: cfg.color, lineWidth: cfg.width });
+    }
+
+    /** Đổi màu / độ dày nét (1-4) của RSI, EMA(RSI), WMA(RSI). */
+    function setIndicatorStyle(key, style) {
+      const cfg = indicatorConfig[key];
+      if (!cfg || !STYLABLE_KEYS.includes(key) || !style) return;
+      if (typeof style.color === 'string' && /^#[0-9a-f]{6}$/i.test(style.color)) cfg.color = style.color;
+      const w = parseInt(style.width, 10);
+      if (w >= 1 && w <= 4) cfg.width = w;
+      applyLineStyle(key);
       persistIndicatorPrefs();
     }
 
@@ -569,7 +701,7 @@ const ChartModule = (function () {
     }
 
     function getIndicatorConfig() {
-      return JSON.parse(JSON.stringify(indicatorConfig));
+      return { ...JSON.parse(JSON.stringify(indicatorConfig)), emaLines: getEmaLines() };
     }
 
     function setVolumeVisible(visible) {
@@ -671,8 +803,7 @@ const ChartModule = (function () {
     function clearData() {
       if (candleSeries) candleSeries.setData([]);
       if (volumeSeries) volumeSeries.setData([]);
-      if (ema21Series) ema21Series.setData([]);
-      if (ema200Series) ema200Series.setData([]);
+      emaSeriesMap.forEach((s) => s.setData([]));
       if (sma50Series) sma50Series.setData([]);
       if (bbUpperSeries) bbUpperSeries.setData([]);
       if (bbMiddleSeries) bbMiddleSeries.setData([]);
@@ -762,6 +893,7 @@ const ChartModule = (function () {
       }
       if (chart) chart.remove();
       chart = null;
+      emaSeriesMap.clear();
     }
 
     return {
@@ -772,7 +904,10 @@ const ChartModule = (function () {
       resize,
       setIndicatorVisible,
       setIndicatorPeriod,
+      setIndicatorStyle,
       getIndicatorConfig,
+      setEmaLines,
+      setEmaGroupVisible,
       setVolumeVisible,
       getVolumeVisible,
       setHigherTFCandles,
