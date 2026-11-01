@@ -463,11 +463,19 @@ function ensureStyles() {
       return d.tfs.includes(getTimeframe());
     }
 
-    function drawHandle(x, y) {
+        function drawHandle(x, y) {
       if (x === null || y === null || x === undefined || y === undefined) return;
+      const touch = isCoarsePointer();
+      const r = touch ? 9 : HANDLE_RADIUS;
       ctx.save();
+      if (touch) {
+        ctx.beginPath();
+        ctx.arc(x, y, r + 7, 0, 2 * Math.PI);
+        ctx.fillStyle = 'rgba(41, 98, 255, 0.18)';
+        ctx.fill();
+      }
       ctx.beginPath();
-      ctx.arc(x, y, HANDLE_RADIUS, 0, 2 * Math.PI);
+      ctx.arc(x, y, r, 0, 2 * Math.PI);
       ctx.fillStyle = '#ffffff';
       ctx.fill();
       ctx.strokeStyle = '#2962ff';
@@ -1021,7 +1029,8 @@ function ensureStyles() {
       const rh = Math.max(...ys) - Math.min(...ys) + margin * 2;
       return x >= rx && x <= rx + rw && y >= ry && y <= ry + rh;
     }
-
+        const handleHitR = () => (isCoarsePointer() ? 24 : HANDLE_RADIUS + 6);
+    const hitTol = () => (isCoarsePointer() ? 16 : 10);
     // ===================== HIT TEST =====================
     function findHandleAt(pt) {
       if (allDrawingsHidden || selectedDrawingIndex === null) return null;
@@ -1037,15 +1046,15 @@ function ensureStyles() {
         const hx = pointToX(p);
         const hy = priceToY(p.price);
         if (hx === null || hy === null) return false;
-        return Math.hypot(clickX - hx, clickY - hy) <= HANDLE_RADIUS + 6;
+        return Math.hypot(clickX - hx, clickY - hy) <= handleHitR();
       };
 
       if (d.type === 'hline') {
         const hy = priceToY(d.price);
-        if (hy !== null && Math.hypot(clickX - getRect().width / 2, clickY - hy) <= HANDLE_RADIUS + 6) return 'price';
+        if (hy !== null && Math.hypot(clickX - getRect().width / 2, clickY - hy) <= handleHitR()) return 'price';
       } else if (d.type === 'vline') {
         const hx = pointToX(d);
-        if (hx !== null && Math.hypot(clickX - hx, clickY - getRect().height / 2) <= HANDLE_RADIUS + 6) return 'time';
+        if (hx !== null && Math.hypot(clickX - hx, clickY - getRect().height / 2) <= handleHitR()) return 'time';
       } else if (d.type === 'hray' || d.type === 'text') {
         if (checkHandle(d.p)) return 'p';
       } else if (d.p3) {
@@ -1071,15 +1080,15 @@ function ensureStyles() {
 
         if (d.type === 'hline') {
           const dy = priceToY(d.price);
-          if (dy !== null && Math.abs(dy - y) < 10) return { index: i };
+          if (dy !== null && Math.abs(dy - y) < hitTol()) return { index: i };
 
         } else if (d.type === 'vline') {
           const dx_ = pointToX(d);
-          if (dx_ !== null && Math.abs(dx_ - x) < 10) return { index: i };
+          if (dx_ !== null && Math.abs(dx_ - x) < hitTol()) return { index: i };
 
         } else if (d.type === 'hray') {
           const px = pointToX(d.p), py = priceToY(d.p.price);
-          if (px !== null && py !== null && Math.abs(py - y) < 10 && x >= px - 10) return { index: i };
+          if (px !== null && py !== null && Math.abs(py - y) < hitTol() && x >= px - hitTol()) return { index: i };
 
         } else if (d.type === 'trendline' || d.type === 'ray' || d.type === 'extendedline' || d.type === 'arrow') {
           const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
@@ -1092,7 +1101,7 @@ function ensureStyles() {
               const b = extendPointBeyond(x1, y1, x2, y2, EXTEND_FACTOR);
               sx = a.x; sy = a.y; ex = b.x; ey = b.y;
             }
-            if (distToSegment(x, y, sx, sy, ex, ey) < 10) return { index: i };
+            if (distToSegment(x, y, sx, sy, ex, ey) < hitTol()) return { index: i };
           }
 
         } else if (d.type === 'fib') {
@@ -2146,6 +2155,7 @@ function ensureStyles() {
           dragStartPixel = null;
           redraw();
         }
+        if (e.pointerType === 'touch') canvas.style.pointerEvents = 'none';   // <-- THÊM
         return;
       }
 
@@ -2244,6 +2254,7 @@ function ensureStyles() {
       redraw();
     });
     canvas.addEventListener('pointerleave', () => {
+      if (currentTool === 'cursor') canvas.style.pointerEvents = 'none';
       if (touchCursor) return;                              // <-- THÊM
        hoverPoint = null; touchRawPoint = null; redraw(); });
 
@@ -2270,13 +2281,53 @@ function ensureStyles() {
 
     // Chọn hình ngay khi bấm, không cần canvas đã bật pointer-events từ trước.
     // Chạy ở pha capture nên chặn được chart kéo/cuộn khi bấm trúng hình.
+        // Chạm nhẹ để chọn hình (cảm ứng): chỉ chọn khi nhấc tay mà chưa kéo
+    let touchTap = null; // {id, x, y, t, index}
+    window.addEventListener('pointermove', (e) => {
+      if (touchTap && e.pointerId === touchTap.id &&
+          Math.hypot(e.clientX - touchTap.x, e.clientY - touchTap.y) > 10) touchTap = null;
+    });
+    window.addEventListener('pointercancel', () => { touchTap = null; });
+    window.addEventListener('pointerup', (e) => {
+      const t = touchTap;
+      touchTap = null;
+      if (!t || e.pointerId !== t.id || currentTool !== 'cursor') return;
+      if (Date.now() - t.t > 500) return;
+      if (t.index !== null) {
+        selectedDrawingIndex = t.index;
+        showToolbar(t.index);
+      } else {
+        selectedDrawingIndex = null;
+        hideToolbar();
+      }
+      redraw();
+    });
+
+    // Chọn hình ngay khi bấm (chuột). Chạy ở pha capture nên chặn được chart kéo/cuộn khi bấm trúng hình.
     container.addEventListener('pointerdown', (e) => {
       if (currentTool !== 'cursor' || e.target === canvas) return;
       if (e.target.closest && e.target.closest('.dtv-tb, input, select, button, textarea')) return;
       if (e.button !== undefined && e.button !== 0) return;
       const pt = pointFromEvent(e);
       if (pt.price === null || pt.price === undefined || Number.isNaN(pt.price)) return;
-      if (findHandleAt(pt) || findDrawingAt(pt)) {
+
+      const handle = findHandleAt(pt);
+      const match = handle ? null : findDrawingAt(pt);
+
+      if (e.pointerType === 'touch') {
+        // Chỉ "nắm" được khi chạm trúng điểm neo, hoặc thân hình ĐANG ĐƯỢC CHỌN
+        const grab = handle || (match && match.index === selectedDrawingIndex);
+        if (grab) {
+          canvas.style.pointerEvents = 'auto';
+          onPointerDown(e);
+        } else {
+          // Không chặn -> chart cuộn bình thường; nếu chỉ là cú chạm thì chọn lúc nhấc tay
+          touchTap = { id: e.pointerId, x: e.clientX, y: e.clientY, t: Date.now(), index: match ? match.index : null };
+        }
+        return;
+      }
+
+      if (handle || match) {
         canvas.style.pointerEvents = 'auto';
         onPointerDown(e);
       }
@@ -2284,6 +2335,7 @@ function ensureStyles() {
 
     container.addEventListener('pointermove', onContainerPointerMove);
     container.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'touch') return;      // <-- THÊM: cảm ứng bỏ chọn bằng cú chạm (ở trên)
       if (currentTool !== 'cursor') return;
       if (e.target === canvas) return;
       if (selectedDrawingIndex !== null || toolbarEl) {
