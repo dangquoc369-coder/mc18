@@ -292,7 +292,11 @@ function ensureStyles() {
     canvas.className = 'draw-canvas';
     canvas.style.touchAction = 'none';
     container.appendChild(canvas);
-    const ctx = canvas.getContext('2d');
+    const canvasCtx = canvas.getContext('2d');
+    let ctx = canvasCtx;              // ctx tạm thời trỏ sang context của chart khi primitive vẽ
+    let inPrimitive = false;
+    let primSize = { width: 0, height: 0 };
+    let primitiveUpdate = null;
 
     function resizeCanvas() {
       const rect = container.getBoundingClientRect();
@@ -301,7 +305,7 @@ function ensureStyles() {
       canvas.style.height = rect.height + 'px';
       canvas.width = Math.max(1, Math.round(rect.width * dpr));
       canvas.height = Math.max(1, Math.round(rect.height * dpr));
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      canvasCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
       redraw();
     }
 
@@ -417,6 +421,15 @@ function ensureStyles() {
       previewDrawing = null;
       pendingThirdPoint = null;
       pendingTouchPlacement = null;
+            resetTouchDrawing();
+      if (isInteractive && tool !== 'eraser' && isCoarsePointer()) {
+        const { width, height } = getRect();
+        touchCursor = { x: width / 2, y: height / 2 };
+        syncTouchHover();
+        updateTouchPreview();
+      } else {
+        hoverPoint = null;
+      }
       redraw();
     }
 
@@ -440,6 +453,7 @@ function ensureStyles() {
     }
 
     function getRect() {
+      if (inPrimitive) return primSize;
       const rect = container.getBoundingClientRect();
       return { width: rect.width, height: rect.height };
     }
@@ -481,18 +495,13 @@ function ensureStyles() {
     }
 
     function redraw() {
-      const { width, height } = getRect();
-      ctx.clearRect(0, 0, width, height);
-      if (!allDrawingsHidden) {
-        drawings.forEach((d, idx) => {
-          if (isVisibleNow(d)) drawShape(d, false, idx);
-        });
-      }
-      if (previewDrawing) drawShape(previewDrawing, true);
-      drawCrosshair();
-      scheduleSave();
-    }
-
+  const { width, height } = getRect();
+  canvasCtx.clearRect(0, 0, width, height);
+  if (previewDrawing) drawShape(previewDrawing, true);
+  drawCrosshair();
+  if (primitiveUpdate) primitiveUpdate();
+  scheduleSave();
+}
     function toRGBA(baseColor, alpha) {
       let r = 242, g = 163, b = 57;
       if (baseColor && baseColor.startsWith('#') && baseColor.length >= 7) {
@@ -945,7 +954,28 @@ function ensureStyles() {
         ctx.fillStyle = 'rgba(242, 163, 57, 0.7)';
         ctx.fill();
       }
+      
+            if (touchCursor) {
+        ctx.beginPath();
+        ctx.arc(x, y, 10, 0, 2 * Math.PI);
+        ctx.strokeStyle = '#f2a339';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(x, y, 2, 0, 2 * Math.PI);
+        ctx.fillStyle = '#f2a339';
+        ctx.fill();
 
+        const hint = pendingThirdPoint ? 'Chạm để chốt điểm thứ 3'
+          : touchAnchors.length === 1 ? 'Chạm để chốt điểm cuối'
+          : 'Kéo để di chuyển · Chạm để đặt điểm';
+        ctx.font = '11px sans-serif';
+        ctx.fillStyle = '#f2a339';
+        ctx.textAlign = 'center';
+        ctx.fillText(hint, width / 2, 16);
+        ctx.textAlign = 'start';
+      }
+      
       if (price !== null && price !== undefined && !Number.isNaN(price)) {
         const label = formatPrice(price);
         ctx.font = '10px sans-serif';
@@ -1701,9 +1731,141 @@ function ensureStyles() {
       input.addEventListener('click', (ev) => ev.stopPropagation());
       input.addEventListener('blur', submitText);
     }
+    
+        // ===================== VẼ CẢM ỨNG KIỂU TRADINGVIEW MOBILE =====================
+    const TOUCH_MOVE_THRESHOLD = 8; // px: kéo ít hơn mức này vẫn tính là "chạm"
+    let touchCursor = null;         // {x, y} vị trí crosshair (toạ độ canvas)
+    let touchAnchors = [];          // các điểm neo đã chốt
+    let touchGesture = null;        // thao tác ngón tay đang diễn ra
 
+    const isCoarsePointer = () => !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+    const isTouchDrawing = (e) => e.pointerType === 'touch' && currentTool !== 'cursor' && currentTool !== 'eraser';
+    const clampNum = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+    function touchPoint() {
+      const info = xToPointInfo(touchCursor.x);
+      return { logicalIndex: info.logicalIndex, time: info.time, price: yToPrice(touchCursor.y) };
+    }
+
+    function syncTouchHover() {
+      if (touchCursor) hoverPoint = { x: touchCursor.x, y: touchCursor.y, price: yToPrice(touchCursor.y) };
+    }
+
+    function resetTouchDrawing() {
+      touchCursor = null;
+      touchAnchors = [];
+      touchGesture = null;
+      pendingThirdPoint = null;
+    }
+
+    function makeSingleAnchor(tool, pt) {
+      if (tool === 'hline') return newDrawing('hline', { price: pt.price }, { dashed: true });
+      if (tool === 'vline') return newDrawing('vline', { logicalIndex: pt.logicalIndex, time: pt.time }, { dashed: true });
+      return newDrawing('hray', { p: pt }, { dashed: true });
+    }
+
+    function updateTouchPreview() {
+      previewDrawing = null;
+      if (!touchCursor) return;
+      const pt = touchPoint();
+      if (pt.price === null || pt.price === undefined || Number.isNaN(pt.price)) return;
+      if (pendingThirdPoint) {
+        previewDrawing = { ...pendingThirdPoint, p3: pt };
+      } else if (touchAnchors.length === 1 &&
+                 (TWO_ANCHOR_TOOLS.includes(currentTool) || THREE_ANCHOR_TOOLS.includes(currentTool))) {
+        previewDrawing = newDrawing(currentTool, { p1: touchAnchors[0], p2: pt });
+      } else if (SINGLE_ANCHOR_TOOLS.includes(currentTool)) {
+        previewDrawing = makeSingleAnchor(currentTool, pt);
+      }
+    }
+
+    // Chạm (không kéo) = chốt 1 điểm tại crosshair
+    function touchConfirmPoint() {
+      const pt = touchPoint();
+      if (pt.price === null || pt.price === undefined || Number.isNaN(pt.price)) return;
+      const tool = currentTool;
+
+      if (tool === 'alert') {
+        if (onAlertRequested) onAlertRequested(pt.price);
+        returnToCursorAfterDraw();
+        return;
+      }
+      if (tool === 'text') {
+        openTextInputAt({ x: touchCursor.x, y: touchCursor.y }, pt);
+        return;
+      }
+      if (SINGLE_ANCHOR_TOOLS.includes(tool)) {
+        drawings.push(makeSingleAnchor(tool, pt));
+        previewDrawing = null;
+        redraw();
+        returnToCursorAfterDraw();
+        return;
+      }
+      // Điểm thứ 3 của tam giác / kênh / fib extension
+      if (pendingThirdPoint) {
+        drawings.push({ ...pendingThirdPoint, p3: pt });
+        pendingThirdPoint = null;
+        previewDrawing = null;
+        redraw();
+        returnToCursorAfterDraw();
+        return;
+      }
+      // Công cụ 2-3 điểm
+      if (touchAnchors.length === 0) {
+        touchAnchors = [pt];
+        return;
+      }
+      const p1 = touchAnchors[0];
+      if (TWO_ANCHOR_TOOLS.includes(tool)) {
+        const extra = {};
+        if (tool === 'long' || tool === 'short') extra.rr = 2;
+        if (tool === 'fib') Object.assign(extra, clone({ ...FIB_DEFAULTS, levels: DEFAULT_FIB_LEVELS }));
+        drawings.push(newDrawing(tool, { p1, p2: pt }, { dashed: false, ...extra }));
+        previewDrawing = null;
+        redraw();
+        returnToCursorAfterDraw();
+      } else if (THREE_ANCHOR_TOOLS.includes(tool)) {
+        pendingThirdPoint = newDrawing(tool, { p1, p2: pt }, { dashed: false });
+        touchAnchors = [];
+      }
+    }
+
+    function touchDown(e) {
+      if (!touchCursor) {
+        const { width, height } = getRect();
+        touchCursor = { x: width / 2, y: height / 2 };
+      }
+      touchGesture = { sx: e.clientX, sy: e.clientY, cx: touchCursor.x, cy: touchCursor.y, moved: false };
+      canvas.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
+    function touchMove(e) {
+      if (!touchGesture || !touchCursor) return;
+      const dx = e.clientX - touchGesture.sx;
+      const dy = e.clientY - touchGesture.sy;
+      if (!touchGesture.moved && Math.hypot(dx, dy) < TOUCH_MOVE_THRESHOLD) return;
+      touchGesture.moved = true;
+      const { width, height } = getRect();
+      touchCursor = { x: clampNum(touchGesture.cx + dx, 0, width), y: clampNum(touchGesture.cy + dy, 0, height) };
+      syncTouchHover();
+      updateTouchPreview();
+      redraw();
+    }
+
+    function touchUp(e) {
+      const g = touchGesture;
+      if (g) touchMove(e); // áp vị trí cuối cùng của ngón tay
+      touchGesture = null;
+      try { canvas.releasePointerCapture(e.pointerId); } catch (err) { /* bỏ qua */ }
+      if (g && !g.moved && touchCursor) touchConfirmPoint();
+      updateTouchPreview();
+      redraw();
+    }
     // ===================== SỰ KIỆN CON TRỎ =====================
     function onPointerDown(e) {
+      if (isTouchDrawing(e)) { touchDown(e); return; }      // <-- THÊM
       if (pendingThirdPoint) {
         const pt = pointFromEvent(e);
         if (pt.price !== null && pt.price !== undefined) {
@@ -1821,6 +1983,7 @@ function ensureStyles() {
     }
 
     function handlePointerMove(e) {
+      if (isTouchDrawing(e)) { touchMove(e); return; }      // <-- THÊM
       const { x, y } = getScreenXY(e);
       const pt = pointFromEvent(e);
       hoverPoint = { x, y, price: pt.price };
@@ -1935,6 +2098,7 @@ function ensureStyles() {
     }
 
     function onPointerUp(e) {
+      if (isTouchDrawing(e)) { touchUp(e); return; }        // <-- THÊM
       if (e.pointerType === 'touch') {
         hoverPoint = null;
         touchRawPoint = null;
@@ -2065,6 +2229,7 @@ function ensureStyles() {
     canvas.addEventListener('pointermove', onPointerMove);
     canvas.addEventListener('pointerup', onPointerUp);
     canvas.addEventListener('pointercancel', () => {
+      touchGesture = null;
       dragStart = null;
       previewDrawing = null;
       hoverPoint = null;
@@ -2078,7 +2243,9 @@ function ensureStyles() {
       dragStartPixel = null;
       redraw();
     });
-    canvas.addEventListener('pointerleave', () => { hoverPoint = null; touchRawPoint = null; redraw(); });
+    canvas.addEventListener('pointerleave', () => {
+      if (touchCursor) return;                              // <-- THÊM
+       hoverPoint = null; touchRawPoint = null; redraw(); });
 
     // Nhấp đúp vào hình = mở cài đặt chi tiết (giống TradingView)
     canvas.addEventListener('dblclick', (e) => {
@@ -2126,9 +2293,35 @@ function ensureStyles() {
       }
     });
 
-    chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
-      redraw();
-      if (selectedDrawingIndex !== null) repositionToolbarOnly(selectedDrawingIndex);
+        // ===================== GẮN HÌNH VẼ VÀO CHART (primitive) =====================
+    // Chart tự gọi draw() trong lượt render của nó -> hình luôn dính chart, không trễ.
+    const primitiveView = {
+      zOrder: () => 'top',
+      renderer: () => ({
+        draw(target) {
+          if (allDrawingsHidden) return;
+          target.useMediaCoordinateSpace((scope) => {
+            ctx = scope.context;          // tạm thời vẽ lên context của chart
+            inPrimitive = true;
+            primSize = scope.mediaSize;   // {width, height} của vùng chart (không gồm trục giá)
+            try {
+              drawings.forEach((d, idx) => {
+                if (isVisibleNow(d)) drawShape(d, false, idx);
+              });
+            } finally {
+              ctx = canvasCtx;            // trả về canvas riêng cho preview/crosshair
+              inPrimitive = false;
+            }
+          });
+        },
+      }),
+    };
+
+    candleSeries.attachPrimitive({
+      attached: ({ requestUpdate }) => { primitiveUpdate = requestUpdate; },
+      detached: () => { primitiveUpdate = null; },
+      updateAllViews() {},
+      paneViews: () => [primitiveView],
     });
 
     const resizeObs = new ResizeObserver(() => {
