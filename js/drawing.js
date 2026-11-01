@@ -28,6 +28,8 @@ const DrawingModule = (function () {
   const TWO_ANCHOR_TOOLS = ['trendline', 'ray', 'extendedline', 'rectangle', 'circle', 'arrow', 'fib', 'long', 'short'];
   const THREE_ANCHOR_TOOLS = ['triangle', 'channel', 'fibextension'];
   const DASHED_STYLE_TOOLS = ['hline', 'vline', 'hray', 'trendline', 'ray', 'extendedline', 'rectangle', 'circle', 'triangle', 'arrow', 'channel'];
+    // Các công cụ KHÔNG làm đậm/phát sáng khi chạm hoặc rê chuột - chỉ hiện điểm tròn khi được chọn
+  const NO_GLOW_TOOLS = ['trendline', 'ray', 'extendedline', 'arrow', 'hline', 'vline', 'hray', 'channel'];
 
   const TOOL_DISPLAY_NAMES = {
     hline: 'Đường ngang', vline: 'Đường dọc', hray: 'Tia ngang',
@@ -635,6 +637,7 @@ function ensureStyles() {
     function drawShape(d, isPreview, idx) {
       const isHovered = idx !== undefined && idx === hoveredDrawingIndex;
       const isSelected = idx !== undefined && idx === selectedDrawingIndex;
+      const showHandles = isSelected || (isHovered && !isCoarsePointer() && !drawings[idx].locked);
 
       ctx.save();
       ctx.globalAlpha = d.opacity === undefined ? 1 : d.opacity;
@@ -643,7 +646,7 @@ function ensureStyles() {
       const baseWidth = d.width || 1.5;
       ctx.strokeStyle = isPreview ? (baseColor === '#f2a339' ? 'rgba(242, 163, 57, 0.55)' : baseColor + '88') : baseColor;
 
-      if (isHovered || isSelected) {
+      if ((isHovered || isSelected) && !NO_GLOW_TOOLS.includes(d.type)) {
         ctx.lineWidth = baseWidth + 1;
         ctx.shadowColor = baseColor;
         ctx.shadowBlur = 4;
@@ -663,7 +666,7 @@ function ensureStyles() {
         ctx.fillStyle = baseColor;
         ctx.font = '10px sans-serif';
         ctx.fillText(formatPrice(d.price), 4, y - 4);
-        if (isSelected) drawHandle(getRect().width / 2, y);
+        if (showHandles) drawHandle(getRect().width / 2, y);
 
       } else if (d.type === 'vline') {
         const x = pointToX(d);
@@ -675,7 +678,7 @@ function ensureStyles() {
         ctx.lineTo(x, height);
         ctx.stroke();
         ctx.setLineDash([]);
-        if (isSelected) drawHandle(x, height / 2);
+        if (showHandles) drawHandle(x, height / 2);
 
       } else if (d.type === 'hray') {
         const x = pointToX(d.p);
@@ -691,7 +694,7 @@ function ensureStyles() {
         ctx.fillStyle = baseColor;
         ctx.font = '10px sans-serif';
         ctx.fillText(formatPrice(d.p.price), x + 4, y - 4);
-        if (isSelected) drawHandle(x, y);
+        if (showHandles) drawHandle(x, y);
 
       } else if (d.type === 'trendline' || d.type === 'ray' || d.type === 'extendedline') {
         const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
@@ -715,7 +718,7 @@ function ensureStyles() {
         ctx.stroke();
         ctx.setLineDash([]);
 
-        if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); }
+        if (showHandles) { drawHandle(x1, y1); drawHandle(x2, y2); }
 
       } else if (d.type === 'arrow') {
         const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
@@ -728,7 +731,7 @@ function ensureStyles() {
         ctx.stroke();
         ctx.setLineDash([]);
         drawArrowHead(x2, y2, x1, y1, ctx.strokeStyle);
-        if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); }
+        if (showHandles) { drawHandle(x1, y1); drawHandle(x2, y2); }
 
       } else if (d.type === 'rectangle') {
         const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
@@ -742,7 +745,7 @@ function ensureStyles() {
         if (d.dashed) ctx.setLineDash([6, 4]);
         ctx.strokeRect(rx, ry, rw, rh);
         ctx.setLineDash([]);
-        if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); }
+        if (showHandles) { drawHandle(x1, y1); drawHandle(x2, y2); }
 
       } else if (d.type === 'circle') {
         const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
@@ -758,7 +761,7 @@ function ensureStyles() {
         ctx.fill();
         ctx.stroke();
         ctx.setLineDash([]);
-        if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); }
+        if (showHandles) { drawHandle(x1, y1); drawHandle(x2, y2); }
 
       } else if (d.type === 'triangle') {
         const pts = [d.p1, d.p2, d.p3].map((p) => ({ x: pointToX(p), y: priceToY(p.price) }));
@@ -774,7 +777,7 @@ function ensureStyles() {
         ctx.fill();
         ctx.stroke();
         ctx.setLineDash([]);
-        if (isSelected) pts.forEach((p) => drawHandle(p.x, p.y));
+        if (showHandles) pts.forEach((p) => drawHandle(p.x, p.y));
 
       } else if (d.type === 'channel') {
         const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
@@ -806,13 +809,13 @@ function ensureStyles() {
         ctx.closePath();
         ctx.fill();
 
-        if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); drawHandle(x3, y3); }
+        if (showHandles) { drawHandle(x1, y1); drawHandle(x2, y2); drawHandle(x3, y3); }
 
       } else if (d.type === 'fib') {
         const g = computeFib(d, isPreview);
         if (!g) { ctx.restore(); return; }
         drawFib(g);
-        if (isSelected) { drawHandle(g.x1, g.y1); drawHandle(g.x2, g.y2); }
+        if (showHandles) { drawHandle(g.x1, g.y1); drawHandle(g.x2, g.y2); }
 
       } else if (d.type === 'fibextension') {
         const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
@@ -845,7 +848,7 @@ function ensureStyles() {
           ctx.font = '10px sans-serif';
           ctx.fillText(`${lvl.toFixed(3)} (${formatPrice(price)})`, spanEnd + 4, y + 3);
         });
-        if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); drawHandle(x3, y3); }
+        if (showHandles) { drawHandle(x1, y1); drawHandle(x2, y2); drawHandle(x3, y3); }
 
       } else if (d.type === 'long' || d.type === 'short') {
         const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
@@ -890,7 +893,8 @@ function ensureStyles() {
           ctx.fillStyle = '#22c9a0';
           ctx.fillText(`TP ${formatPrice(targetPrice)} (R:R 1:${rr})`, rx + 4, yTarget - 4);
         }
-        if (isSelected) { drawHandle(x1, y1); drawHandle(x2, y2); }
+        const showHandles = isSelected || (isHovered && !isCoarsePointer() && !drawings[idx].locked);
+        if (showHandles) { drawHandle(x1, y1); drawHandle(x2, y2); }
 
       } else if (d.type === 'text') {
         const x = pointToX(d.p);
@@ -921,7 +925,8 @@ function ensureStyles() {
           ctx.strokeRect(x - 4, y - fontSize - 2, textWidth + 8, fontSize + 8);
           ctx.setLineDash([]);
         }
-        if (isSelected) drawHandle(x, y);
+        const showHandles = isSelected || (isHovered && !isCoarsePointer() && !drawings[idx].locked);
+        if (showHandles) drawHandle(x, y);
       }
       ctx.restore();
     }
@@ -1030,7 +1035,7 @@ function ensureStyles() {
       return x >= rx && x <= rx + rw && y >= ry && y <= ry + rh;
     }
         const handleHitR = () => (isCoarsePointer() ? 24 : HANDLE_RADIUS + 6);
-    const hitTol = () => (isCoarsePointer() ? 16 : 10);
+    const hitTol = () => (isCoarsePointer() ? 9 : 6);
     // ===================== HIT TEST =====================
     function findHandleAt(pt) {
       if (allDrawingsHidden || selectedDrawingIndex === null) return null;
@@ -1104,11 +1109,20 @@ function ensureStyles() {
             if (distToSegment(x, y, sx, sy, ex, ey) < hitTol()) return { index: i };
           }
 
-        } else if (d.type === 'fib') {
+                } else if (d.type === 'fib') {
           const g = computeFib(d, false);
           if (g) {
-            const ys = g.rows.map((r) => r.y).concat([g.y1, g.y2]);
-            if (x >= g.xl - 8 && x <= g.xr + 8 && y >= Math.min(...ys) - 8 && y <= Math.max(...ys) + 8) return { index: i };
+            const tol = hitTol();
+            let hit = false;
+            // 1. Các đường mức (chỉ trong khoảng ngang của hình)
+            if (x >= g.xl - tol && x <= g.xr + tol) {
+              hit = g.rows.some((r) => Math.abs(r.y - y) <= tol);
+            }
+            // 2. Đường xu hướng nối 2 điểm neo
+            if (!hit && g.cfg.showTrendline) {
+              hit = distToSegment(x, y, g.x1, g.y1, g.x2, g.y2) <= tol;
+            }
+            if (hit) return { index: i };
           }
 
         } else if (d.type === 'rectangle' || d.type === 'circle' || d.type === 'long' || d.type === 'short') {
@@ -2282,6 +2296,7 @@ function ensureStyles() {
     // Chọn hình ngay khi bấm, không cần canvas đã bật pointer-events từ trước.
     // Chạy ở pha capture nên chặn được chart kéo/cuộn khi bấm trúng hình.
         // Chạm nhẹ để chọn hình (cảm ứng): chỉ chọn khi nhấc tay mà chưa kéo
+    let touchGrabActive = false; // đang nắm hình/điểm neo bằng cảm ứng -> chặn chart nhận touch    
     let touchTap = null; // {id, x, y, t, index}
     window.addEventListener('pointermove', (e) => {
       if (touchTap && e.pointerId === touchTap.id &&
@@ -2320,6 +2335,7 @@ function ensureStyles() {
         if (grab) {
           canvas.style.pointerEvents = 'auto';
           onPointerDown(e);
+          touchGrabActive = isDraggingHandle || isDraggingShape;   // <-- THÊM (hình bị khoá thì không chặn, để chart cuộn)
         } else {
           // Không chặn -> chart cuộn bình thường; nếu chỉ là cú chạm thì chọn lúc nhấc tay
           touchTap = { id: e.pointerId, x: e.clientX, y: e.clientY, t: Date.now(), index: match ? match.index : null };
@@ -2332,6 +2348,22 @@ function ensureStyles() {
         onPointerDown(e);
       }
     }, true);
+    
+        // Chặn chart nhận cử chỉ cảm ứng khi đang kéo hình/điểm neo (pha capture nên chạy trước chart)
+    const blockChartTouch = (e) => {
+      if (!touchGrabActive) return;
+      if (e.cancelable) e.preventDefault();
+      e.stopPropagation();
+    };
+    container.addEventListener('touchstart', blockChartTouch, { capture: true, passive: false });
+    container.addEventListener('touchmove', blockChartTouch, { capture: true, passive: false });
+    const endChartTouch = (e) => {
+      if (!touchGrabActive) return;
+      e.stopPropagation();
+      if (e.touches.length === 0) touchGrabActive = false;
+    };
+    container.addEventListener('touchend', endChartTouch, true);
+    container.addEventListener('touchcancel', endChartTouch, true);
 
     container.addEventListener('pointermove', onContainerPointerMove);
     container.addEventListener('pointerdown', (e) => {
