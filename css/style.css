@@ -3114,3 +3114,103 @@ body.app-fullscreen #fullscreenExitBtn {
   .an-metrics-grid { grid-template-columns: repeat(2, 1fr); }
   .an-filters-card { flex-direction: column; }
 }
+/* ===== NỀN TRONG SUỐT HƠN CHO KHUNG SYMBOL / CHỈ BÁO (giống TradingView) ===== */
+:root { --overlay-soft: rgba(16, 20, 28, 0.3); }
+:root[data-theme="light"] { --overlay-soft: rgba(255, 255, 255, 0.35); }
+
+.pane-symbol-row {
+  background: var(--overlay-soft);
+  border-color: transparent;
+}
+/* Giữ viền cam khi ô đang được chọn (quy tắc này có sẵn, viết lại để chắc chắn thắng) */
+.chart-pane.pane-focused .pane-symbol-row { border-color: var(--accent-blue); }
+
+.indicator-chip,
+.legend-toggle-btn {
+  background: var(--overlay-soft);
+  border-color: transparent;
+}
+.legend-toggle-btn:hover { background: var(--bg-hover); }
+
+/* ===== KHUNG SYMBOL GỌN, SÁT GÓC TRÊN-TRÁI (mọi màn hình, giống TradingView) ===== */
+.pane-overlay-top {
+  top: 2px;
+  left: 2px;
+  gap: 2px;
+  max-width: calc(100% - 8px);
+}
+
+.pane-symbol-row {
+  padding: 1px 4px;
+  gap: 6px;
+  border-radius: 3px;
+}
+.pane-symbol { font-size: 12px; font-weight: 600; }
+.price { font-size: 12px; }
+.change { font-size: 10.5px; padding: 0 4px; }
+.candle-countdown { font-size: 10px; }
+
+/* Nút "Aa" đổi cỡ - giờ hiện ở cả máy tính, mờ đi cho đỡ vướng, rõ lên khi rê chuột */
+.sym-size-btn {
+  display: inline-flex;
+  align-items: center;
+  pointer-events: auto;
+  height: 16px;
+  padding: 0 5px;
+  font-size: 9px;
+  font-weight: 600;
+  font-family: var(--font);
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0.5;
+}
+.pane-symbol-row:hover .sym-size-btn,
+.sym-size-btn:hover { opacity: 1; }
+
+/* Cỡ NHỎ */
+html[data-sym-size="s"] .pane-symbol-row { padding: 0 4px; gap: 5px; }
+html[data-sym-size="s"] .pane-symbol { font-size: 10.5px; }
+html[data-sym-size="s"] .price { font-size: 10.5px; }
+html[data-sym-size="s"] .change { font-size: 9px; padding: 0 3px; }
+html[data-sym-size="s"] .candle-countdown { font-size: 9px; }
+
+/* Cỡ TỐI GIẢN: chỉ còn tên + giá */
+html[data-sym-size="xs"] .pane-symbol-row { padding: 0 3px; gap: 4px; }
+html[data-sym-size="xs"] .pane-symbol { font-size: 10px; }
+html[data-sym-size="xs"] .price { font-size: 10px; }
+html[data-sym-size="xs"] .change,
+html[data-sym-size="xs"] .candle-countdown { display: none; }
+
+/* ===== LOGO CẠNH NÚT 3 GẠCH (mobile dọc) ===== */
+#mobileLogo { display: none; }
+
+@media (max-width: 900px) and (orientation: portrait) {
+  #mobileLogo {
+    display: flex;
+    position: fixed;
+    top: calc(10px + var(--safe-top));
+    left: 54px; /* 10px lề + 38px nút + 6px cách */
+    height: 38px;
+    align-items: center;
+    z-index: 200;
+    pointer-events: none;
+  }
+  #mobileLogo svg { width: 28px; height: 28px; display: block; }
+
+  /* Chừa chỗ cho logo để topbar không đè lên */
+  #topbar { padding-left: 92px; }
+
+  /* Ẩn khi mở sidebar (sidebar đã có logo) hoặc khi toàn màn hình */
+  body:has(#sidebar.mobile-open) #mobileLogo,
+  body.app-fullscreen #mobileLogo { display: none; }
+}
+/* ===== MOBILE DỌC: bỏ nút thu gọn/mở sidebar (đã có nút 3 gạch) ===== */
+@media (max-width: 900px) and (orientation: portrait) {
+  #sidebarToggleBtn,
+  #sidebarResizeHandle {
+    display: none !important;
+  }
+}

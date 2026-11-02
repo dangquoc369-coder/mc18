@@ -246,6 +246,77 @@ const ChartModule = (function () {
       });
     }
   }
+  
+    // ===== MÀU NẾN + RÂU DÀY (giống TradingView) =====
+  const CANDLE_UP = '#089981';
+  const CANDLE_DOWN = '#F23645';
+  const VOLUME_UP = 'rgba(8,153,129,0.5)';
+  const VOLUME_DOWN = 'rgba(242,54,69,0.5)';
+    const WICK_RATIO = 0.024; // độ dày râu = 2.4% khoảng cách giữa 2 nến (đo từ ảnh TradingView)
+
+  /** Vẽ râu nến tỉ lệ theo mức zoom giống TradingView (thư viện chỉ vẽ cố định 1px). */
+  class ThickWickPrimitive {
+    constructor(getCandles) {
+      this._getCandles = getCandles;
+      this._chart = null;
+      this._series = null;
+      this._views = [
+        { zOrder: () => 'normal', renderer: () => ({ draw: (t) => this._draw(t) }) },
+      ];
+    }
+
+    attached(param) {
+      this._chart = param.chart;
+      this._series = param.series;
+    }
+
+    detached() {
+      this._chart = null;
+      this._series = null;
+    }
+
+    updateAllViews() {}
+
+    paneViews() {
+      return this._views;
+    }
+
+    _draw(target) {
+      const chart = this._chart;
+      const series = this._series;
+      if (!chart || !series) return;
+      const candles = this._getCandles();
+      if (!candles || candles.length === 0) return;
+      const timeScale = chart.timeScale();
+      const range = timeScale.getVisibleLogicalRange();
+      if (!range) return;
+      const barSpacing = timeScale.options().barSpacing;
+
+      const from = Math.max(0, Math.floor(range.from) - 1);
+      const to = Math.min(candles.length - 1, Math.ceil(range.to) + 1);
+
+      target.useBitmapCoordinateSpace((scope) => {
+        const ctx = scope.context;
+        const hr = scope.horizontalPixelRatio;
+        const vr = scope.verticalPixelRatio;
+        // Tối thiểu 1 pixel thật; zoom to thì dày dần theo tỉ lệ
+        let w = Math.max(Math.floor(hr), Math.round(barSpacing * hr * WICK_RATIO));
+        if (w % 2 === 0 && hr % 2 !== 0) w += 1; // lẻ pixel để râu nằm giữa nến, không nhoè
+        for (let i = from; i <= to; i++) {
+          const c = candles[i];
+          const x = timeScale.logicalToCoordinate(i);
+          const yHigh = series.priceToCoordinate(c.high);
+          const yLow = series.priceToCoordinate(c.low);
+          if (x === null || yHigh === null || yLow === null) continue;
+          const left = Math.round(x * hr) - Math.floor(w / 2);
+          const top = Math.round(yHigh * vr);
+          const bottom = Math.round(yLow * vr);
+          ctx.fillStyle = c.close >= c.open ? CANDLE_UP : CANDLE_DOWN;
+          ctx.fillRect(left, top, w, Math.max(1, bottom - top));
+        }
+      });
+    }
+  }
 
   function create(paneId) {
     let chart = null;
@@ -358,7 +429,7 @@ const ChartModule = (function () {
       volumeSeries.update({
         time: candle.time,
         value: candle.volume,
-        color: candle.close >= candle.open ? 'rgba(38,166,154,0.5)' : 'rgba(239,83,80,0.5)',
+        color: candle.close >= candle.open ? VOLUME_UP : VOLUME_DOWN,
       });
 
       const lastIndex = currentCandles.length - 1;
@@ -422,16 +493,13 @@ const ChartModule = (function () {
         timeScale: { borderColor: initialColors.border, timeVisible: true, secondsVisible: false },
       });
 
-      candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
-        upColor: '#26a69a',
-        downColor: '#ef5350',
+             candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
+        upColor: CANDLE_UP,
+        downColor: CANDLE_DOWN,
         borderVisible: false,
-        wickUpColor: '#26a69a',
-        wickDownColor: '#ef5350',
+        wickVisible: false,
       });
-      candleSeries.priceScale().applyOptions({
-        scaleMargins: { top: 0.1, bottom: 0.3 },
-      });
+      candleSeries.attachPrimitive(new ThickWickPrimitive(() => currentCandles));
 
       breakout.init(chart, candleSeries);
 
@@ -1174,7 +1242,7 @@ const ChartModule = (function () {
         candles.map((c) => ({
           time: c.time,
           value: c.volume,
-          color: c.close >= c.open ? 'rgba(38,166,154,0.5)' : 'rgba(239,83,80,0.5)',
+          color: c.close >= c.open ? VOLUME_UP : VOLUME_DOWN,
         }))
       );
 
@@ -1253,7 +1321,7 @@ const ChartModule = (function () {
         currentCandles.map((c) => ({
           time: c.time,
           value: c.volume,
-          color: c.close >= c.open ? 'rgba(38,166,154,0.5)' : 'rgba(239,83,80,0.5)',
+          color: c.close >= c.open ? VOLUME_UP : VOLUME_DOWN,
         }))
       );
 
