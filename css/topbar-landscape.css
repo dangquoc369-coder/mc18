@@ -115,31 +115,53 @@ html.tb-merged #topbar .topbar-btn {
 }
 
 /* ===== CHỮ TRÊN NÚT: hiện càng nhiều càng tốt (topbar-fit.js đặt data-tb-level) =====
-   Mặc định HIỆN chữ (kể cả trên điện thoại - ghi đè luật ẩn .btn-text của
-   style.css ở <=900px). Khi thiếu chỗ, topbar-fit.js tăng level:
-     1 = ẩn nút khung giờ nhanh (chỉ còn ô chọn khung)
-     2 = nút "Trạng thái thị trường" chỉ còn icon
-     3 = mọi nút chỉ còn icon */
+   Thứ tự thu gọn khi thiếu chỗ:
+     1 = cụm "1 ô / 2 ô / 3 ô / 4 ô" thu thành 1 ô chọn "N ô ▾"
+     2 = ẩn nút khung giờ nhanh (chỉ còn ô chọn khung)
+     3 = nút "Trạng thái thị trường" chỉ còn icon
+     4 = mọi nút chỉ còn icon */
 html.tb-merged #topbar .topbar-btn .btn-text,
 html.tb-merged #topbar #layoutGroup .btn-text {
   display: inline-block;
 }
 html.tb-merged #topbar .timeframe-quick-btns { display: flex; }
 
-html.tb-merged[data-tb-level="1"] #topbar .timeframe-quick-btns,
+/* Ô chọn số ô: mặc định ẩn */
+#layoutGroup .layout-select { display: none; }
+
+/* Level 1+: thu cụm số ô */
+html.tb-merged[data-tb-level="1"] #topbar #layoutGroup button,
+html.tb-merged[data-tb-level="2"] #topbar #layoutGroup button,
+html.tb-merged[data-tb-level="3"] #topbar #layoutGroup button,
+html.tb-merged[data-tb-level="4"] #topbar #layoutGroup button {
+  display: none;
+}
+html.tb-merged[data-tb-level="1"] #topbar #layoutGroup .layout-select,
+html.tb-merged[data-tb-level="2"] #topbar #layoutGroup .layout-select,
+html.tb-merged[data-tb-level="3"] #topbar #layoutGroup .layout-select,
+html.tb-merged[data-tb-level="4"] #topbar #layoutGroup .layout-select {
+  display: block;
+}
+
+/* Level 2+: ẩn nút khung giờ nhanh */
 html.tb-merged[data-tb-level="2"] #topbar .timeframe-quick-btns,
-html.tb-merged[data-tb-level="3"] #topbar .timeframe-quick-btns {
+html.tb-merged[data-tb-level="3"] #topbar .timeframe-quick-btns,
+html.tb-merged[data-tb-level="4"] #topbar .timeframe-quick-btns {
   display: none;
 }
-html.tb-merged[data-tb-level="2"] #topbar #marketStatusBtn .btn-text,
-html.tb-merged[data-tb-level="3"] #topbar #marketStatusBtn .btn-text {
+
+/* Level 3+: "Trạng thái thị trường" chỉ còn icon */
+html.tb-merged[data-tb-level="3"] #topbar #marketStatusBtn .btn-text,
+html.tb-merged[data-tb-level="4"] #topbar #marketStatusBtn .btn-text {
   display: none;
 }
-html.tb-merged[data-tb-level="3"] #topbar .topbar-btn .btn-text,
-html.tb-merged[data-tb-level="3"] #topbar #layoutGroup .btn-text {
+
+/* Level 4: mọi nút chỉ còn icon */
+html.tb-merged[data-tb-level="4"] #topbar .topbar-btn .btn-text,
+html.tb-merged[data-tb-level="4"] #topbar #layoutGroup .btn-text {
   display: none;
 }
-/* Level 1+: khung giờ nhanh đã ẩn thì nền nhóm không cần đệm thừa */
+
 html.tb-merged #topbar #sharedTimeframeGroup { padding: 3px; }
 
 /* Panel nổi (Cảnh báo / Trạng thái thị trường) nằm ngay dưới hàng 48px */

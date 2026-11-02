@@ -1,58 +1,24 @@
 /**
  * websocket.js
- * Quản lý kết nối WebSocket realtime tới Binance HOẶC Polling tới Yahoo Finance cho từng pane độc lập.
+ * Dữ liệu realtime cho từng pane độc lập:
+ *   - Binance (spot/futures): WebSocket.
+ *   - OANDA (XAUUSD): polling gộp - 1 timer / luồng, mỗi nhịp 1 request, các
+ *     khung cùng symbol được gộp vào 1 request /api/oanda/live (api.js) nên
+ *     Worker chỉ mở 1 WebSocket TradingView cho tất cả.
+ *   - ĐÃ BỎ HOÀN TOÀN Yahoo.
  *
- * ============================================================================
- * CẬP NHẬT (đợt fix "Trend Scalp/trạng thái thị trường bị đứng hình"):
+ * ĐỢT TỐI ƯU:
+ *   - OANDA: tab ẩn (visibilityState hidden) -> tạm dừng poll; cờ `busy` chống
+ *     request chồng nhau; vòng đầu KHÔNG poll ngay (dữ liệu vừa được tải xong).
+ *   - Poll kline OANDA phát changePercent = undefined để Store GIỮ nguyên %
+ *     thay đổi (trước đây phát null làm mất %).
  *
- *   TRIỆU CHỨNG: trạng thái thị trường (đặc biệt Trend Scalp - dùng nến M5)
- *   nhiều lúc không cập nhật trong thời gian dài; bấm nút 🔄 reload ở panel
- *   Trạng thái thị trường KHÔNG có tác dụng; chỉ có ĐỔI SYMBOL mới thấy cập
- *   nhật lại.
+ * WATCHDOG chống "socket zombie" (Binance): mỗi 10s quét mọi luồng, luồng nào
+ * im lặng quá ngưỡng (60s; trendref 25s) thì tự kết nối lại; kiểm tra ngay khi
+ * tab hiện lại. OANDA (polling) được bỏ qua trong watchdog.
  *
- *   NGUYÊN NHÂN: nút reload ở marketstatus.js chỉ tính lại
- *   (TrendReferenceModule.compute()) từ dữ liệu ĐANG CÓ SẴN trong bộ nhớ -
- *   nó không đụng gì tới WebSocket cả. Nếu 1 socket bị "zombie" (kết nối
- *   TCP/WS về mặt kỹ thuật vẫn "mở" nhưng không còn nhận được message nào
- *   nữa - cực kỳ hay gặp trên điện thoại khi khoá màn hình/chuyển app nền,
- *   đổi giữa wifi và 4G, mạng chập chờn...) thì sự kiện `onclose` của trình
- *   duyệt CÓ THỂ KHÔNG BAO GIỜ được bắn ra -> logic tự kết nối lại (vốn chỉ
- *   chạy trong onclose) không bao giờ được kích hoạt -> dữ liệu đứng im
- *   VĨNH VIỄN cho tới khi có 1 hành động ép đóng+mở lại toàn bộ socket, mà
- *   trong app này chỉ có việc ĐỔI SYMBOL mới làm vậy (xem
- *   closeAllTrendRefKlineSockets()/connectSockets() trong app.js).
- *
- *   GIẢI PHÁP - "watchdog" phát hiện socket im lặng bất thường:
- *     - Mỗi luồng (kline/ticker/htf/sl/mỗi khung trend tham khảo) đều được
- *       ghi lại mốc thời gian NHẬN MESSAGE GẦN NHẤT (lastMessageAt) và thông
- *       tin cần thiết để tự kết nối lại (meta: symbol/interval/provider).
- *     - runStaleWatchdog() chạy định kỳ (mỗi 20s) quét toàn bộ pane đang mở:
- *       nếu 1 luồng KHÔNG nhận được bất kỳ message nào trong quá
- *       STALE_THRESHOLD_MS (60s), coi là "zombie" và CHỦ ĐỘNG gọi lại đúng
- *       hàm connect tương ứng - không cần đợi onclose.
- *       (Binance đẩy update cho nến đang hình thành gần như liên tục, không
- *       phải chỉ lúc đóng nến, nên 60s không có message nào là dấu hiệu rõ
- *       ràng của kết nối có vấn đề, không phải chuyện bình thường.)
- *     - Thêm lắng nghe 'visibilitychange': khi tab được MỞ LẠI (từ nền lên
- *       foreground), setInterval của trình duyệt trước đó có thể đã bị tạm
- *       dừng khá lâu - kiểm tra NGAY lúc này thay vì đợi tới vòng watchdog
- *       định kỳ tiếp theo, xử lý đúng kịch bản phổ biến nhất trên di động.
- *     - Yahoo (dùng polling, không phải WebSocket) được BỎ QUA trong
- *       watchdog vì cơ chế polling (setInterval gọi fetchKlines) đã tự lặp
- *       lại độc lập, không có khái niệm "socket zombie" tương tự.
- * ============================================================================
- *
- * CẬP NHẬT (hỗ trợ KHUNG THỜI GIAN TỔNG HỢP - synthetic timeframes):
- *   Với các khung 20m/45m/3h/2d (không native trên Binance - xem
- *   SYNTHETIC_TIMEFRAMES trong utils.js), luồng WebSocket SUBSCRIBE THEO
- *   KHUNG BASE nhỏ hơn (vd 20m -> subscribe kline_5m) rồi đưa từng nến base
- *   nhận được qua bộ gộp createSyntheticAggregator() (utils.js) trước khi
- *   emit ra ngoài. Bộ gộp này được lưu trong entry.aggregators.KEY và bị
- *   xoá mỗi khi socket tương ứng bị đóng (các hàm closeKlineSocket,
- *   closeHigherTFKlineSocket, closeSLKlineSocket, closeTrendRefKlineSocket).
- *   Mỗi hàm connect và close liên quan đều có comment "MỚI" đánh dấu phần
- *   thêm cho tổng hợp.
- * ============================================================================
+ * KHUNG TỔNG HỢP (20m/45m/3h/2d) trên Binance: subscribe khung BASE rồi gộp
+ * qua createSyntheticAggregator() (utils.js) trước khi emit.
  */
 
 function getWsUrlForProvider(provider, streamName) {
@@ -71,41 +37,37 @@ function getOrCreateEntry(paneId) {
       tickerSocket: null,
       htfKlineSocket: null,
       slKlineSocket: null,
-      trendRefSockets: {},          // role -> WebSocket
-      trendRefReconnectTimers: {},  // role -> timer
+      trendRefSockets: {}, // role -> WebSocket
+      trendRefReconnectTimers: {}, // role -> timer
       intentionalClose: false,
       klineReconnectTimer: null,
       tickerReconnectTimer: null,
       htfReconnectTimer: null,
       slReconnectTimer: null,
 
-      // Yahoo Polling Timers
-      yahooPollTimer: null,
-      yahooHtfTimer: null,
-      yahooSlTimer: null,
-      yahooTrendRefTimers: {},       // role -> timer
+      // OANDA: key -> setInterval id (kline | htf | sl | ticker | tr:<role>)
+      oanda: {},
 
-      // OANDA Polling Timers
-      oandaPollTimer: null,
-      oandaHtfTimer: null,
-      oandaSlTimer: null,
-      oandaTrendRefTimers: {},       // role -> timer
-      oandaTickerTimer: null,
-
-      // ĐỢT FIX (watchdog chống "socket zombie"): meta lưu đủ thông tin để
-      // tự gọi lại đúng hàm connect tương ứng khi phát hiện luồng im lặng
-      // bất thường; lastMessageAt lưu mốc thời gian NHẬN MESSAGE gần nhất
-      // của từng luồng - xem runStaleWatchdog() ở cuối file.
       meta: { kline: null, ticker: null, htf: null, sl: null, trendref: {} },
       lastMessageAt: { kline: null, ticker: null, htf: null, sl: null, trendref: {} },
-
-      // MỚI (khung tổng hợp): bộ gộp nến - chỉ khác null khi interval của
-      // luồng đó là synthetic (20m/45m/3h/2d). Xem createSyntheticAggregator()
-      // trong utils.js.
       aggregators: { kline: null, htf: null, sl: null, trendref: {} },
     });
   }
   return connections.get(paneId);
+}
+
+/** Chuyển 1 message kline Binance -> nến chuẩn. */
+function parseBinanceKline(msg) {
+  const k = msg.k;
+  return {
+    time: Math.floor(k.t / 1000),
+    open: parseFloat(k.o),
+    high: parseFloat(k.h),
+    low: parseFloat(k.l),
+    close: parseFloat(k.c),
+    volume: parseFloat(k.v),
+    closed: k.x,
+  };
 }
 
 function connectKlineStream(paneId, symbol, interval) {
@@ -120,24 +82,14 @@ function connectKlineStream(paneId, symbol, interval) {
     return;
   }
 
-  if (provider === 'yahoo') {
-    connectYahooKlineStream(paneId, symbol, interval);
-    return;
-  }
-
-  // MỚI (khung tổng hợp): nếu interval không native, subscribe theo khung
-  // base nhỏ hơn và gộp nến qua aggregator trước khi emit.
   const synthetic = isSyntheticInterval(interval);
   const wsInterval = synthetic ? getSyntheticInfo(interval).base : interval;
   entry.aggregators.kline = synthetic ? createSyntheticAggregator(interval) : null;
 
   const cleanSymbol = getCleanSymbol(symbol).toLowerCase();
-  const streamName = `${cleanSymbol}@kline_${wsInterval}`;
-  const wsUrl = getWsUrlForProvider(provider, streamName);
+  const wsUrl = getWsUrlForProvider(provider, `${cleanSymbol}@kline_${wsInterval}`);
   const socket = new WebSocket(wsUrl);
   entry.klineSocket = socket;
-  // Mốc khởi tạo NGAY khi vừa mở socket - tránh watchdog hiểu nhầm là "im
-  // lặng" trong lúc socket còn đang bắt tay, chưa kịp có message đầu tiên.
   entry.lastMessageAt.kline = Date.now();
 
   socket.onopen = () => {
@@ -146,18 +98,7 @@ function connectKlineStream(paneId, symbol, interval) {
 
   socket.onmessage = (event) => {
     entry.lastMessageAt.kline = Date.now();
-    const msg = JSON.parse(event.data);
-    const k = msg.k;
-    const baseCandle = {
-      time: Math.floor(k.t / 1000),
-      open: parseFloat(k.o),
-      high: parseFloat(k.h),
-      low: parseFloat(k.l),
-      close: parseFloat(k.c),
-      volume: parseFloat(k.v),
-      closed: k.x,
-    };
-    // MỚI: nếu là khung tổng hợp, đưa nến base qua bộ gộp trước khi emit.
+    const baseCandle = parseBinanceKline(JSON.parse(event.data));
     const candle = entry.aggregators.kline ? entry.aggregators.kline.push(baseCandle) : baseCandle;
     EventBus.emit('kline:update', { paneId, candle });
   };
@@ -189,36 +130,19 @@ function connectHigherTFKlineStream(paneId, symbol, interval) {
     return;
   }
 
-  if (provider === 'yahoo') {
-    connectYahooHigherTF(paneId, symbol, interval);
-    return;
-  }
-
-  // MỚI (khung tổng hợp)
   const synthetic = isSyntheticInterval(interval);
   const wsInterval = synthetic ? getSyntheticInfo(interval).base : interval;
   entry.aggregators.htf = synthetic ? createSyntheticAggregator(interval) : null;
 
   const cleanSymbol = getCleanSymbol(symbol).toLowerCase();
-  const streamName = `${cleanSymbol}@kline_${wsInterval}`;
-  const wsUrl = getWsUrlForProvider(provider, streamName);
+  const wsUrl = getWsUrlForProvider(provider, `${cleanSymbol}@kline_${wsInterval}`);
   const socket = new WebSocket(wsUrl);
   entry.htfKlineSocket = socket;
   entry.lastMessageAt.htf = Date.now();
 
   socket.onmessage = (event) => {
     entry.lastMessageAt.htf = Date.now();
-    const msg = JSON.parse(event.data);
-    const k = msg.k;
-    const baseCandle = {
-      time: Math.floor(k.t / 1000),
-      open: parseFloat(k.o),
-      high: parseFloat(k.h),
-      low: parseFloat(k.l),
-      close: parseFloat(k.c),
-      volume: parseFloat(k.v),
-      closed: k.x,
-    };
+    const baseCandle = parseBinanceKline(JSON.parse(event.data));
     const candle = entry.aggregators.htf ? entry.aggregators.htf.push(baseCandle) : baseCandle;
     EventBus.emit('kline:update:htf', { paneId, candle });
   };
@@ -245,36 +169,19 @@ function connectSLKlineStream(paneId, symbol, interval) {
     return;
   }
 
-  if (provider === 'yahoo') {
-    connectYahooSLTF(paneId, symbol, interval);
-    return;
-  }
-
-  // MỚI (khung tổng hợp)
   const synthetic = isSyntheticInterval(interval);
   const wsInterval = synthetic ? getSyntheticInfo(interval).base : interval;
   entry.aggregators.sl = synthetic ? createSyntheticAggregator(interval) : null;
 
   const cleanSymbol = getCleanSymbol(symbol).toLowerCase();
-  const streamName = `${cleanSymbol}@kline_${wsInterval}`;
-  const wsUrl = getWsUrlForProvider(provider, streamName);
+  const wsUrl = getWsUrlForProvider(provider, `${cleanSymbol}@kline_${wsInterval}`);
   const socket = new WebSocket(wsUrl);
   entry.slKlineSocket = socket;
   entry.lastMessageAt.sl = Date.now();
 
   socket.onmessage = (event) => {
     entry.lastMessageAt.sl = Date.now();
-    const msg = JSON.parse(event.data);
-    const k = msg.k;
-    const baseCandle = {
-      time: Math.floor(k.t / 1000),
-      open: parseFloat(k.o),
-      high: parseFloat(k.h),
-      low: parseFloat(k.l),
-      close: parseFloat(k.c),
-      volume: parseFloat(k.v),
-      closed: k.x,
-    };
+    const baseCandle = parseBinanceKline(JSON.parse(event.data));
     const candle = entry.aggregators.sl ? entry.aggregators.sl.push(baseCandle) : baseCandle;
     EventBus.emit('kline:update:sl', { paneId, candle });
   };
@@ -301,36 +208,19 @@ function connectTrendRefKlineStream(paneId, role, symbol, interval) {
     return;
   }
 
-  if (provider === 'yahoo') {
-    connectYahooTrendRef(paneId, role, symbol, interval);
-    return;
-  }
-
-  // MỚI (khung tổng hợp)
   const synthetic = isSyntheticInterval(interval);
   const wsInterval = synthetic ? getSyntheticInfo(interval).base : interval;
   entry.aggregators.trendref[role] = synthetic ? createSyntheticAggregator(interval) : null;
 
   const cleanSymbol = getCleanSymbol(symbol).toLowerCase();
-  const streamName = `${cleanSymbol}@kline_${wsInterval}`;
-  const wsUrl = getWsUrlForProvider(provider, streamName);
+  const wsUrl = getWsUrlForProvider(provider, `${cleanSymbol}@kline_${wsInterval}`);
   const socket = new WebSocket(wsUrl);
   entry.trendRefSockets[role] = socket;
   entry.lastMessageAt.trendref[role] = Date.now();
 
   socket.onmessage = (event) => {
     entry.lastMessageAt.trendref[role] = Date.now();
-    const msg = JSON.parse(event.data);
-    const k = msg.k;
-    const baseCandle = {
-      time: Math.floor(k.t / 1000),
-      open: parseFloat(k.o),
-      high: parseFloat(k.h),
-      low: parseFloat(k.l),
-      close: parseFloat(k.c),
-      volume: parseFloat(k.v),
-      closed: k.x,
-    };
+    const baseCandle = parseBinanceKline(JSON.parse(event.data));
     const agg = entry.aggregators.trendref[role];
     const candle = agg ? agg.push(baseCandle) : baseCandle;
     EventBus.emit('kline:update:trendref', { paneId, role, candle });
@@ -358,14 +248,8 @@ function connectTickerStream(paneId, symbol) {
     return;
   }
 
-  if (provider === 'yahoo') {
-    // Yahoo uses the primary kline polling loop to emit ticker events, so we do nothing here.
-    return;
-  }
-
   const cleanSymbol = getCleanSymbol(symbol).toLowerCase();
-  const streamName = `${cleanSymbol}@ticker`;
-  const wsUrl = getWsUrlForProvider(provider, streamName);
+  const wsUrl = getWsUrlForProvider(provider, `${cleanSymbol}@ticker`);
   const socket = new WebSocket(wsUrl);
   entry.tickerSocket = socket;
   entry.lastMessageAt.ticker = Date.now();
@@ -388,215 +272,103 @@ function connectTickerStream(paneId, symbol) {
   };
 }
 
-/* ===================== YAHOO POLLING IMPLEMENTATION ===================== */
-/* Lưu ý: Yahoo KHÔNG hỗ trợ khung tổng hợp (20m/45m/3h/2d) - xem ghi chú
- * trong api.js -> fetchKlines. Các hàm poll dưới đây gọi fetchKlines() với
- * interval y nguyên như đã chọn; nếu interval đó là synthetic và symbol là
- * Yahoo, request sẽ lỗi phía server, không phải lỗi ở đây. */
+/* ===================== OANDA: 1 TIMER / LUỒNG, GỘP REQUEST ===================== */
 
-function connectYahooKlineStream(paneId, symbol, interval) {
-  const entry = getOrCreateEntry(paneId);
-  
-  const poll = async () => {
-    try {
-      const candles = await fetchKlines(symbol, interval, 5);
-      if (candles && candles.length > 0) {
-        const liveCandle = candles[candles.length - 1];
-        // Emit Kline update
-        EventBus.emit('kline:update', { paneId, candle: liveCandle });
-        // Emit price update
-        EventBus.emit('price:update', {
-          paneId,
-          price: liveCandle.close,
-          changePercent: null, // UI will calculate or display formatted value
-        });
-        EventBus.emit('ws:status', { paneId, status: 'connected' });
-      }
-    } catch (err) {
-      console.warn(`Yahoo poll kline error (${paneId}):`, err);
-      EventBus.emit('ws:status', { paneId, status: 'disconnected' });
-    }
-  };
+// Khung KHÔNG có sẵn trên TradingView (Worker tự gộp) -> không đi qua /live.
+const OANDA_NON_LIVE = new Set(['6h', '8h', '12h', '3d']);
 
-  // Initial poll and set interval
-  poll();
-  entry.yahooPollTimer = setInterval(poll, 8000);
-  EventBus.emit('ws:status', { paneId, status: 'connected' });
+/** Nến cuối của 1 khung OANDA: native -> /live (gộp 1 WS); tổng hợp -> REST thường. */
+async function oandaLastCandle(symbol, interval) {
+  if (isSyntheticInterval(interval) || OANDA_NON_LIVE.has(interval)) {
+    const c = await fetchKlines(symbol, interval, 3);
+    return c[c.length - 1];
+  }
+  const bars = await fetchOandaLive(symbol, interval);
+  return bars[bars.length - 1];
 }
 
-function connectYahooHigherTF(paneId, symbol, interval) {
+/**
+ * Khởi động 1 vòng poll OANDA. KHÔNG poll ngay lần đầu (dữ liệu vừa được tải
+ * bằng REST), chỉ bắt đầu sau `periodMs`. Tab ẩn -> bỏ qua nhịp.
+ */
+function startOandaLoop(paneId, key, symbol, interval, periodMs, onCandle) {
   const entry = getOrCreateEntry(paneId);
-  
+  clearOandaLoop(entry, key);
+
+  let busy = false;
   const poll = async () => {
+    if (busy || document.visibilityState === 'hidden') return;
+    busy = true;
     try {
-      const candles = await fetchKlines(symbol, interval, 5);
-      if (candles && candles.length > 0) {
-        EventBus.emit('kline:update:htf', { paneId, candle: candles[candles.length - 1] });
-      }
+      const c = await oandaLastCandle(symbol, interval);
+      if (c) onCandle(c);
     } catch (err) {
-      console.warn(`Yahoo poll HTF error (${paneId}):`, err);
+      if (key === 'kline') EventBus.emit('ws:status', { paneId, status: 'disconnected' });
+    } finally {
+      busy = false;
     }
   };
-
-  poll();
-  entry.yahooHtfTimer = setInterval(poll, 12000);
+  entry.oanda[key] = setInterval(poll, periodMs);
 }
 
-function connectYahooSLTF(paneId, symbol, interval) {
-  const entry = getOrCreateEntry(paneId);
-  
-  const poll = async () => {
-    try {
-      const candles = await fetchKlines(symbol, interval, 5);
-      if (candles && candles.length > 0) {
-        EventBus.emit('kline:update:sl', { paneId, candle: candles[candles.length - 1] });
-      }
-    } catch (err) {
-      console.warn(`Yahoo poll SL error (${paneId}):`, err);
-    }
-  };
-
-  poll();
-  entry.yahooSlTimer = setInterval(poll, 12000);
+function clearOandaLoop(entry, key) {
+  if (entry.oanda && entry.oanda[key]) {
+    clearInterval(entry.oanda[key]);
+    delete entry.oanda[key];
+  }
 }
-
-function connectYahooTrendRef(paneId, role, symbol, interval) {
-  const entry = getOrCreateEntry(paneId);
-  
-  const poll = async () => {
-    try {
-      const candles = await fetchKlines(symbol, interval, 5);
-      if (candles && candles.length > 0) {
-        EventBus.emit('kline:update:trendref', { paneId, role, candle: candles[candles.length - 1] });
-      }
-    } catch (err) {
-      console.warn(`Yahoo poll TrendRef ${role} error (${paneId}):`, err);
-    }
-  };
-
-  poll();
-  entry.yahooTrendRefTimers[role] = setInterval(poll, 15000);
-}
-
-/* ===================== OANDA POLLING IMPLEMENTATION ===================== */
 
 function connectOandaKlineStream(paneId, symbol, interval) {
-  const entry = getOrCreateEntry(paneId);
-  clearInterval(entry.oandaPollTimer);
-  entry.oandaPollTimer = null;
-
-  const poll = async () => {
-    try {
-      const candles = await fetchKlines(symbol, interval, 5);
-      if (candles && candles.length > 0) {
-        const liveCandle = candles[candles.length - 1];
-        // Emit Kline update
-        EventBus.emit('kline:update', { paneId, candle: liveCandle });
-        // Emit price update
-        EventBus.emit('price:update', {
-          paneId,
-          price: liveCandle.close,
-          changePercent: null,
-        });
-        EventBus.emit('ws:status', { paneId, status: 'connected' });
-      }
-    } catch (err) {
-      console.warn(`OANDA poll kline error (${paneId}):`, err);
-      EventBus.emit('ws:status', { paneId, status: 'disconnected' });
-    }
-  };
-
-  poll();
-  entry.oandaPollTimer = setInterval(poll, 3000);
+  startOandaLoop(paneId, 'kline', symbol, interval, 4000, (candle) => {
+    EventBus.emit('kline:update', { paneId, candle });
+    EventBus.emit('price:update', { paneId, price: candle.close, changePercent: undefined });
+    EventBus.emit('ws:status', { paneId, status: 'connected' });
+  });
   EventBus.emit('ws:status', { paneId, status: 'connected' });
 }
 
 function connectOandaHigherTF(paneId, symbol, interval) {
-  const entry = getOrCreateEntry(paneId);
-  clearInterval(entry.oandaHtfTimer);
-  entry.oandaHtfTimer = null;
-
-  const poll = async () => {
-    try {
-      const candles = await fetchKlines(symbol, interval, 5);
-      if (candles && candles.length > 0) {
-        EventBus.emit('kline:update:htf', { paneId, candle: candles[candles.length - 1] });
-      }
-    } catch (err) {
-      console.warn(`OANDA poll HTF error (${paneId}):`, err);
-    }
-  };
-
-  poll();
-  entry.oandaHtfTimer = setInterval(poll, 8000);
+  startOandaLoop(paneId, 'htf', symbol, interval, 10000, (candle) =>
+    EventBus.emit('kline:update:htf', { paneId, candle })
+  );
 }
 
 function connectOandaSLTF(paneId, symbol, interval) {
-  const entry = getOrCreateEntry(paneId);
-  clearInterval(entry.oandaSlTimer);
-  entry.oandaSlTimer = null;
-
-  const poll = async () => {
-    try {
-      const candles = await fetchKlines(symbol, interval, 5);
-      if (candles && candles.length > 0) {
-        EventBus.emit('kline:update:sl', { paneId, candle: candles[candles.length - 1] });
-      }
-    } catch (err) {
-      console.warn(`OANDA poll SL error (${paneId}):`, err);
-    }
-  };
-
-  poll();
-  entry.oandaSlTimer = setInterval(poll, 8000);
+  startOandaLoop(paneId, 'sl', symbol, interval, 10000, (candle) =>
+    EventBus.emit('kline:update:sl', { paneId, candle })
+  );
 }
 
 function connectOandaTrendRef(paneId, role, symbol, interval) {
-  const entry = getOrCreateEntry(paneId);
-  if (entry.oandaTrendRefTimers[role]) {
-    clearInterval(entry.oandaTrendRefTimers[role]);
-    delete entry.oandaTrendRefTimers[role];
-  }
-
-  const poll = async () => {
-    try {
-      const candles = await fetchKlines(symbol, interval, 5);
-      if (candles && candles.length > 0) {
-        EventBus.emit('kline:update:trendref', { paneId, role, candle: candles[candles.length - 1] });
-      }
-    } catch (err) {
-      console.warn(`OANDA poll TrendRef ${role} error (${paneId}):`, err);
-    }
-  };
-
-  poll();
-  entry.oandaTrendRefTimers[role] = setInterval(poll, 10000);
+  startOandaLoop(paneId, 'tr:' + role, symbol, interval, 15000, (candle) =>
+    EventBus.emit('kline:update:trendref', { paneId, role, candle })
+  );
 }
 
 function connectOandaTickerStream(paneId, symbol) {
   const entry = getOrCreateEntry(paneId);
-  clearInterval(entry.oandaTickerTimer);
-  entry.oandaTickerTimer = null;
+  clearOandaLoop(entry, 'ticker');
 
   const poll = async () => {
+    if (document.visibilityState === 'hidden') return;
     try {
-      const ticker = await fetch24hTicker(symbol);
-      if (ticker && typeof ticker.lastPrice === 'number') {
+      const t = await fetch24hTicker(symbol);
+      if (t && typeof t.lastPrice === 'number' && !Number.isNaN(t.lastPrice)) {
         EventBus.emit('price:update', {
           paneId,
-          price: ticker.lastPrice,
-          changePercent: ticker.changePercent,
-          bid: ticker.bid,
-          ask: ticker.ask,
+          price: t.lastPrice,
+          changePercent: t.changePercent,
+          bid: t.bid,
+          ask: t.ask,
         });
       }
     } catch (err) {
-      console.warn(`OANDA ticker poll error (${paneId}):`, err);
+      /* bỏ qua - nhịp sau thử lại */
     }
   };
 
-  poll();
-  entry.oandaTickerTimer = setInterval(poll, 2500);
+  poll(); // giá hiển thị ngay (app.js không tải ticker riêng cho OANDA)
+  entry.oanda.ticker = setInterval(poll, 5000);
 }
 
 /* ===================== TEARDOWN & SOCKET CLOSURES ===================== */
@@ -605,15 +377,10 @@ function closeTrendRefKlineSocket(paneId, role) {
   const entry = connections.get(paneId);
   if (!entry) return;
   clearTimeout(entry.trendRefReconnectTimers[role]);
-  clearInterval(entry.yahooTrendRefTimers[role]);
-  delete entry.yahooTrendRefTimers[role];
-  if (entry.oandaTrendRefTimers && entry.oandaTrendRefTimers[role]) {
-    clearInterval(entry.oandaTrendRefTimers[role]);
-    delete entry.oandaTrendRefTimers[role];
-  }
+  clearOandaLoop(entry, 'tr:' + role);
   delete entry.meta.trendref[role];
   delete entry.lastMessageAt.trendref[role];
-  delete entry.aggregators.trendref[role]; // MỚI
+  delete entry.aggregators.trendref[role];
 
   const sock = entry.trendRefSockets[role];
   if (sock) {
@@ -628,24 +395,18 @@ function closeTrendRefKlineSocket(paneId, role) {
 function closeAllTrendRefKlineSockets(paneId) {
   const entry = connections.get(paneId);
   if (!entry) return;
-  Object.keys(entry.trendRefSockets).forEach((role) => closeTrendRefKlineSocket(paneId, role));
-  Object.keys(entry.yahooTrendRefTimers).forEach((role) => closeTrendRefKlineSocket(paneId, role));
-  if (entry.oandaTrendRefTimers) {
-    Object.keys(entry.oandaTrendRefTimers).forEach((role) => closeTrendRefKlineSocket(paneId, role));
-  }
+  const roles = new Set([...Object.keys(entry.trendRefSockets), ...Object.keys(entry.meta.trendref)]);
+  roles.forEach((role) => closeTrendRefKlineSocket(paneId, role));
 }
 
 function closeKlineSocket(paneId) {
   const entry = connections.get(paneId);
   if (!entry) return;
   clearTimeout(entry.klineReconnectTimer);
-  clearInterval(entry.yahooPollTimer);
-  entry.yahooPollTimer = null;
-  clearInterval(entry.oandaPollTimer);
-  entry.oandaPollTimer = null;
+  clearOandaLoop(entry, 'kline');
   entry.meta.kline = null;
   entry.lastMessageAt.kline = null;
-  entry.aggregators.kline = null; // MỚI
+  entry.aggregators.kline = null;
 
   if (entry.klineSocket) {
     entry.intentionalClose = true;
@@ -660,13 +421,10 @@ function closeHigherTFKlineSocket(paneId) {
   const entry = connections.get(paneId);
   if (!entry) return;
   clearTimeout(entry.htfReconnectTimer);
-  clearInterval(entry.yahooHtfTimer);
-  entry.yahooHtfTimer = null;
-  clearInterval(entry.oandaHtfTimer);
-  entry.oandaHtfTimer = null;
+  clearOandaLoop(entry, 'htf');
   entry.meta.htf = null;
   entry.lastMessageAt.htf = null;
-  entry.aggregators.htf = null; // MỚI
+  entry.aggregators.htf = null;
 
   if (entry.htfKlineSocket) {
     entry.intentionalClose = true;
@@ -681,13 +439,10 @@ function closeSLKlineSocket(paneId) {
   const entry = connections.get(paneId);
   if (!entry) return;
   clearTimeout(entry.slReconnectTimer);
-  clearInterval(entry.yahooSlTimer);
-  entry.yahooSlTimer = null;
-  clearInterval(entry.oandaSlTimer);
-  entry.oandaSlTimer = null;
+  clearOandaLoop(entry, 'sl');
   entry.meta.sl = null;
   entry.lastMessageAt.sl = null;
-  entry.aggregators.sl = null; // MỚI
+  entry.aggregators.sl = null;
 
   if (entry.slKlineSocket) {
     entry.intentionalClose = true;
@@ -702,8 +457,7 @@ function closeTickerSocket(paneId) {
   const entry = connections.get(paneId);
   if (!entry) return;
   clearTimeout(entry.tickerReconnectTimer);
-  clearInterval(entry.oandaTickerTimer);
-  entry.oandaTickerTimer = null;
+  clearOandaLoop(entry, 'ticker');
   entry.meta.ticker = null;
   entry.lastMessageAt.ticker = null;
 
@@ -735,24 +489,12 @@ function connectSockets(paneId, symbol, timeframe) {
 }
 
 /* =====================================================================
- * WATCHDOG CHỐNG "SOCKET ZOMBIE" (đợt fix "Trend Scalp bị đứng hình")
- * Xem giải thích đầy đủ ở đầu file. Tóm tắt: mỗi 20 giây, quét toàn bộ
- * luồng của mọi pane đang mở; luồng nào quá 60 giây không nhận được bất kỳ
- * message nào thì bị coi là "zombie" và được CHỦ ĐỘNG kết nối lại - không
- * cần đợi (và không phụ thuộc vào) sự kiện onclose của trình duyệt.
- *
- * LƯU Ý VỚI KHUNG TỔNG HỢP: watchdog theo dõi độ "im lặng" của luồng WS ở
- * cấp độ nến BASE (vd 20m theo dõi độ im lặng của stream kline_5m bên
- * dưới), không phải cấp độ bucket tổng hợp - nên ngưỡng cũ (60s/25s) vẫn
- * áp dụng đúng như bình thường, không cần chỉnh gì thêm.
+ * WATCHDOG CHỐNG "SOCKET ZOMBIE" (chỉ áp dụng cho WebSocket Binance)
  * ===================================================================== */
 
-const STALE_THRESHOLD_MS = 60 * 1000; // 60s không có message nào -> coi là bất thường
-// ĐỢT FIX: trendref (M5/H2 cho Trend Scalp) cần realtime hơn các luồng
-// khác - Binance đẩy update gần như liên tục nên 25s im lặng đã là bất
-// thường rõ ràng, không cần đợi tới 60s như luồng kline/htf/sl chính.
+const STALE_THRESHOLD_MS = 60 * 1000;
 const STALE_THRESHOLD_MS_TRENDREF = 25 * 1000;
-const WATCHDOG_INTERVAL_MS = 10 * 1000; // giảm từ 20s -> 10s để bắt kịp ngưỡng 25s ở trên
+const WATCHDOG_INTERVAL_MS = 10 * 1000;
 
 function getStaleThreshold(key) {
   return key.indexOf('trendref:') === 0 ? STALE_THRESHOLD_MS_TRENDREF : STALE_THRESHOLD_MS;
@@ -782,22 +524,19 @@ function forceReconnectStaleStream(paneId, key) {
 }
 
 function checkStreamStaleness(paneId, key, meta, lastAt, now) {
-  if (!meta || meta.provider === 'yahoo' || meta.provider === 'oanda') return;
+  if (!meta || meta.provider === 'oanda') return;
   if (!lastAt) return;
   const threshold = getStaleThreshold(key);
   if (now - lastAt > threshold) {
     console.warn(
       `[ws-watchdog] Pane "${paneId}" - luồng "${key}" im lặng ${Math.round((now - lastAt) / 1000)}s ` +
-      `(ngưỡng ${threshold / 1000}s) - tự động kết nối lại.`
+        `(ngưỡng ${threshold / 1000}s) - tự động kết nối lại.`
     );
     forceReconnectStaleStream(paneId, key);
   }
 }
 
-/** Ép kết nối lại NGAY các luồng trend tham khảo (m5/h2...) của 1 pane -
- *  dùng cho nút 🔄 reload thủ công ở marketstatus.js. Khác với watchdog,
- *  hàm này KHÔNG cần đợi vượt ngưỡng im lặng - người dùng nghi ngờ dữ liệu
- *  đứng là được phép "đá" lại ngay, không phải đổi symbol như trước đây. */
+/** Ép kết nối lại NGAY các luồng trend tham khảo của 1 pane (nút 🔄 ở marketstatus.js). */
 function forceReconnectPaneTrendRef(paneId) {
   const entry = connections.get(paneId);
   if (!entry) return;
@@ -814,18 +553,19 @@ function runStaleWatchdog() {
     checkStreamStaleness(paneId, 'htf', entry.meta.htf, entry.lastMessageAt.htf, now);
     checkStreamStaleness(paneId, 'sl', entry.meta.sl, entry.lastMessageAt.sl, now);
     Object.keys(entry.meta.trendref).forEach((role) => {
-      checkStreamStaleness(paneId, `trendref:${role}`, entry.meta.trendref[role], entry.lastMessageAt.trendref[role], now);
+      checkStreamStaleness(
+        paneId,
+        `trendref:${role}`,
+        entry.meta.trendref[role],
+        entry.lastMessageAt.trendref[role],
+        now
+      );
     });
   });
 }
 
 setInterval(runStaleWatchdog, WATCHDOG_INTERVAL_MS);
 
-// Trình duyệt (đặc biệt trên di động) thường TẠM DỪNG setInterval khi tab bị
-// đưa xuống nền để tiết kiệm pin - đây chính là kịch bản phổ biến nhất khiến
-// dữ liệu "đứng hình" cho tới khi người dùng tự tay đổi symbol. Kiểm tra lại
-// NGAY khi tab được mở lại (visible), không đợi tới vòng watchdog định kỳ
-// tiếp theo (vốn cũng có thể vừa bị treo suốt thời gian tab ở nền).
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {

@@ -2,42 +2,30 @@
  * app.js
  * Entry point - khởi động app và điều phối luồng dữ liệu giữa các module.
  *
- * (Phần 1: tự động tải thêm lịch sử khi kéo sang trái - xem onNeedMoreHistory.)
+ * ĐỢT TỐI ƯU TỐC ĐỘ ĐỔI SYMBOL:
+ *   - 4 pane khởi tạo SONG SONG (Promise.all) thay vì tuần tự.
+ *   - loadPaneAll(): bắn song song nến chính + nến khung cao + ticker; vẽ chart
+ *     NGAY khi có nến chính, không đợi các phần còn lại.
+ *   - Chống race: response của symbol/timeframe cũ KHÔNG ghi đè dữ liệu mới
+ *     (isPaneCurrent).
+ *   - OANDA tải 500 nến lúc đầu (kéo trái sẽ tự tải thêm qua onNeedMoreHistory).
+ *   - Giữ chart cũ hiển thị trong lúc tải; chỉ xoá khi dữ liệu mới về.
+ *   - Trend tham khảo (7 khung) dời ra SAU 1.5s lúc khởi động, debounce 0.8s khi
+ *     đổi symbol -> không tranh băng thông với chart chính.
+ *   - ĐÃ BỎ Yahoo.
  *
- * (Phần 2, CẢNH BÁO):
- *   - Khởi động NotificationsModule (đăng ký service worker + hiện banner
- *     xin quyền thông báo lần đầu nếu chưa quyết định).
- *   - Lắng nghe 'pane:priceChanged' (do Store.setPaneLastPrice bắn ra) ->
- *     gọi AlertsModule.checkPrice(symbol, price) để phát hiện lúc giá vượt
- *     qua mức cảnh báo đã đặt.
- *   - Lắng nghe 'pane:newSignal' (bắn ra từ chart.js khi breakout.js phát
- *     hiện tín hiệu BUY/SELL MỚI) -> nếu pane đó đã bật signalAlertEnabled,
- *     gửi thông báo hệ thống dạng "M5 vào lệnh BUY" (ví dụ).
- *
- * ĐỢT FIX NÀY (SỬA LỖI CẢNH BÁO GIÁ KHÔNG HOẠT ĐỘNG):
- *   - websocket.js phát ra sự kiện 'price:update' mỗi khi có giá ticker mới
- *     (realtime), nhưng TRƯỚC ĐÂY không có nơi nào trong app lắng nghe sự
- *     kiện này -> Store chỉ có giá tại thời điểm tải trang (qua
- *     loadInitialPrice() gọi 1 lần REST API), rồi bị "đóng băng" mãi mãi.
- *     Hệ quả: AlertsModule.checkPrice() không bao giờ được gọi lại với giá
- *     MỚI -> cảnh báo giá gần như không bao giờ kích hoạt.
- *   - Thêm onTickerPriceUpdate(): nối 'price:update' -> Store.setPaneLastPrice(),
- *     việc này sẽ tự động bắn tiếp 'pane:priceChanged' (Store đã có sẵn logic
- *     này) -> vừa cập nhật UI giá vừa cho AlertsModule kiểm tra cảnh báo với
- *     giá thật, theo thời gian thực.
+ * Các phần cũ giữ nguyên: tải thêm lịch sử khi kéo trái, cảnh báo giá
+ * ('price:update' -> Store -> 'pane:priceChanged' -> AlertsModule), thông báo
+ * tín hiệu BUY/SELL mới ('pane:newSignal').
  */
 
 (async function App() {
   const KLINES_LIMIT = 1000;
+  const OANDA_INITIAL_LIMIT = 500;
 
   const paneInstances = {}; // paneId -> ChartModule instance
-
-  window.PaneRegistry = {
-    get(paneId) {
-      return paneInstances[paneId];
-    },
-  };
   const trendRefInstances = {}; // paneId -> TrendReferenceModule instance
+  const trendRefTimers = {}; // paneId -> timeout id (tải trend tham khảo trễ)
 
   window.PaneRegistry = {
     get(paneId) {
@@ -51,6 +39,7 @@
       return trendRefInstances[paneId];
     },
   };
+
   try {
     await init();
   } catch (err) {
@@ -61,17 +50,14 @@
     UI.init();
     CountdownModule.init();
     NotificationsModule.init();
-    TasksModule.init();   // giữ dòng này
+    TasksModule.init();
     if (typeof AnalyticsModule !== 'undefined') {
       AnalyticsModule.init();
     }
-    
+
     const state = Store.getState();
 
-    for (const pane of state.panes) {
-      await setupPane(pane.id);
-    }
-
+    // Đăng ký sự kiện TRƯỚC khi tải dữ liệu để không bỏ lỡ sự kiện nào.
     EventBus.on('pane:symbolChanged', onPaneSymbolOrTimeframeChanged);
     EventBus.on('pane:timeframeChanged', onPaneSymbolOrTimeframeChanged);
     EventBus.on('kline:update:htf', onHigherTFKlineUpdate);
@@ -80,60 +66,70 @@
     EventBus.on('layout:changed', onLayoutChanged);
     EventBus.on('pane:needMoreHistory', onNeedMoreHistory);
     EventBus.on('kline:update:trendref', onTrendRefKlineUpdate);
-    // Trend tham khảo chỉ phụ thuộc SYMBOL của pane, không phụ thuộc
-    // timeframe đang xem -> chỉ reload khi đổi symbol, không đổi timeframe.
+    // Trend tham khảo chỉ phụ thuộc SYMBOL, không phụ thuộc timeframe.
     EventBus.on('pane:symbolChanged', onPaneSymbolChangedForTrendRef);
 
     // Kiểm tra cảnh báo giá mỗi khi có giá mới của bất kỳ pane nào.
     EventBus.on('pane:priceChanged', onPricePotentiallyAlertable);
-
-    // ĐỢT FIX NÀY: đồng bộ giá ticker realtime từ WebSocket (websocket.js)
-    // vào Store. Thiếu dòng này là lý do chính khiến cảnh báo giá "không
-    // chạy" - Store không có giá mới nên không ai kiểm tra được.
+    // Giá ticker realtime (websocket.js) -> Store -> 'pane:priceChanged'.
     EventBus.on('price:update', onTickerPriceUpdate);
-
-    // Gửi thông báo hệ thống khi có tín hiệu BUY/SELL mới ở pane đã bật cảnh báo.
+    // Thông báo hệ thống khi có tín hiệu BUY/SELL mới.
     EventBus.on('pane:newSignal', onPaneNewSignal);
+
+    await Promise.all(state.panes.map((pane) => setupPane(pane.id)));
 
     UI.renderSharedDrawGroup();
   }
 
   function onLayoutChanged({ visiblePaneIds }) {
-  let attempts = 0;
-  const lastSizes = {};
+    let attempts = 0;
+    const lastSizes = {};
 
-  function tryResize() {
-    attempts++;
-    let allStable = true;
+    function tryResize() {
+      attempts++;
+      let allStable = true;
 
-    visiblePaneIds.forEach((paneId) => {
-      const instance = paneInstances[paneId];
-      if (!instance) return;
+      visiblePaneIds.forEach((paneId) => {
+        const instance = paneInstances[paneId];
+        if (!instance) return;
 
-      const container = document.getElementById(`${paneId}-container`);
-      const w = container ? container.clientWidth : 0;
-      const h = container ? container.clientHeight : 0;
+        const container = document.getElementById(`${paneId}-container`);
+        const w = container ? container.clientWidth : 0;
+        const h = container ? container.clientHeight : 0;
 
-      if (w === 0 || h === 0) {
-        allStable = false;
-      } else {
-        const prev = lastSizes[paneId];
-        if (!prev || prev.w !== w || prev.h !== h) {
+        if (w === 0 || h === 0) {
           allStable = false;
+        } else {
+          const prev = lastSizes[paneId];
+          if (!prev || prev.w !== w || prev.h !== h) {
+            allStable = false;
+          }
+          lastSizes[paneId] = { w, h };
         }
-        lastSizes[paneId] = { w, h };
+
+        instance.resize();
+      });
+
+      if (!allStable && attempts < 40) {
+        requestAnimationFrame(tryResize);
       }
-
-      instance.resize();
-    });
-
-    if (!allStable && attempts < 40) {
-      requestAnimationFrame(tryResize);
     }
+
+    requestAnimationFrame(() => requestAnimationFrame(tryResize));
   }
 
-  requestAnimationFrame(() => requestAnimationFrame(tryResize));
-}
+  /* ===================== TẢI DỮ LIỆU 1 PANE ===================== */
+
+  /** OANDA (TradingView WS) tải ít nến hơn cho nhanh; Binance giữ 1000. */
+  function getInitialLimit(symbol) {
+    return getProviderFor(symbol) === 'oanda' ? OANDA_INITIAL_LIMIT : KLINES_LIMIT;
+  }
+
+  /** Pane còn đang ở đúng symbol/timeframe này không (chống race khi đổi liên tục)? */
+  function isPaneCurrent(paneId, symbol, timeframe) {
+    const p = Store.getPane(paneId);
+    return !!p && p.symbol === symbol && p.timeframe === timeframe;
+  }
 
   async function setupPane(paneId) {
     const container = document.getElementById(`${paneId}-container`);
@@ -147,39 +143,90 @@
     paneInstances[paneId] = instance;
     IndicatorLegend.render(paneId, instance);
 
-    const pane = Store.getPane(paneId);
-    await loadPaneData(paneId, instance, pane.symbol, pane.timeframe);
-    connectSockets(paneId, pane.symbol, pane.timeframe);
-    await loadInitialPrice(paneId, pane.symbol);
-    await loadHigherTFData(paneId, instance, pane.symbol, pane.timeframe);
-    await syncBreakoutConfig(paneId, instance, pane);
-    await setupTrendReference(paneId, pane.symbol); // thêm dòng này
+    // Tạo instance trend tham khảo ngay (rẻ), nhưng TẢI dữ liệu trễ.
+    setupTrendReference(paneId);
+
+    await loadPaneAll(paneId, instance);
   }
 
   async function onPaneSymbolOrTimeframeChanged({ paneId }) {
     const instance = paneInstances[paneId];
-    const pane = Store.getPane(paneId);
-    if (!instance || !pane) return;
+    if (!instance || !Store.getPane(paneId)) return;
 
     closePaneSockets(paneId);
-    instance.clearData();
 
-    try {
-      await loadPaneData(paneId, instance, pane.symbol, pane.timeframe);
-    } catch (err) {
-      console.error(`[${paneId}] Lỗi khi tải dữ liệu:`, err);
+    // KHÔNG clearData() ngay: giữ chart cũ hiển thị trong lúc tải (cảm giác
+    // nhanh hơn). clearData() được gọi ngay trước khi nạp dữ liệu mới.
+    const statusEl = document.getElementById(`${paneId}-status`);
+    if (statusEl) {
+      statusEl.className = 'connection-status connecting';
+      statusEl.textContent = 'Đang tải...';
     }
 
-    connectSockets(paneId, pane.symbol, pane.timeframe);
-    await loadInitialPrice(paneId, pane.symbol);
-    await loadHigherTFData(paneId, instance, pane.symbol, pane.timeframe);
-    await syncBreakoutConfig(paneId, instance, pane);
+    await loadPaneAll(paneId, instance);
   }
 
-  async function loadPaneData(paneId, instance, symbol, timeframe) {
-    const candles = await fetchKlines(symbol, timeframe, KLINES_LIMIT);
+  /**
+   * Bắn SONG SONG: nến chính + nến khung cao + ticker. Vẽ chart ngay khi có
+   * nến chính; khung cao/ticker về sau sẽ cập nhật tiếp.
+   */
+  async function loadPaneAll(paneId, instance) {
+    const pane = Store.getPane(paneId);
+    if (!pane) return;
+    const { symbol, timeframe } = pane;
+    const isOanda = getProviderFor(symbol) === 'oanda';
+    const limit = getInitialLimit(symbol);
+    const higherTF = ChartModule.getHigherTimeframeFor(timeframe);
+
+    const mainP = fetchKlines(symbol, timeframe, limit);
+    const htfP = higherTF
+      ? fetchKlines(symbol, higherTF, limit).catch((err) => {
+          console.error(`[${paneId}] Lỗi khi tải nến khung trend (${higherTF}):`, err);
+          return null;
+        })
+      : null;
+    // OANDA: connectOandaTickerStream() đã poll giá ngay khi kết nối -> khỏi tải thêm.
+    const tickerP = isOanda ? null : fetch24hTicker(symbol).catch(() => null);
+
+    let candles;
+    try {
+      candles = await mainP;
+    } catch (err) {
+      console.error(`[${paneId}] Lỗi khi tải dữ liệu:`, err);
+      const statusEl = document.getElementById(`${paneId}-status`);
+      if (statusEl && isPaneCurrent(paneId, symbol, timeframe)) {
+        statusEl.className = 'connection-status disconnected';
+        statusEl.textContent = 'Lỗi tải dữ liệu';
+      }
+      return;
+    }
+    if (!isPaneCurrent(paneId, symbol, timeframe)) return;
+
+    instance.clearData(); // dọn chart cũ ngay trước khi nạp dữ liệu mới
     Store.setPaneCandles(paneId, candles);
     instance.loadInitialData(candles);
+    connectSockets(paneId, symbol, timeframe);
+
+    if (tickerP) {
+      tickerP.then((t) => {
+        if (t && isPaneCurrent(paneId, symbol, timeframe)) {
+          Store.setPaneLastPrice(paneId, t.lastPrice, t.changePercent);
+        }
+      });
+    }
+
+    // Khung cao (đã tải song song từ trước).
+    if (!higherTF) {
+      instance.setHigherTFCandles([]);
+    } else {
+      const htfCandles = await htfP;
+      if (!isPaneCurrent(paneId, symbol, timeframe)) return;
+      if (htfCandles) instance.setHigherTFCandles(htfCandles);
+      connectHigherTFKlineStream(paneId, symbol, higherTF);
+    }
+
+    if (!isPaneCurrent(paneId, symbol, timeframe)) return;
+    await syncBreakoutConfig(paneId, instance, Store.getPane(paneId));
   }
 
   async function onNeedMoreHistory({ paneId }) {
@@ -192,6 +239,8 @@
     const oldest = existingCandles[0];
     if (!oldest) return;
 
+    const { symbol, timeframe } = pane;
+
     instance.setLoadingOlder(true);
     const statusEl = document.getElementById(`${paneId}-status`);
     const previousStatusText = statusEl ? statusEl.textContent : null;
@@ -199,7 +248,10 @@
 
     try {
       const endTime = oldest.time * 1000 - 1;
-      const older = await fetchKlines(pane.symbol, pane.timeframe, KLINES_LIMIT, endTime);
+      const older = await fetchKlines(symbol, timeframe, KLINES_LIMIT, endTime);
+
+      // Đã đổi symbol/timeframe trong lúc chờ -> bỏ kết quả.
+      if (!isPaneCurrent(paneId, symbol, timeframe)) return;
 
       if (!older || older.length === 0) {
         instance.setNoMoreOlder(true);
@@ -214,26 +266,10 @@
       console.error(`[${paneId}] Lỗi khi tải thêm nến cũ:`, err);
     } finally {
       instance.setLoadingOlder(false);
-      if (statusEl) statusEl.textContent = previousStatusText || '';
+      if (statusEl && isPaneCurrent(paneId, symbol, timeframe)) {
+        statusEl.textContent = previousStatusText || '';
+      }
     }
-  }
-
-  async function loadHigherTFData(paneId, instance, symbol, timeframe) {
-    const higherTF = ChartModule.getHigherTimeframeFor(timeframe);
-
-    if (!higherTF) {
-      instance.setHigherTFCandles([]);
-      return;
-    }
-
-    try {
-      const candles = await fetchKlines(symbol, higherTF, KLINES_LIMIT);
-      instance.setHigherTFCandles(candles);
-    } catch (err) {
-      console.error(`[${paneId}] Lỗi khi tải nến khung trend (${higherTF}):`, err);
-    }
-
-    connectHigherTFKlineStream(paneId, symbol, higherTF);
   }
 
   function onHigherTFKlineUpdate({ paneId, candle }) {
@@ -242,40 +278,48 @@
     instance.upsertHigherTFCandle(candle);
   }
 
-  /**
-   * Khởi tạo 1 instance TrendReferenceModule riêng cho pane này và tải dữ
-   * liệu ban đầu cho các khung THẬT lấy từ Binance - danh sách này được đọc
-   * ĐỘNG từ TrendReferenceModule.ROLE_INTERVAL (m5, m15, m30, h2, h6, h12,
-   * d1) - xem trend-reference.js. Không hardcode danh sách khung ở đây, nên
-   * nếu sau này đổi cặp khung của Trend Swing/Scalp thì CHỈ cần sửa
-   * ROLE_INTERVAL/SWING_LEGS bên trend-reference.js, app.js tự động tải
-   * đúng khung mới mà không cần sửa gì thêm.
-   *
-   * Riêng D2 (2 ngày, dùng cho chân D1 của Trend Swing) KHÔNG có trong
-   * ROLE_INTERVAL vì Binance không có interval 2 ngày - trend-reference.js
-   * tự ghép D2 nội bộ từ dữ liệu D1 đã tải, nên vòng lặp roles bên dưới
-   * KHÔNG gọi REST/WebSocket riêng cho "d2".
+  /* ===================== TREND THAM KHẢO ===================== */
+  /*
+   * Danh sách khung được đọc ĐỘNG từ TrendReferenceModule.ROLE_INTERVAL
+   * (m5, m15, m30, h2, h6, h12, d1). D2 do trend-reference.js tự ghép từ D1,
+   * nên KHÔNG gọi REST/WebSocket riêng cho "d2".
    */
-  async function setupTrendReference(paneId, symbol) {
-    const instance = TrendReferenceModule.create(paneId);
-    trendRefInstances[paneId] = instance;
-    await loadTrendReferenceData(paneId, instance, symbol);
+
+  function scheduleTrendRefLoad(paneId, delayMs) {
+    clearTimeout(trendRefTimers[paneId]);
+    trendRefTimers[paneId] = setTimeout(() => {
+      const inst = trendRefInstances[paneId];
+      const pane = Store.getPane(paneId);
+      if (inst && pane) loadTrendReferenceData(paneId, inst, pane.symbol);
+    }, delayMs);
+  }
+
+  function setupTrendReference(paneId) {
+    trendRefInstances[paneId] = TrendReferenceModule.create(paneId);
+    scheduleTrendRefLoad(paneId, 1500); // nhường băng thông cho chart chính trước
   }
 
   async function loadTrendReferenceData(paneId, instance, symbol) {
     closeAllTrendRefKlineSockets(paneId);
     const roles = Object.keys(TrendReferenceModule.ROLE_INTERVAL);
 
-    await Promise.all(roles.map(async (role) => {
-      const interval = TrendReferenceModule.ROLE_INTERVAL[role];
-      try {
-        const candles = await fetchKlines(symbol, interval, 80);
-        instance.setCandles(role, candles);
-      } catch (err) {
-        console.error(`[${paneId}] Lỗi khi tải nến trend tham khảo (${role}):`, err);
-      }
-      connectTrendRefKlineStream(paneId, role, symbol, interval);
-    }));
+    await Promise.all(
+      roles.map(async (role) => {
+        const interval = TrendReferenceModule.ROLE_INTERVAL[role];
+        try {
+          const candles = await fetchKlines(symbol, interval, 80);
+          const cur = Store.getPane(paneId);
+          if (!cur || cur.symbol !== symbol) return; // đã đổi symbol giữa chừng
+          instance.setCandles(role, candles);
+        } catch (err) {
+          console.error(`[${paneId}] Lỗi khi tải nến trend tham khảo (${role}):`, err);
+        }
+        const cur = Store.getPane(paneId);
+        if (cur && cur.symbol === symbol) {
+          connectTrendRefKlineStream(paneId, role, symbol, interval);
+        }
+      })
+    );
   }
 
   function onTrendRefKlineUpdate({ paneId, role, candle }) {
@@ -285,25 +329,29 @@
   }
 
   /**
-   * Đổi symbol -> trend tham khảo của pane đó phải tải lại từ đầu (các khung
-   * thật trong ROLE_INTERVAL), vì toàn bộ dữ liệu cũ thuộc symbol cũ không
-   * còn dùng được. KHÔNG áp dụng khi chỉ đổi timeframe của pane (trend tham
-   * khảo không phụ thuộc timeframe đang xem).
+   * Đổi symbol: đóng socket trend cũ NGAY, nhưng debounce 800ms việc tải lại
+   * (bấm lướt qua nhiều symbol không bắn 7 request mỗi lần). KHÔNG áp dụng khi
+   * chỉ đổi timeframe.
    */
-  async function onPaneSymbolChangedForTrendRef({ paneId, symbol }) {
-    const instance = trendRefInstances[paneId];
-    if (!instance) return;
-    await loadTrendReferenceData(paneId, instance, symbol);
+  function onPaneSymbolChangedForTrendRef({ paneId }) {
+    if (!trendRefInstances[paneId]) return;
+    closeAllTrendRefKlineSockets(paneId);
+    scheduleTrendRefLoad(paneId, 800);
   }
+
+  /* ===================== KHUNG SL / BREAKOUT ===================== */
 
   async function loadSLData(paneId, instance, symbol, slTimeframe) {
     try {
       const candles = await fetchKlines(symbol, slTimeframe, KLINES_LIMIT);
+      const cur = Store.getPane(paneId);
+      if (!cur || cur.symbol !== symbol) return;
       instance.setSLCandles(candles);
     } catch (err) {
       console.error(`[${paneId}] Lỗi khi tải nến khung SL (${slTimeframe}):`, err);
     }
-    connectSLKlineStream(paneId, symbol, slTimeframe);
+    const cur = Store.getPane(paneId);
+    if (cur && cur.symbol === symbol) connectSLKlineStream(paneId, symbol, slTimeframe);
   }
 
   function teardownSLData(paneId, instance) {
@@ -350,19 +398,11 @@
     }
   }
 
-  async function loadInitialPrice(paneId, symbol) {
-    try {
-      const { lastPrice, changePercent } = await fetch24hTicker(symbol);
-      Store.setPaneLastPrice(paneId, lastPrice, changePercent);
-    } catch (err) {
-      console.warn(`[${paneId}] Không tải được giá 24h ban đầu (sẽ chờ WebSocket update):`, err.message || err);
-    }
-  }
+  /* ===================== GIÁ / CẢNH BÁO / TÍN HIỆU ===================== */
 
   /**
-   * Mỗi khi 1 pane có giá mới (đã được ghi vào Store - xem
-   * onTickerPriceUpdate bên dưới, hoặc lúc tải giá ban đầu), kiểm tra xem
-   * giá đó có vừa vượt qua mức cảnh báo nào của đúng symbol đó không.
+   * Mỗi khi 1 pane có giá mới (đã ghi vào Store), kiểm tra xem giá đó có vừa
+   * vượt qua mức cảnh báo nào của đúng symbol đó không.
    */
   function onPricePotentiallyAlertable({ paneId, price }) {
     const pane = Store.getPane(paneId);
@@ -371,22 +411,18 @@
   }
 
   /**
-   * ĐỢT FIX NÀY: nhận giá ticker REALTIME từ websocket.js (sự kiện
-   * 'price:update', bắn ra từ connectTickerStream() mỗi khi có tick giá
-   * mới) và ghi vào Store. Store.setPaneLastPrice() sẽ tự bắn tiếp
-   * 'pane:priceChanged' -> vừa cập nhật UI giá (ui.js đã lắng nghe sẵn) vừa
-   * kích hoạt kiểm tra cảnh báo giá (onPricePotentiallyAlertable ở trên).
-   *
-   * Đây chính là mắt xích còn thiếu khiến cảnh báo giá "đặt xong nhưng
-   * không bao giờ kêu": trước đây Store chỉ có giá tại thời điểm tải trang.
+   * Nhận giá ticker REALTIME (websocket.js, 'price:update') và ghi vào Store.
+   * Store.setPaneLastPrice() tự bắn 'pane:priceChanged' -> cập nhật UI giá và
+   * kiểm tra cảnh báo giá.
    */
   function onTickerPriceUpdate({ paneId, price, changePercent }) {
     Store.setPaneLastPrice(paneId, price, changePercent);
   }
 
   /**
-   * Breakout.js (qua chart.js) vừa phát hiện 1 tín hiệu BUY/SELL MỚI ở 1
-   * pane. Chỉ gửi thông báo nếu pane đó hiển thị BUY/SELL và timeframe nằm trong danh sách được chọn.
+   * Breakout.js (qua chart.js) vừa phát hiện 1 tín hiệu BUY/SELL MỚI ở 1 pane.
+   * Chỉ gửi thông báo nếu pane đó hiển thị BUY/SELL và timeframe nằm trong
+   * danh sách được chọn.
    */
   function onPaneNewSignal({ paneId, direction }) {
     // Vai trò khách: không phát cảnh báo tín hiệu
@@ -403,9 +439,6 @@
     const tfLabel = (TIMEFRAMES.find((t) => t.value === pane.timeframe) || {}).label || pane.timeframe;
     const dirLabel = direction === 1 ? 'BUY' : 'SELL';
 
-    NotificationsModule.notify(
-      `📊 ${pane.symbol} (${tfLabel})`,
-      `${tfLabel} vào lệnh ${dirLabel}`
-    );
+    NotificationsModule.notify(`📊 ${pane.symbol} (${tfLabel})`, `${tfLabel} vào lệnh ${dirLabel}`);
   }
 })();

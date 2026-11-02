@@ -72,6 +72,7 @@ const UI = (function () {
 
   let lastDrawShapeTool = 'trendline'; // nhớ công cụ vẽ hình gần nhất để hiện icon trên nút combo
   let flyoutEl = null;
+  let flyoutAnchor = null; // nút mũi tên đã mở bảng
 
   // CSS nhỏ cho chấm màu / dấu "đã nhớ style" / nút đặt lại (tự nạp, không cần sửa file css)
   const UI_EXTRA_CSS = `
@@ -263,20 +264,7 @@ const UI = (function () {
         };
       });
 
-    let yahooMatches = [];
-    try {
-      const results = await searchYahooSymbols(query);
-      yahooMatches = results.map((item) => ({
-        symbol: item.symbol,
-        display: item.symbol,
-        name: item.name,
-        source: `Yahoo · ${item.exchange}`,
-      }));
-    } catch (err) {
-      console.error('Yahoo search error:', err);
-    }
-
-    return [...oandaMatches, ...binanceMatches, ...yahooMatches].slice(0, 20);
+    return [...oandaMatches, ...binanceMatches].slice(0, 20);
   }
 
   function renderSearchResults(matches, resultsEl) {
@@ -351,16 +339,21 @@ const UI = (function () {
 
   /* ===================== HÀNG CÔNG CỤ VẼ DÙNG CHUNG (THU GỌN) ===================== */
 
-  function hideFlyout() {
+    function hideFlyout() {
     if (flyoutEl) {
       flyoutEl.remove();
       flyoutEl = null;
     }
+    flyoutAnchor = null;
     document.removeEventListener('click', onDocClickCloseFlyout, true);
   }
 
   function onDocClickCloseFlyout(e) {
-    if (flyoutEl && !flyoutEl.contains(e.target)) hideFlyout();
+    if (!flyoutEl) return;
+    if (flyoutEl.contains(e.target)) return;
+    // Bấm lại đúng nút mũi tên: để toggleFlyout tự đóng, tránh đóng rồi mở lại
+    if (flyoutAnchor && flyoutAnchor.contains(e.target)) return;
+    hideFlyout();
   }
 
   function getActiveDrawingInstance() {
@@ -385,6 +378,7 @@ const UI = (function () {
 
     flyoutEl = document.createElement('div');
     flyoutEl.className = 'draw-flyout';
+    flyoutAnchor = anchorBtn;
 
     let anyRemembered = false;
 
@@ -570,30 +564,48 @@ const UI = (function () {
 
   /* ===================== LAYOUT (1/2/3/4 Ô) ===================== */
 
-  function renderLayoutButtons() {
+    function renderLayoutButtons() {
     const groupEl = document.getElementById('layoutGroup');
     if (!groupEl) return;
     groupEl.innerHTML = '';
 
     const orientation = Store.getState().orientation;
+    const currentLayout = Store.getState().layout;
+    const layouts = LayoutModule.getAvailableLayouts(orientation);
 
-    LayoutModule.getAvailableLayouts(orientation).forEach((n) => {
+    layouts.forEach((n) => {
       const btn = document.createElement('button');
-      btn.className = 'timeframe-btn' + (n === Store.getState().layout ? ' active' : '');
+      btn.className = 'timeframe-btn' + (n === currentLayout ? ' active' : '');
       btn.dataset.layout = n;
       btn.innerHTML = n + '<span class="btn-text"> ô</span>';
       btn.title = `Chọn layout ${n} ô`;
       btn.addEventListener('click', () => Store.setLayout(n));
       groupEl.appendChild(btn);
     });
+
+    // Dạng thu gọn: 1 ô chọn duy nhất, chỉ hiện khi topbar thiếu chỗ (xem topbar-landscape.css)
+    const select = document.createElement('select');
+    select.className = 'timeframe-select layout-select';
+    select.title = 'Chọn số ô';
+    layouts.forEach((n) => {
+      const opt = document.createElement('option');
+      opt.value = n;
+      opt.textContent = n + ' ô';
+      opt.selected = n === currentLayout;
+      select.appendChild(opt);
+    });
+    select.addEventListener('change', (e) => Store.setLayout(parseInt(e.target.value, 10)));
+    groupEl.appendChild(select);
   }
 
-  function highlightActiveLayoutButton(layout) {
+    function highlightActiveLayoutButton(layout) {
     const groupEl = document.getElementById('layoutGroup');
     if (!groupEl) return;
     groupEl.querySelectorAll('button').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.layout === String(layout));
     });
+    const sel = groupEl.querySelector('.layout-select');
+    if (sel) sel.value = String(layout);
   }
 
   function bindLayoutChangedEvent() {

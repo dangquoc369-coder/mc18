@@ -1,32 +1,28 @@
 /**
  * api.js
- * Tất cả các lời gọi REST API tới Binance & Yahoo Finance.
- * Không đụng vào DOM, không đụng vào Store trực tiếp -> chỉ trả dữ liệu đã format sẵn.
+ * Các lời gọi REST tới Binance (spot/futures) và OANDA (qua Worker -> TradingView).
+ * Không đụng vào DOM / Store -> chỉ trả dữ liệu đã format sẵn.
  *
- * ============================================================================
- * CẬP NHẬT (hỗ trợ KHUNG THỜI GIAN TỔNG HỢP - synthetic timeframes):
- *   Binance không hỗ trợ native các khung 20m/45m/3h/2d (xem
- *   SYNTHETIC_TIMEFRAMES trong utils.js). fetchKlines() giờ kiểm tra nếu
- *   interval là tổng hợp thì rẽ sang fetchSyntheticKlines() - tải nến
- *   khung BASE nhỏ hơn rồi gộp lại bằng aggregateCandles() (utils.js).
- *   CHỈ áp dụng cho Binance spot/futures - Yahoo KHÔNG được hỗ trợ tổng
- *   hợp (xem ghi chú trong nhánh yahoo bên dưới).
- * ============================================================================
+ * ĐỢT TỐI ƯU TỐC ĐỘ:
+ *   - ĐÃ BỎ HOÀN TOÀN Yahoo.
+ *   - fetchKlines(): cache 20s + chống gọi trùng (cùng key đang tải -> dùng chung Promise).
+ *   - OANDA gọi THẲNG Worker (bỏ bước thử same-origin gây thừa 1 round-trip).
+ *   - fetchOandaLive(): gộp nhiều khung của cùng 1 symbol vào 1 request
+ *     (Worker chỉ mở 1 WebSocket TradingView cho tất cả) - dùng cho vòng poll
+ *     realtime trong websocket.js.
+ *
+ * Khung TỔNG HỢP (20m/45m/3h/2d) trên Binance: tải nến base rồi gộp bằng
+ * aggregateCandles() (utils.js).
  */
 
 const BINANCE_REST_BASE = 'https://api.binance.com';
 const WORKER_FALLBACK_URL = 'https://dq-tracker-push.quocngyendanght.workers.dev';
 
 function getBackendBaseUrl() {
-  if (typeof window !== 'undefined' && window.location.hostname && window.location.hostname.endsWith('github.io')) {
-    return WORKER_FALLBACK_URL;
-  }
-  return '';
+  return WORKER_FALLBACK_URL;
 }
 
-/**
- * Loại bỏ hậu tố _PERP nếu có để gửi symbol sạch lên Binance.
- */
+/** Loại bỏ hậu tố _PERP nếu có để gửi symbol sạch lên Binance. */
 function getCleanSymbol(symbol) {
   if (symbol && symbol.endsWith('_PERP')) {
     return symbol.replace('_PERP', '');
@@ -35,11 +31,10 @@ function getCleanSymbol(symbol) {
 }
 
 /**
- * Xác định nhà cung cấp dữ liệu cho symbol.
- * - XAUUSD, GOLD, hoặc prefix OANDA: -> 'oanda' (API OANDA chính thức qua TradingView proxy, miễn phí).
- * - Suffix _PERP hoặc là XAUUSDT -> 'binance_futures'.
- * - crypto Binance chuẩn (vd: BTCUSDT) -> 'binance'.
- * - Các symbol khác (Forex, Cổ phiếu, Chỉ số...) -> 'yahoo'.
+ * Nhà cung cấp dữ liệu cho symbol:
+ *  - XAUUSD / GOLD / OANDA:... -> 'oanda'
+ *  - hậu tố _PERP hoặc XAUUSDT -> 'binance_futures'
+ *  - còn lại                   -> 'binance' (spot)
  */
 function getProviderFor(symbol) {
   if (!symbol) return 'oanda';
@@ -50,91 +45,90 @@ function getProviderFor(symbol) {
   if (symbol.endsWith('_PERP') || symbol === 'XAUUSDT') {
     return 'binance_futures';
   }
-  if (symbol.endsWith('USDT') && !symbol.includes('=')) {
-    return 'binance';
-  }
-  return 'yahoo';
+  return 'binance';
 }
 
 /**
- * Lấy dữ liệu cho khung TỔNG HỢP (20m/45m/3h/2d): tải nến khung base rồi
- * gộp bằng aggregateCandles() (utils.js). Chỉ gọi khi provider KHÁC yahoo
- * (xem điều kiện gọi trong fetchKlines).
- *
- * Binance giới hạn tối đa 1000 nến/lần gọi -> tải dư thêm 1 bucket (factor
- * nến base) để bucket ĐẦU TIÊN không bị thiếu nến do bị cắt bởi giới hạn
- * limit, sau đó cắt bớt kết quả gộp về đúng số lượng `limit` yêu cầu.
+ * Khung TỔNG HỢP cho Binance: tải nến base rồi gộp. Tải dư 1 bucket để
+ * bucket đầu không bị thiếu nến, sau đó cắt về đúng `limit`.
  */
 async function fetchSyntheticKlines(symbol, interval, limit, endTime) {
   const info = SYNTHETIC_TIMEFRAMES[interval];
   const baseLimit = Math.min(1000, (limit + 1) * info.factor);
-  const baseCandles = await fetchKlines(symbol, info.base, baseLimit, endTime);
+  const baseCandles = await fetchKlinesRaw(symbol, info.base, baseLimit, endTime);
   const aggregated = aggregateCandles(baseCandles, interval);
-
   return aggregated.length > limit ? aggregated.slice(aggregated.length - limit) : aggregated;
 }
 
-/**
- * Lấy dữ liệu nến (klines) từ Binance hoặc Yahoo Finance, format sẵn theo chuẩn Lightweight Charts.
- * @param {string} symbol - vd: BTCUSDT, EURUSD=X, AAPL
- * @param {string} interval - vd: 15m, 1h, 1d (hoặc khung tổng hợp: 20m, 45m, 3h, 2d)
- * @param {number} limit - số lượng nến tối đa (Binance cho phép tới 1000)
- * @param {number|null} endTime - mốc thời gian (ms, epoch) - nếu truyền, chỉ
- *   lấy các nến có thời gian ĐÓNG trước mốc này. Dùng để tải lịch sử cũ hơn.
- * @returns {Promise<Array<{time:number, open:number, high:number, low:number, close:number, volume:number}>>}
- */
-async function fetchKlines(symbol, interval, limit = 1000, endTime = null) {
-  const provider = getProviderFor(symbol);
+/* ===================== CACHE + CHỐNG GỌI TRÙNG ===================== */
 
-  // ===== KHUNG TỔNG HỢP (chỉ Binance spot/futures) =====
-  if (provider !== 'yahoo' && provider !== 'oanda' && isSyntheticInterval(interval)) {
-    return fetchSyntheticKlines(symbol, interval, limit, endTime);
+const KLINES_CACHE = new Map(); // key -> { ts, data }
+const KLINES_INFLIGHT = new Map(); // key -> Promise
+const KLINES_TTL_MS = 20000;
+const KLINES_CACHE_MAX = 80;
+
+/**
+ * Lấy nến (format chuẩn Lightweight Charts).
+ * @param {string} symbol  vd: BTCUSDT, BTCUSDT_PERP, XAUUSD
+ * @param {string} interval vd: 15m, 1h, 1d (hoặc tổng hợp 20m/45m/3h/2d)
+ * @param {number} limit
+ * @param {number|null} endTime  ms epoch - chỉ lấy nến đóng TRƯỚC mốc này (tải lịch sử cũ)
+ *
+ * Chỉ cache khi KHÔNG có endTime. Luôn trả BẢN SAO mảng nên nơi gọi sửa thoải mái.
+ */
+function fetchKlines(symbol, interval, limit = 1000, endTime = null) {
+  if (endTime) return fetchKlinesRaw(symbol, interval, limit, endTime);
+
+  const key = `${symbol}|${interval}|${limit}`;
+  const hit = KLINES_CACHE.get(key);
+  if (hit && Date.now() - hit.ts < KLINES_TTL_MS) {
+    return Promise.resolve(hit.data.slice());
+  }
+  if (KLINES_INFLIGHT.has(key)) {
+    return KLINES_INFLIGHT.get(key).then((d) => d.slice());
   }
 
+  const p = fetchKlinesRaw(symbol, interval, limit, null)
+    .then((data) => {
+      KLINES_CACHE.set(key, { ts: Date.now(), data });
+      if (KLINES_CACHE.size > KLINES_CACHE_MAX) {
+        KLINES_CACHE.delete(KLINES_CACHE.keys().next().value);
+      }
+      return data;
+    })
+    .finally(() => KLINES_INFLIGHT.delete(key));
+
+  KLINES_INFLIGHT.set(key, p);
+  return p.then((d) => d.slice());
+}
+
+async function fetchKlinesRaw(symbol, interval, limit, endTime) {
+  const provider = getProviderFor(symbol);
+
   if (provider === 'oanda') {
-    const base = getBackendBaseUrl();
-    let url = `${base}/api/oanda/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`;
-    if (endTime) {
-      url += `&endTime=${endTime}`;
-    }
-    let res = await fetch(url).catch(() => null);
-    if (!res || !res.ok) {
-      // Fallback nếu máy chủ local không chạy hoặc host tĩnh
-      const fallbackUrl = `${WORKER_FALLBACK_URL}/api/oanda/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}${endTime ? `&endTime=${endTime}` : ''}`;
-      res = await fetch(fallbackUrl).catch(() => null);
-    }
+    let url =
+      `${WORKER_FALLBACK_URL}/api/oanda/klines?symbol=${encodeURIComponent(symbol)}` +
+      `&interval=${encodeURIComponent(interval)}&limit=${limit}`;
+    if (endTime) url += `&endTime=${endTime}`;
+    const res = await fetch(url).catch(() => null);
     if (!res || !res.ok) {
       throw new Error(`fetchKlines OANDA lỗi: ${res ? res.status : 'network error'}`);
     }
     return await res.json();
   }
 
-  if (provider === 'yahoo') {
-    const base = getBackendBaseUrl();
-    let url = `${base}/api/yahoo/klines?symbol=${encodeURIComponent(symbol)}&interval=${interval}`;
-    if (endTime) {
-      url += `&endTime=${endTime}`;
-    }
-    let res = await fetch(url).catch(() => null);
-    if (!res || !res.ok) {
-      const fallbackUrl = `${WORKER_FALLBACK_URL}/api/yahoo/klines?symbol=${encodeURIComponent(symbol)}&interval=${interval}${endTime ? `&endTime=${endTime}` : ''}`;
-      res = await fetch(fallbackUrl).catch(() => null);
-    }
-    if (!res || !res.ok) {
-      throw new Error(`fetchKlines Yahoo lỗi: ${res ? res.status : 'network error'}`);
-    }
-    return await res.json();
+  // Binance spot / futures
+  if (isSyntheticInterval(interval)) {
+    return fetchSyntheticKlines(symbol, interval, limit, endTime);
   }
 
-  // Binance or Binance Futures
   const cleanSymbol = getCleanSymbol(symbol);
   const baseUrl = provider === 'binance_futures' ? 'https://fapi.binance.com' : 'https://api.binance.com';
   const path = provider === 'binance_futures' ? '/fapi/v1/klines' : '/api/v3/klines';
 
   let url = `${baseUrl}${path}?symbol=${cleanSymbol}&interval=${interval}&limit=${limit}`;
-  if (endTime) {
-    url += `&endTime=${endTime}`;
-  }
+  if (endTime) url += `&endTime=${endTime}`;
+
   const res = await fetch(url);
   if (!res.ok) {
     throw new Error(`fetchKlines Binance (${provider}) lỗi: ${res.status} ${res.statusText}`);
@@ -151,21 +145,56 @@ async function fetchKlines(symbol, interval, limit = 1000, endTime = null) {
   }));
 }
 
+/* ===================== OANDA LIVE (GỘP NHIỀU KHUNG / 1 REQUEST) ===================== */
+
+const LIVE_BATCH = new Map(); // symbol -> { intervals:Set, waiters:[], timer }
+
 /**
- * Lấy giá 24h ticker hiện tại (dùng để hiển thị giá ban đầu trước khi WS kết nối xong).
- * @param {string} symbol
+ * Lấy vài nến cuối của 1 khung OANDA. Mọi lời gọi cùng symbol trong cửa sổ
+ * 400ms được gộp thành 1 request /api/oanda/live (Worker mở 1 WebSocket
+ * TradingView duy nhất cho tất cả các khung).
+ * CHỈ dùng cho khung native của TradingView (không dùng cho 20m/45m/3h/6h/8h/12h/2d/3d).
+ * @returns {Promise<Array>} mảng nến (tăng dần theo time)
  */
+function fetchOandaLive(symbol, interval) {
+  return new Promise((resolve, reject) => {
+    let batch = LIVE_BATCH.get(symbol);
+    if (!batch) {
+      batch = { intervals: new Set(), waiters: [], timer: null };
+      LIVE_BATCH.set(symbol, batch);
+      const b = batch;
+      b.timer = setTimeout(async () => {
+        LIVE_BATCH.delete(symbol);
+        try {
+          const res = await fetch(
+            `${WORKER_FALLBACK_URL}/api/oanda/live?symbol=${encodeURIComponent(symbol)}` +
+              `&intervals=${[...b.intervals].join(',')}`
+          );
+          if (!res.ok) throw new Error('live ' + res.status);
+          const data = await res.json();
+          b.waiters.forEach((w) => w.resolve(data[w.interval] || []));
+        } catch (err) {
+          b.waiters.forEach((w) => w.reject(err));
+        }
+      }, 400);
+    }
+    batch.intervals.add(interval);
+    batch.waiters.push({ interval, resolve, reject });
+  });
+}
+
+/* ===================== TICKER / DANH SÁCH SYMBOL ===================== */
+
+/** Giá 24h hiện tại (hiển thị giá ban đầu / poll ticker OANDA). */
 async function fetch24hTicker(symbol) {
   const provider = getProviderFor(symbol);
 
   if (provider === 'oanda') {
-    const base = getBackendBaseUrl();
-    let res = await fetch(`${base}/api/oanda/ticker?symbol=${encodeURIComponent(symbol)}`).catch(() => null);
+    const res = await fetch(`${WORKER_FALLBACK_URL}/api/oanda/ticker?symbol=${encodeURIComponent(symbol)}`).catch(
+      () => null
+    );
     if (!res || !res.ok) {
-      res = await fetch(`${WORKER_FALLBACK_URL}/api/oanda/ticker?symbol=${encodeURIComponent(symbol)}`).catch(() => null);
-    }
-    if (!res || !res.ok) {
-      throw new Error(`fetch24hTicker OANDA lỗi`);
+      throw new Error('fetch24hTicker OANDA lỗi');
     }
     const data = await res.json();
     return {
@@ -178,25 +207,11 @@ async function fetch24hTicker(symbol) {
     };
   }
 
-  if (provider === 'yahoo') {
-    const base = getBackendBaseUrl();
-    let res = await fetch(`${base}/api/yahoo/ticker?symbol=${encodeURIComponent(symbol)}`).catch(() => null);
-    if (!res || !res.ok) {
-      res = await fetch(`${WORKER_FALLBACK_URL}/api/yahoo/ticker?symbol=${encodeURIComponent(symbol)}`).catch(() => null);
-    }
-    if (!res || !res.ok) {
-      throw new Error(`fetch24hTicker Yahoo lỗi`);
-    }
-    return await res.json();
-  }
-
-  // Binance or Binance Futures
   const cleanSymbol = getCleanSymbol(symbol);
   const baseUrl = provider === 'binance_futures' ? 'https://fapi.binance.com' : 'https://api.binance.com';
   const path = provider === 'binance_futures' ? '/fapi/v1/ticker/24hr' : '/api/v3/ticker/24hr';
 
-  const url = `${baseUrl}${path}?symbol=${cleanSymbol}`;
-  const res = await fetch(url);
+  const res = await fetch(`${baseUrl}${path}?symbol=${cleanSymbol}`);
   if (!res.ok) {
     throw new Error(`fetch24hTicker Binance (${provider}) lỗi: ${res.status} ${res.statusText}`);
   }
@@ -207,17 +222,12 @@ async function fetch24hTicker(symbol) {
   };
 }
 
-/**
- * Lấy toàn bộ danh sách symbol đang giao dịch Binance.
- */
+/** Toàn bộ symbol USDT đang giao dịch trên Binance (spot + futures _PERP). */
 async function fetchAllSymbols() {
-  const spotUrl = 'https://api.binance.com/api/v3/exchangeInfo';
-  const futuresUrl = 'https://fapi.binance.com/fapi/v1/exchangeInfo';
-
   try {
     const [spotRes, futuresRes] = await Promise.all([
-      fetch(spotUrl).catch(() => null),
-      fetch(futuresUrl).catch(() => null),
+      fetch('https://api.binance.com/api/v3/exchangeInfo').catch(() => null),
+      fetch('https://fapi.binance.com/fapi/v1/exchangeInfo').catch(() => null),
     ]);
 
     let spotSymbols = [];
@@ -236,55 +246,26 @@ async function fetchAllSymbols() {
         .map((s) => s.symbol + '_PERP');
     }
 
-    // Merge and sort
-    const all = [...spotSymbols, ...futuresSymbols].sort();
-    return all;
+    return [...spotSymbols, ...futuresSymbols].sort();
   } catch (err) {
     console.error('Lỗi fetchAllSymbols:', err);
     return [];
   }
 }
 
-/**
- * Tìm kiếm symbol tích hợp (gồm Binance và Yahoo Finance).
- */
-async function searchYahooSymbols(query) {
-  if (!query) return [];
-  try {
-    const base = getBackendBaseUrl();
-    let res = await fetch(`${base}/api/yahoo/search?query=${encodeURIComponent(query)}`).catch(() => null);
-    if (!res || !res.ok) return [];
-    return await res.json();
-  } catch (err) {
-    console.error('Lỗi tìm kiếm Yahoo:', err);
-    return [];
-  }
-}
-
-/**
- * Tìm kiếm symbol OANDA (XAUUSD, Forex, Hàng hóa, Chỉ số...).
- */
+/** Tìm symbol OANDA - hiện chỉ hỗ trợ vàng (XAUUSD), không cần gọi mạng. */
 async function searchOandaSymbols(query) {
   if (!query) return [];
-  try {
-    const base = getBackendBaseUrl();
-    let res = await fetch(`${base}/api/oanda/search?query=${encodeURIComponent(query)}`).catch(() => null);
-    if (!res || !res.ok) {
-      // Trên static host, luôn cung cấp ít nhất OANDA:XAUUSD
-      const q = query.trim().toUpperCase();
-      if (['XAU', 'GOLD', 'VÀNG', 'VANG'].some((k) => q.includes(k))) {
-        return [{
-          id: 'OANDA:XAUUSD',
-          symbol: 'XAUUSD',
-          description: 'Gold (OANDA CFD)',
-          exchange: 'OANDA',
-        }];
-      }
-      return [];
-    }
-    return await res.json();
-  } catch (err) {
-    console.error('Lỗi tìm kiếm OANDA:', err);
-    return [];
+  const q = query.trim().toUpperCase();
+  if (['XAU', 'GOLD', 'VÀNG', 'VANG'].some((k) => q.includes(k))) {
+    return [
+      {
+        id: 'OANDA:XAUUSD',
+        symbol: 'XAUUSD',
+        description: 'Gold (OANDA CFD)',
+        exchange: 'OANDA',
+      },
+    ];
   }
+  return [];
 }

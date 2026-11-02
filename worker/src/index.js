@@ -102,6 +102,14 @@ function withCors(resp) {
   return resp;
 }
 
+const KLINES_MEM = new Map(); // cache RAM theo isolate
+
+function jsonNoStore(data) {
+  const resp = Response.json(data);
+  resp.headers.set('Cache-Control', 'no-store');
+  return withCors(resp);
+}
+
 async function readJSON(kv, key, fallback) {
   const raw = await kv.get(key);
   if (!raw) return fallback;
@@ -524,157 +532,59 @@ export default {
       return withCors(Response.json({ ok: true, count: merged.length }));
     }
 
-    // ===== PROXY OANDA & YAHOO CHO FRONTEND (hỗ trợ khi deploy GitHub Pages) =====
-    // OANDA (XAUUSD/GOLD/OANDA:...) -> TradingView WebSocket (realtime, nhiều nến).
-    // Symbol khác (hoặc TradingView lỗi) -> Yahoo như cũ.
-    if (url.pathname === '/api/oanda/klines' || url.pathname === '/api/yahoo/klines') {
+        // ===== OANDA qua TradingView (cache RAM ngắn trong isolate) =====
+    if (url.pathname === '/api/oanda/klines') {
       const symbol = url.searchParams.get('symbol') || 'XAUUSD';
       const interval = url.searchParams.get('interval') || '15m';
-      const limit = parseInt(url.searchParams.get('limit') || '300', 10);
+      const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '500', 10) || 500, 1), 5000);
       const endTime = url.searchParams.get('endTime');
 
-      if (isOandaSymbol(symbol)) {
-        const capped = Math.min(Math.max(limit || 300, 1), 5000);
-        const tvCandles = await fetchOandaKlinesTV(symbol, interval, capped, endTime).catch((e) => {
-          console.log('[oanda-tv] klines lỗi:', e && e.message);
-          return null;
-        });
-        if (tvCandles && tvCandles.length) {
-          const resp = Response.json(tvCandles);
-          resp.headers.set('Cache-Control', 'no-store');
-          return withCors(resp);
-        }
-        console.log('[oanda-tv] không có dữ liệu từ TradingView - fallback Yahoo.');
+      if (!isOandaSymbol(symbol)) {
+        return withCors(Response.json({ error: 'symbol không được hỗ trợ' }, { status: 400 }));
       }
 
-      let yahooSymbol = symbol;
-      if (symbol === 'XAUUSD' || symbol === 'GOLD' || symbol.includes('XAUUSD')) {
-        yahooSymbol = 'GC=F';
+      const cacheKey = `${toTradingViewSymbol(symbol)}|${interval}|${limit}|${endTime || ''}`;
+      const ttl = endTime ? 10 * 60000 : 8000; // lịch sử cũ cache lâu hơn
+      const hit = KLINES_MEM.get(cacheKey);
+      if (hit && Date.now() - hit.ts < ttl) return jsonNoStore(hit.data);
+
+      const candles = await fetchOandaKlinesTV(symbol, interval, limit, endTime).catch((e) => {
+        console.log('[oanda-tv] klines lỗi:', e && e.message);
+        return null;
+      });
+      if (!candles || !candles.length) {
+        return withCors(Response.json({ error: 'TradingView không trả dữ liệu' }, { status: 502 }));
       }
-
-      const INTERVAL_MAP = {
-        '1m': { interval: '1m', range: '5d', secs: 60, multiplier: 0 },
-        '5m': { interval: '5m', range: '30d', secs: 300, multiplier: 0 },
-        '15m': { interval: '15m', range: '30d', secs: 900, multiplier: 0 },
-        '30m': { interval: '30m', range: '30d', secs: 1800, multiplier: 0 },
-        '1h': { interval: '60m', range: '60d', secs: 3600, multiplier: 0 },
-        '2h': { interval: '60m', range: '60d', secs: 3600, multiplier: 7200 },
-        '4h': { interval: '60m', range: '60d', secs: 3600, multiplier: 14400 },
-        '6h': { interval: '60m', range: '60d', secs: 3600, multiplier: 21600 },
-        '8h': { interval: '60m', range: '60d', secs: 3600, multiplier: 28800 },
-        '12h': { interval: '60m', range: '60d', secs: 3600, multiplier: 43200 },
-        '1d': { interval: '1d', range: '1y', secs: 86400, multiplier: 0 },
-        '2d': { interval: '1d', range: '2y', secs: 86400, multiplier: 172800 },
-        '3d': { interval: '1d', range: '2y', secs: 86400, multiplier: 259200 },
-        '1w': { interval: '1wk', range: '5y', secs: 604800, multiplier: 0 },
-        '1M': { interval: '1mo', range: '10y', secs: 2592000, multiplier: 0 },
-      };
-
-      const mapping = INTERVAL_MAP[interval] || INTERVAL_MAP['15m'];
-      let queryUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?`;
-      if (endTime) {
-        const p2 = Math.floor(Number(endTime) / 1000);
-        const windowSecs = 1000 * (mapping.multiplier || mapping.secs);
-        const p1 = p2 - windowSecs;
-        queryUrl += `period1=${p1}&period2=${p2}&interval=${mapping.interval}`;
-      } else {
-        queryUrl += `interval=${mapping.interval}&range=${mapping.range}`;
-      }
-
-      try {
-        const resp = await fetch(queryUrl, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-          }
-        });
-        if (!resp.ok) return withCors(Response.json([]));
-        const data = await resp.json();
-        const result = data.chart?.result?.[0];
-        if (!result) return withCors(Response.json([]));
-
-        const timestamps = result.timestamp || [];
-        const quote = result.indicators?.quote?.[0] || {};
-        const opens = quote.open || [];
-        const highs = quote.high || [];
-        const lows = quote.low || [];
-        const closes = quote.close || [];
-        const volumes = quote.volume || [];
-
-        let candles = [];
-        for (let i = 0; i < timestamps.length; i++) {
-          if (opens[i] === null || closes[i] === null || Number.isNaN(opens[i])) continue;
-          candles.push({
-            time: timestamps[i],
-            open: Number(opens[i]),
-            high: Number(highs[i] ?? opens[i]),
-            low: Number(lows[i] ?? closes[i]),
-            close: Number(closes[i]),
-            volume: Number(volumes[i] ?? 0),
-          });
-        }
-        if (mapping.multiplier > 0) {
-          const groups = new Map();
-          for (const c of candles) {
-            const bucket = Math.floor(c.time / mapping.multiplier) * mapping.multiplier;
-            if (!groups.has(bucket)) {
-              groups.set(bucket, { time: bucket, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume });
-            } else {
-              const g = groups.get(bucket);
-              g.high = Math.max(g.high, c.high);
-              g.low = Math.min(g.low, c.low);
-              g.close = c.close;
-              g.volume += c.volume;
-            }
-          }
-          candles = Array.from(groups.values()).sort((a, b) => a.time - b.time);
-        }
-        return withCors(Response.json(candles.slice(-limit)));
-      } catch (err) {
-        return withCors(Response.json([]));
-      }
+      KLINES_MEM.set(cacheKey, { ts: Date.now(), data: candles });
+      if (KLINES_MEM.size > 200) KLINES_MEM.delete(KLINES_MEM.keys().next().value);
+      return jsonNoStore(candles);
     }
 
-    if (url.pathname === '/api/oanda/ticker' || url.pathname === '/api/yahoo/ticker') {
+    if (url.pathname === '/api/oanda/ticker') {
       const symbol = url.searchParams.get('symbol') || 'XAUUSD';
+      if (!isOandaSymbol(symbol)) {
+        return withCors(Response.json({ error: 'symbol không được hỗ trợ' }, { status: 400 }));
+      }
+      const t = await fetchOandaTickerTV(symbol).catch(() => null);
+      if (!t) return withCors(Response.json({ error: 'TradingView không trả dữ liệu' }, { status: 502 }));
+      return jsonNoStore(t);
+    }
 
-      if (isOandaSymbol(symbol)) {
-        const t = await fetchOandaTickerTV(symbol).catch(() => null);
-        if (t) {
-          const resp = Response.json(t);
-          resp.headers.set('Cache-Control', 'no-store');
-          return withCors(resp);
-        }
+    // 1 WebSocket TradingView -> vài nến cuối của NHIỀU khung cùng lúc.
+    // GET /api/oanda/live?symbol=XAUUSD&intervals=5m,15m,1h
+    if (url.pathname === '/api/oanda/live') {
+      const symbol = url.searchParams.get('symbol') || 'XAUUSD';
+      const intervals = (url.searchParams.get('intervals') || '15m')
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => TV_INTERVAL_MAP[s] && !TV_INTERVAL_MAP[s].mult)
+        .slice(0, 10);
+      if (!isOandaSymbol(symbol) || intervals.length === 0) {
+        return withCors(Response.json({ error: 'tham số không hợp lệ' }, { status: 400 }));
       }
-
-      let yahooSymbol = symbol;
-      if (symbol === 'XAUUSD' || symbol === 'GOLD' || symbol.includes('XAUUSD')) {
-        yahooSymbol = 'GC=F';
-      }
-      try {
-        const queryUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=1d&range=5d`;
-        const resp = await fetch(queryUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-        });
-        if (!resp.ok) throw new Error('status error');
-        const data = await resp.json();
-        const result = data.chart?.result?.[0];
-        const meta = result?.meta || {};
-        const price = meta.regularMarketPrice || 0;
-        const prevClose = meta.chartPreviousClose || price;
-        const changePercent = prevClose ? ((price - prevClose) / prevClose) * 100 : 0;
-        return withCors(Response.json({
-          lastPrice: price,
-          changePercent,
-          bid: price,
-          ask: price,
-          high: price,
-          low: price,
-          open: price,
-          volume: 0,
-        }));
-      } catch (err) {
-        return withCors(Response.json({ lastPrice: 0, changePercent: 0, bid: 0, ask: 0, high: 0, low: 0, open: 0, volume: 0 }));
-      }
+      const data = await fetchOandaLiveTV(symbol, intervals).catch(() => null);
+      if (!data) return withCors(Response.json({ error: 'TradingView không trả dữ liệu' }, { status: 502 }));
+      return jsonNoStore(data);
     }
 
     return withCors(new Response('Not found', { status: 404 }));
@@ -1034,107 +944,35 @@ const TIMEFRAME_SECS = {
   '4h': 14400, '12h': 43200, '1d': 86400, '3d': 259200,
 };
 
-const INTERVAL_MAP = {
-  '1m': { interval: '1m', range: '5d', secs: 60, multiplier: 0 },
-  '5m': { interval: '5m', range: '30d', secs: 300, multiplier: 0 },
-  '15m': { interval: '15m', range: '30d', secs: 900, multiplier: 0 },
-  '30m': { interval: '30m', range: '30d', secs: 1800, multiplier: 0 },
-  '1h': { interval: '60m', range: '60d', secs: 3600, multiplier: 0 },
-  '2h': { interval: '60m', range: '60d', secs: 3600, multiplier: 7200 },
-  '4h': { interval: '60m', range: '60d', secs: 3600, multiplier: 14400 },
-  '12h': { interval: '60m', range: '60d', secs: 3600, multiplier: 43200 },
-  '1d': { interval: '1d', range: '1y', secs: 86400, multiplier: 0 },
-  '3d': { interval: '1d', range: '2y', secs: 86400, multiplier: 259200 },
-};
-
-function toYahooTicker(symbol) {
-  const parsed = splitSymbol(symbol);
-  if (!parsed) return null;
-  const quote = STABLECOIN_AS_USD.has(parsed.quote) ? 'USD' : parsed.quote;
-  return `${parsed.base}-${quote}`;
-}
-
-function aggregateCandles(candles, multiplierInSeconds) {
-  if (!multiplierInSeconds || multiplierInSeconds <= 1) return candles;
-  const groups = new Map();
-  for (const c of candles) {
-    const bucket = Math.floor(c.time / multiplierInSeconds) * multiplierInSeconds;
-    if (!groups.has(bucket)) {
-      groups.set(bucket, { time: bucket, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume });
-    } else {
-      const g = groups.get(bucket);
-      g.high = Math.max(g.high, c.high);
-      g.low = Math.min(g.low, c.low);
-      g.close = c.close;
-      g.volume += c.volume;
-    }
-  }
-  return Array.from(groups.values()).sort((a, b) => a.time - b.time);
-}
-
-async function fetchYahooKlines(symbol, timeframe) {
-  const mapping = INTERVAL_MAP[timeframe];
-  if (!mapping) {
-    console.log(`[signals-cron] timeframe không hợp lệ: ${timeframe}`);
-    return null;
-  }
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${mapping.interval}&range=${mapping.range}`;
-
-  let response;
+async function fetchSignalKlines(symbol, timeframe) {
   try {
-    response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      }
-    });
+    if (isOandaSymbol(symbol)) {
+      return await fetchOandaKlinesTV(symbol, timeframe, 300, null);
+    }
+    const isFut = symbol.endsWith('_PERP');
+    const clean = symbol.replace(/_PERP$/, '');
+    // data-api.binance.vision: endpoint dữ liệu công khai, ít bị chặn IP hơn api.binance.com
+    const base = isFut
+      ? 'https://fapi.binance.com/fapi/v1/klines'
+      : 'https://data-api.binance.vision/api/v3/klines';
+    const res = await fetch(`${base}?symbol=${clean}&interval=${timeframe}&limit=300`);
+    if (!res.ok) {
+      console.log(`[signals-cron] Binance lỗi ${res.status} cho ${symbol} (${timeframe})`);
+      return null;
+    }
+    const raw = await res.json();
+    return raw.map((k) => ({
+      time: Math.floor(k[0] / 1000),
+      open: +k[1],
+      high: +k[2],
+      low: +k[3],
+      close: +k[4],
+      volume: +k[5],
+    }));
   } catch (err) {
-    console.log(`[signals-cron] fetch Yahoo ném lỗi (network) cho ${symbol} (${timeframe}):`, err.message);
+    console.log(`[signals-cron] fetch lỗi ${symbol} (${timeframe}):`, err.message);
     return null;
   }
-
-  if (!response.ok) {
-    const bodyText = await response.text().catch(() => '(không đọc được body)');
-    console.log(`[signals-cron] Yahoo trả về lỗi HTTP ${response.status} ${response.statusText} cho ${symbol} (${timeframe}): ${bodyText.slice(0, 300)}`);
-    return null;
-  }
-
-  const data = await response.json();
-  const result = data.chart?.result?.[0];
-  if (!result) {
-    const errDesc = data.chart?.error?.description || '(không có mô tả lỗi)';
-    console.log(`[signals-cron] Yahoo không trả về result cho ${symbol} (${timeframe}): ${errDesc}`);
-    return null;
-  }
-
-  const timestamps = result.timestamp || [];
-  const quote = result.indicators.quote[0] || {};
-  const opens = quote.open || [];
-  const highs = quote.high || [];
-  const lows = quote.low || [];
-  const closes = quote.close || [];
-  const volumes = quote.volume || [];
-
-  let candles = [];
-  for (let i = 0; i < timestamps.length; i++) {
-    if (opens[i] === null || closes[i] === null || Number.isNaN(opens[i]) || Number.isNaN(closes[i])) continue;
-    candles.push({
-      time: timestamps[i],
-      open: Number(opens[i]),
-      high: Number(highs[i] ?? opens[i]),
-      low: Number(lows[i] ?? closes[i]),
-      close: Number(closes[i]),
-      volume: Number(volumes[i] ?? 0),
-    });
-  }
-
-  if (candles.length === 0) {
-    console.log(`[signals-cron] Yahoo trả về 0 nến hợp lệ cho ${symbol} (${timeframe}).`);
-  }
-
-  if (mapping.multiplier > 0) {
-    candles = aggregateCandles(candles, mapping.multiplier);
-  }
-  return candles;
 }
 
 async function checkSignalsAndNotify(env) {
@@ -1155,7 +993,7 @@ async function checkSignalsAndNotify(env) {
     if (candleCache.has(key)) {
       return candleCache.get(key);
     }
-    const promise = fetchYahooKlines(symbol, timeframe);
+    const promise = fetchSignalKlines(symbol, timeframe);
     candleCache.set(key, promise);
     return promise;
   }
@@ -1170,18 +1008,12 @@ async function checkSignalsAndNotify(env) {
       const sKey = signalStateKey(cfg);
       const state = deviceState[sKey] || (deviceState[sKey] = { lastNotifiedTime: null, lastDirection: null });
 
-      const yahooSymbol = toYahooTicker(symbol);
-      if (!yahooSymbol) {
-        console.log(`[signals-cron] không tách được base/quote cho symbol: ${symbol} - bỏ qua.`);
-        continue;
-      }
-
-      const entryCandles = await getCandlesCached(yahooSymbol, timeframe);
-      const higherCandles = await getCandlesCached(yahooSymbol, higherTF);
+      const entryCandles = await getCandlesCached(symbol, timeframe);
+      const higherCandles = await getCandlesCached(symbol, higherTF);
 
       if (!entryCandles || entryCandles.length < 2 || !higherCandles || higherCandles.length < lookbackCandles) {
         console.log(
-          `[signals-cron] thiếu dữ liệu nến cho ${deviceId}/${symbol} (${yahooSymbol}) ` +
+          `[signals-cron] thiếu dữ liệu nến cho ${deviceId}/${symbol} (${symbol}) ` +
           `entry=${timeframe}:${entryCandles ? entryCandles.length : 'null'} ` +
           `higher=${higherTF}:${higherCandles ? higherCandles.length : 'null'} (cần >= ${lookbackCandles}) - bỏ qua.`
         );
@@ -1214,7 +1046,7 @@ async function checkSignalsAndNotify(env) {
       }
 
       console.log(
-        `[signals-cron][DEBUG] ${symbol} (${yahooSymbol}) entry=${timeframe} higher=${higherTF} ` +
+        `[signals-cron][DEBUG] ${symbol} (${symbol}) entry=${timeframe} higher=${higherTF} ` +
         `lastEntryClose=${lastEntry.close} maxHigh=${maxHigh} minLow=${minLow} direction=${direction} ` +
         `lastDirection=${state.lastDirection} lastEntryTime=${lastEntry.time}`
       );
@@ -1502,5 +1334,71 @@ async function fetchOandaTickerTV(symbol) {
     tvSend(ws, 'quote_create_session', [qs]);
     tvSend(ws, 'quote_set_fields', [qs, 'lp', 'ch', 'chp', 'bid', 'ask', 'high_price', 'low_price', 'open_price', 'volume']);
     tvSend(ws, 'quote_add_symbols', [qs, tvSymbol]);
+  });
+}
+/** 1 WS TradingView, 1 series / khung, lấy 3 nến cuối mỗi khung. Không hỗ trợ khung tổng hợp (có mult). */
+async function fetchOandaLiveTV(symbol, intervals) {
+  const ws = await tvOpenSocket();
+  if (!ws) return null;
+  const tvSymbol = toTradingViewSymbol(symbol);
+
+  return new Promise((resolve) => {
+    const cs = tvRand('cs');
+    const result = {}; // interval -> [bars]
+    const bySeries = {}; // 'sds_N' -> interval
+    const done = new Set();
+    let settled = false;
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { ws.close(); } catch (e) {}
+      resolve(Object.keys(result).length ? result : null);
+    };
+    const timer = setTimeout(finish, 8000);
+
+    ws.addEventListener('message', (ev) => {
+      for (const msg of tvParseFrames(String(ev.data))) {
+        if (msg.startsWith('~h~')) { ws.send(tvFrame(msg)); continue; }
+        let j;
+        try { j = JSON.parse(msg); } catch (e) { continue; }
+
+        if (j.m === 'timescale_update' || j.m === 'du') {
+          const p = j.p && j.p[1];
+          if (!p) continue;
+          Object.keys(p).forEach((sid) => {
+            const iv = bySeries[sid];
+            const s = p[sid] && p[sid].s;
+            if (!iv || !Array.isArray(s)) return;
+            const map = new Map((result[iv] || []).map((b) => [b.time, b]));
+            s.forEach((x) => {
+              const v = x.v;
+              if (v && v[1] != null) {
+                map.set(v[0], { time: v[0], open: v[1], high: v[2], low: v[3], close: v[4], volume: v[5] || 0 });
+              }
+            });
+            result[iv] = [...map.values()].sort((a, b) => a.time - b.time);
+          });
+        } else if (j.m === 'series_completed') {
+          const sid = j.p && j.p[1];
+          if (sid) done.add(sid);
+          if (done.size >= intervals.length) finish();
+        } else if (j.m === 'symbol_error' || j.m === 'critical_error' || j.m === 'series_error') {
+          finish();
+        }
+      }
+    });
+    ws.addEventListener('close', finish);
+    ws.addEventListener('error', finish);
+
+    tvSend(ws, 'set_auth_token', ['unauthorized_user_token']);
+    tvSend(ws, 'chart_create_session', [cs, '']);
+    tvSend(ws, 'resolve_symbol', [cs, 'sds_sym_1', '=' + JSON.stringify({ symbol: tvSymbol, adjustment: 'splits', session: 'regular' })]);
+    intervals.forEach((iv, i) => {
+      const sid = `sds_${i + 1}`;
+      bySeries[sid] = iv;
+      tvSend(ws, 'create_series', [cs, sid, `s${i + 1}`, 'sds_sym_1', TV_INTERVAL_MAP[iv].tv, 3, '']);
+    });
   });
 }

@@ -401,17 +401,21 @@ const ChartModule = (function () {
       });
     }
 
+        let lastRecomputeAt = 0;
     function scheduleRecompute(needIndicators) {
       if (needIndicators) needIndicatorRecompute = true;
       if (recomputeRafId !== null) return;
-      recomputeRafId = requestAnimationFrame(() => {
+      // Throttle: tối đa 1 lần tính / 250ms (tick realtime đến rất dày)
+      const wait = Math.max(0, 250 - (performance.now() - lastRecomputeAt));
+      recomputeRafId = setTimeout(() => {
         recomputeRafId = null;
+        lastRecomputeAt = performance.now();
         if (needIndicatorRecompute) {
           needIndicatorRecompute = false;
           renderIndicators(currentCandles);
         }
         runBreakout();
-      });
+      }, wait);
     }
 
     function handleKlineUpdate({ paneId: sourcePaneId, candle }) {
@@ -779,21 +783,27 @@ const ChartModule = (function () {
         s.setData(IndicatorModule.toSeriesData(candles, IndicatorModule.calcEMA(vals, l.period)));
       });
 
-      const sma50 = IndicatorModule.calcSMA(closes, indicatorConfig.sma50.period);
-      if (sma50Series) sma50Series.setData(IndicatorModule.toSeriesData(candles, sma50));
+            if (indicatorConfig.sma50.enabled && sma50Series) {
+        const sma50 = IndicatorModule.calcSMA(closes, indicatorConfig.sma50.period);
+        sma50Series.setData(IndicatorModule.toSeriesData(candles, sma50));
+      }
 
-      const bb = IndicatorModule.calcBB(closes, indicatorConfig.bbMiddle.period, 2);
-      if (bbMiddleSeries) bbMiddleSeries.setData(IndicatorModule.toSeriesData(candles, bb.middle));
-      if (bbUpperSeries) bbUpperSeries.setData(IndicatorModule.toSeriesData(candles, bb.upper));
-      if (bbLowerSeries) bbLowerSeries.setData(IndicatorModule.toSeriesData(candles, bb.lower));
+      if (indicatorConfig.bbMiddle.enabled || indicatorConfig.bbUpper.enabled || indicatorConfig.bbLower.enabled) {
+        const bb = IndicatorModule.calcBB(closes, indicatorConfig.bbMiddle.period, 2);
+        if (bbMiddleSeries) bbMiddleSeries.setData(IndicatorModule.toSeriesData(candles, bb.middle));
+        if (bbUpperSeries) bbUpperSeries.setData(IndicatorModule.toSeriesData(candles, bb.upper));
+        if (bbLowerSeries) bbLowerSeries.setData(IndicatorModule.toSeriesData(candles, bb.lower));
+      }
 
-      const rsi = IndicatorModule.calcRSI(candles, indicatorConfig.rsi.period, rsiExtras.source);
-      const emaOfRsi = IndicatorModule.calcEMA(rsi, indicatorConfig.emaRsi.period);
-      const wmaOfRsi = IndicatorModule.calcWMA(rsi, indicatorConfig.wmaRsi.period);
-      if (rsiSeries) rsiSeries.setData(IndicatorModule.toSeriesData(candles, rsi));
-      if (emaRsiSeries) emaRsiSeries.setData(IndicatorModule.toSeriesData(candles, emaOfRsi));
-      if (wmaRsiSeries) wmaRsiSeries.setData(IndicatorModule.toSeriesData(candles, wmaOfRsi));
-      updateRsiExtras(candles, rsi, wmaOfRsi);
+      if (rsiSeries || emaRsiSeries || wmaRsiSeries) {
+        const rsi = IndicatorModule.calcRSI(candles, indicatorConfig.rsi.period, rsiExtras.source);
+        const emaOfRsi = IndicatorModule.calcEMA(rsi, indicatorConfig.emaRsi.period);
+        const wmaOfRsi = IndicatorModule.calcWMA(rsi, indicatorConfig.wmaRsi.period);
+        if (rsiSeries) rsiSeries.setData(IndicatorModule.toSeriesData(candles, rsi));
+        if (emaRsiSeries) emaRsiSeries.setData(IndicatorModule.toSeriesData(candles, emaOfRsi));
+        if (wmaRsiSeries) wmaRsiSeries.setData(IndicatorModule.toSeriesData(candles, wmaOfRsi));
+        updateRsiExtras(candles, rsi, wmaOfRsi);
+      }
 
       // RSI cổ điển (luôn tính theo close, không có phần vẽ thêm)
       if (rsiCSeries || emaRsiCSeries || wmaRsiCSeries) {
@@ -809,28 +819,44 @@ const ChartModule = (function () {
         }
       }
 
-      const macd = IndicatorModule.calcMACD(
-        closes,
-        indicatorConfig.macdLine.period,
-        indicatorConfig.macdHist.period,
-        indicatorConfig.macdSignal.period
-      );
-      if (macdLineSeries) macdLineSeries.setData(IndicatorModule.toSeriesData(candles, macd.macd));
-      if (macdSignalSeries) macdSignalSeries.setData(IndicatorModule.toSeriesData(candles, macd.signal));
+            if (macdLineSeries || macdSignalSeries || macdHistSeries) {
+        const macd = IndicatorModule.calcMACD(
+          closes,
+          indicatorConfig.macdLine.period,
+          indicatorConfig.macdHist.period,
+          indicatorConfig.macdSignal.period
+        );
 
-      if (macdHistSeries) {
-        const histData = candles
-          .map((c, i) => {
-            const val = macd.hist[i];
-            if (val === null || val === undefined) return null;
-            return {
-              time: c.time,
-              value: val,
-              color: val >= 0 ? 'rgba(38, 166, 154, 0.6)' : 'rgba(239, 83, 80, 0.6)',
-            };
-          })
-          .filter((d) => d !== null);
-        macdHistSeries.setData(histData);
+        if (macdLineSeries) {
+          macdLineSeries.setData(
+            IndicatorModule.toSeriesData(candles, macd.macd)
+          );
+        }
+
+        if (macdSignalSeries) {
+          macdSignalSeries.setData(
+            IndicatorModule.toSeriesData(candles, macd.signal)
+          );
+        }
+
+        if (macdHistSeries) {
+          const histData = candles
+            .map((c, i) => {
+              const val = macd.hist[i];
+              if (val === null || val === undefined) return null;
+
+              return {
+                time: c.time,
+                value: val,
+                color: val >= 0
+                  ? 'rgba(38, 166, 154, 0.6)'
+                  : 'rgba(239, 83, 80, 0.6)',
+              };
+            })
+            .filter((d) => d !== null);
+
+          macdHistSeries.setData(histData);
+        }
       }
     }
 
@@ -850,6 +876,7 @@ const ChartModule = (function () {
       });
       prefs.emaLines = emaLines.map((l) => ({ ...l }));
       prefs.rsiExtras = JSON.parse(JSON.stringify(rsiExtras));
+      prefs.volumeVisible = volumeVisible;
       IndicatorPrefsModule.setPanePrefs(paneId, prefs);
     }
 
@@ -881,6 +908,12 @@ const ChartModule = (function () {
       if (saved.rsiExtras) {
         rsiExtras = sanitizeRsiExtras(saved.rsiExtras);
         scheduleRecompute(true);
+      }
+      
+      // Volume: khôi phục trạng thái bật/tắt đã lưu (mặc định bật nếu chưa từng lưu)
+      if (typeof saved.volumeVisible === 'boolean') {
+        volumeVisible = saved.volumeVisible;
+        if (volumeSeries) volumeSeries.applyOptions({ visible: volumeVisible });
       }
 
       Object.keys(saved).forEach((k) => {
@@ -1163,6 +1196,7 @@ const ChartModule = (function () {
     function setVolumeVisible(visible) {
       volumeVisible = visible;
       if (volumeSeries) volumeSeries.applyOptions({ visible });
+      persistIndicatorPrefs();
     }
 
     function getVolumeVisible() {
@@ -1171,7 +1205,7 @@ const ChartModule = (function () {
 
     function setHigherTFCandles(candles) {
       higherTFCandles = candles ? candles.slice() : [];
-      runBreakout();
+      scheduleRecompute(false);          // <- đổi
     }
 
     function upsertHigherTFCandle(candle) {
@@ -1187,7 +1221,7 @@ const ChartModule = (function () {
 
     function setSLCandles(candles) {
       slCandles = candles ? candles.slice() : null;
-      runBreakout();
+      scheduleRecompute(false);          // <- đổi
     }
 
     function upsertSLCandle(candle) {
@@ -1200,7 +1234,7 @@ const ChartModule = (function () {
 
     function configureBreakout(options) {
       breakout.configure(options || {});
-      runBreakout();
+      scheduleRecompute(false);          // <- đổi
     }
 
     function getBreakoutConfig() {
@@ -1349,7 +1383,7 @@ const ChartModule = (function () {
       if (drawing) drawing.flushSave(); // lưu nốt hình vẽ trước khi huỷ
       if (resizeObserver) resizeObserver.disconnect();
       if (recomputeRafId !== null) {
-        cancelAnimationFrame(recomputeRafId);
+        clearTimeout(recomputeRafId);
         recomputeRafId = null;
       }
       if (chart) chart.remove();

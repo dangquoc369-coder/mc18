@@ -80,16 +80,7 @@ const BreakoutModule = (function () {
     }
 
     function drawSLLine(price, direction) {
-      removeSLLine();
-      if (!visible) return; // đang tắt hiển thị -> không vẽ đường SL
-      slPriceLine = candleSeriesRef.createPriceLine({
-        price,
-        color: '#e98d16ec',
-        lineWidth: 1,
-        lineStyle: LightweightCharts.LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: 'SL ' + (direction === 1 ? 'BUY' : 'SELL'),
-      });
+      // Không vẽ đường SL lên chart nữa
     }
 
     function pushMarker(marker) {
@@ -98,16 +89,16 @@ const BreakoutModule = (function () {
       if (visible) markersPrimitive.setMarkers(markers);
     }
 
-    function addEntryMarker(time, direction, isReversal) {
+    function addEntryMarker(time, direction) {
       const marker =
         direction === 1
-          ? { time, position: 'belowBar', color: '#26a69a', shape: 'arrowUp', text: isReversal ? 'B' : 'BUY' }
-          : { time, position: 'aboveBar', color: '#ef5350', shape: 'arrowDown', text: isReversal ? 'S' : 'SELL' };
+          ? { time, position: 'belowBar', color: '#26a69a', shape: 'arrowUp', text: 'BUY' }
+          : { time, position: 'aboveBar', color: '#ef5350', shape: 'arrowDown', text: 'SELL' };
       pushMarker(marker);
     }
 
     function addSLHitMarker(time) {
-      pushMarker({ time, position: 'inBar', color: '#f5c518', shape: 'circle', text: 'SL' });
+      // Không vẽ marker SL lên chart nữa (lệnh ảo vẫn đóng khi chạm SL ở logic phía dưới)
     }
 
     function openTrade(direction, entryPrice, slDistance) {
@@ -252,6 +243,14 @@ function detectOwnTimeframeTrend(closedCandles) {
       }
       const slSeries = buildClosedSeries(slSeriesRaw);
       const slAlign = makeAligner(slSeries);
+      
+      // ATR tính 1 lần cho toàn chuỗi (Wilder, nhân quả) thay vì mỗi tín hiệu 1 lần
+      let atrFull = null;
+      try {
+        atrFull = IndicatorModule.calcATR(slSeries, CONFIG.atrPeriod);
+      } catch (e) {
+        atrFull = null;
+      }
 
       if (entryClosed.length < 1 || htfSeries.length < CONFIG.lookbackCandles) {
         // Chưa đủ nến khung trend để so sánh -> không thể phát hiện breakout
@@ -286,14 +285,19 @@ function detectOwnTimeframeTrend(closedCandles) {
         // Số nến khung SL đã đóng tính đến thời điểm nến entry này đóng
         const slCount = slAlign(bar.time);
         if (slCount < CONFIG.atrPeriod + 1) continue;
-        const slSlice = slSeries.slice(0, slCount);
-        const atrArr = IndicatorModule.calcATR(slSlice, CONFIG.atrPeriod);
-        const atr = atrArr[atrArr.length - 1];
+                let atr;
+        if (atrFull && atrFull.length === slSeries.length) {
+          atr = atrFull[slCount - 1];
+        } else {
+          // dự phòng: cách cũ nếu calcATR trả mảng khác độ dài
+          const atrArr = IndicatorModule.calcATR(slSeries.slice(0, slCount), CONFIG.atrPeriod);
+          atr = atrArr[atrArr.length - 1];
+        }
         if (!atr) continue;
         const slDistance = atr * CONFIG.atrMultiplier;
 
         const isReversal = activeTradeOpen;
-        addEntryMarker(bar.time, direction, isReversal);
+        addEntryMarker(bar.time, direction);
         openTrade(direction, bar.close, slDistance);
 
         lastLoopSignal = { time: bar.time, direction };
@@ -334,11 +338,6 @@ function detectOwnTimeframeTrend(closedCandles) {
     function setVisible(v) {
       visible = !!v;
       if (markersPrimitive) markersPrimitive.setMarkers(visible ? markers : []);
-      if (visible && activeTradeOpen) {
-        drawSLLine(activeSLPrice, activeDirection);
-      } else if (!visible) {
-        removeSLLine();
-      }
     }
 
     function isVisible() {

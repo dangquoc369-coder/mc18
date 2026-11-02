@@ -3,19 +3,20 @@
  * Giữ topbar (màn NGANG, class html.tb-merged) luôn trên 1 hàng và HIỆN CHỮ
  * trên các nút càng nhiều càng tốt. Khi không đủ chỗ, lần lượt thu gọn:
  *
- *   level 0: đầy đủ - nút khung giờ nhanh (15m/1H/4H/1D) + chữ trên mọi nút
- *   level 1: ẩn nút khung giờ nhanh, chỉ còn ô chọn (hiện khung đang dùng, bấm mũi tên để chọn khác)
- *   level 2: + nút "Trạng thái thị trường" chỉ còn icon (chữ dài nhất)
- *   level 3: + mọi nút chỉ còn icon
+ *   level 0: đầy đủ - cụm "1 ô / 2 ô / 3 ô / 4 ô" + nút khung giờ nhanh + chữ trên mọi nút
+ *   level 1: cụm số ô thu thành 1 ô chọn "N ô ▾"
+ *   level 2: + ẩn nút khung giờ nhanh, chỉ còn ô chọn khung
+ *   level 3: + nút "Trạng thái thị trường" chỉ còn icon
+ *   level 4: + mọi nút chỉ còn icon
  *
  * Mỗi lần đo bắt đầu lại từ level 0 rồi tăng dần tới khi vừa, nên khi rộng
  * ra (xoay máy, đổi cỡ cửa sổ, đổi tên tài khoản...) giao diện tự mở lại.
  * CSS tương ứng nằm trong css/topbar-landscape.css (data-tb-level).
- * Nếu đã ở level 3 mà vẫn tràn thì #controlBar tự cuộn ngang (không xuống dòng).
+ * Nếu đã ở level 4 mà vẫn tràn thì #controlBar tự cuộn ngang (không xuống dòng).
  */
 (function () {
   const root = document.documentElement;
-  const MAX_LEVEL = 3;
+  const MAX_LEVEL = 4;
   let scheduled = false;
 
   function overflowing(topbar, bar) {
