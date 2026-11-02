@@ -659,12 +659,12 @@ const ChartModule = (function () {
 
     // ===== RSI BY NĐQ: dữ liệu + vẽ thêm =====
 
-    /** Trục RSI tự co giãn theo dữ liệu nhưng luôn gồm cả các mức ngang (giống TradingView). */
+        /** Trục RSI: tối thiểu 30-70, luôn gồm cả các mức ngang, tự nới ra nếu dữ liệu vượt biên. */
     function rsiAutoscaleProvider(original) {
       const info = original();
       if (!info || !info.priceRange) return info;
-      let min = info.priceRange.minValue;
-      let max = info.priceRange.maxValue;
+      let min = Math.min(30, info.priceRange.minValue);
+      let max = Math.max(70, info.priceRange.maxValue);
       if (rsiExtras.levels.length) {
         min = Math.min(min, ...rsiExtras.levels);
         max = Math.max(max, ...rsiExtras.levels);
@@ -1009,12 +1009,16 @@ const ChartModule = (function () {
               1
             );
           } else if (key === 'rsiC' || key === 'emaRsiC' || key === 'wmaRsiC') {
-            // RSI cổ điển: trục cố định 36-84 như bản cũ
+                        // RSI cổ điển: trục tối thiểu 30-70, tự nới ra nếu dữ liệu vượt biên
             const classicRangeProvider = (original) => {
               const info = original();
+              if (!info || !info.priceRange) return info;
               return {
-                priceRange: { minValue: 36, maxValue: 84 },
-                margins: info ? info.margins : undefined,
+                priceRange: {
+                  minValue: Math.min(30, info.priceRange.minValue),
+                  maxValue: Math.max(70, info.priceRange.maxValue),
+                },
+                margins: info.margins,
               };
             };
             const s = chart.addSeries(
