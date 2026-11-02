@@ -102,7 +102,45 @@ function withCors(resp) {
   return resp;
 }
 
-const KLINES_MEM = new Map(); // cache RAM theo isolate
+const KLINES_MEM = new Map(); // key -> { ts, data, p }
+const LIVE_MEM = new Map();
+const TICK_MEM = new Map();
+
+/**
+ * Cache RAM + DÙNG CHUNG request đang chạy + trả dữ liệu cũ khi nguồn lỗi.
+ *  - ttlMs:   dữ liệu còn "tươi" thì trả luôn, không gọi nguồn.
+ *  - staleMs: nguồn lỗi (fn trả null/ném lỗi) thì trả dữ liệu cũ nếu chưa quá tuổi này.
+ * Nhiều client hỏi cùng lúc -> chỉ 1 lần mở WebSocket TradingView.
+ */
+async function memoAsync(store, key, ttlMs, fn, staleMs = 0) {
+  let e = store.get(key);
+  if (!e) {
+    e = { ts: 0, data: null, p: null };
+    store.set(key, e);
+    if (store.size > 200) store.delete(store.keys().next().value);
+  }
+  if (e.data && Date.now() - e.ts < ttlMs) return e.data;
+  if (!e.p) {
+    e.p = Promise.resolve()
+      .then(fn)
+      .catch((err) => {
+        console.log('[memo] nguồn lỗi:', err && err.message);
+        return null;
+      })
+      .then((d) => {
+        if (d) {
+          e.data = d;
+          e.ts = Date.now();
+        }
+        e.p = null;
+        return d;
+      });
+  }
+  const d = await e.p;
+  if (d) return d;
+  if (e.data && Date.now() - e.ts < staleMs) return e.data;
+  return null;
+}
 
 function jsonNoStore(data) {
   const resp = Response.json(data);
@@ -532,7 +570,7 @@ export default {
       return withCors(Response.json({ ok: true, count: merged.length }));
     }
 
-        // ===== OANDA qua TradingView (cache RAM ngắn trong isolate) =====
+         // ===== OANDA qua TradingView (cache RAM + dùng chung request + trả dữ liệu cũ khi lỗi) =====
     if (url.pathname === '/api/oanda/klines') {
       const symbol = url.searchParams.get('symbol') || 'XAUUSD';
       const interval = url.searchParams.get('interval') || '15m';
@@ -545,18 +583,16 @@ export default {
 
       const cacheKey = `${toTradingViewSymbol(symbol)}|${interval}|${limit}|${endTime || ''}`;
       const ttl = endTime ? 10 * 60000 : 8000; // lịch sử cũ cache lâu hơn
-      const hit = KLINES_MEM.get(cacheKey);
-      if (hit && Date.now() - hit.ts < ttl) return jsonNoStore(hit.data);
-
-      const candles = await fetchOandaKlinesTV(symbol, interval, limit, endTime).catch((e) => {
-        console.log('[oanda-tv] klines lỗi:', e && e.message);
-        return null;
-      });
+      const candles = await memoAsync(
+        KLINES_MEM,
+        cacheKey,
+        ttl,
+        () => fetchOandaKlinesTV(symbol, interval, limit, endTime),
+        endTime ? 0 : 120000
+      );
       if (!candles || !candles.length) {
         return withCors(Response.json({ error: 'TradingView không trả dữ liệu' }, { status: 502 }));
       }
-      KLINES_MEM.set(cacheKey, { ts: Date.now(), data: candles });
-      if (KLINES_MEM.size > 200) KLINES_MEM.delete(KLINES_MEM.keys().next().value);
       return jsonNoStore(candles);
     }
 
@@ -565,24 +601,54 @@ export default {
       if (!isOandaSymbol(symbol)) {
         return withCors(Response.json({ error: 'symbol không được hỗ trợ' }, { status: 400 }));
       }
-      const t = await fetchOandaTickerTV(symbol).catch(() => null);
+      const t = await memoAsync(
+        TICK_MEM,
+        `tick|${toTradingViewSymbol(symbol)}`,
+        2000,
+        () => fetchOandaTickerTV(symbol),
+        30000
+      );
       if (!t) return withCors(Response.json({ error: 'TradingView không trả dữ liệu' }, { status: 502 }));
       return jsonNoStore(t);
     }
 
-    // 1 WebSocket TradingView -> vài nến cuối của NHIỀU khung cùng lúc.
-    // GET /api/oanda/live?symbol=XAUUSD&intervals=5m,15m,1h
+    // 1 WebSocket TradingView -> vài nến cuối của NHIỀU khung (kể cả khung tổng hợp) + quote.
+    // GET /api/oanda/live?symbol=XAUUSD&intervals=5m,15m,1h,6h&n=3
     if (url.pathname === '/api/oanda/live') {
       const symbol = url.searchParams.get('symbol') || 'XAUUSD';
-      const intervals = (url.searchParams.get('intervals') || '15m')
-        .split(',')
-        .map((s) => s.trim())
-        .filter((s) => TV_INTERVAL_MAP[s] && !TV_INTERVAL_MAP[s].mult)
-        .slice(0, 10);
+      const intervals = [
+        ...new Set(
+          (url.searchParams.get('intervals') || '15m')
+            .split(',')
+            .map((s) => s.trim())
+            .filter((s) => TV_INTERVAL_MAP[s])
+        ),
+      ].slice(0, 14);
+      const n = Math.min(Math.max(parseInt(url.searchParams.get('n') || '3', 10) || 3, 1), 100);
       if (!isOandaSymbol(symbol) || intervals.length === 0) {
         return withCors(Response.json({ error: 'tham số không hợp lệ' }, { status: 400 }));
       }
-      const data = await fetchOandaLiveTV(symbol, intervals).catch(() => null);
+      const key = `live|${toTradingViewSymbol(symbol)}|${[...intervals].sort().join(',')}|${n}`;
+      const data = await memoAsync(
+        LIVE_MEM,
+        key,
+        2000,
+        async () => {
+          let out = (await fetchOandaLiveTV(symbol, intervals, n)) || {};
+          // Bù các khung còn thiếu bằng 1 kết nối khác (chia nhỏ từng nhóm 3 khung)
+          let missing = intervals.filter((iv) => !out[iv]);
+          for (let round = 0; round < 2 && missing.length; round++) {
+            const chunk = missing.slice(0, 3);
+            const more = await fetchOandaLiveTV(symbol, chunk, n).catch(() => null);
+            if (more) {
+              Object.keys(more).forEach((k) => { if (k !== '__quote' || !out.__quote) out[k] = more[k]; });
+            }
+            missing = intervals.filter((iv) => !out[iv]);
+          }
+          return Object.keys(out).length ? out : null;
+        },
+        45000
+      );
       if (!data) return withCors(Response.json({ error: 'TradingView không trả dữ liệu' }, { status: 502 }));
       return jsonNoStore(data);
     }
@@ -1166,15 +1232,25 @@ function tvParseFrames(raw) {
 }
 
 async function tvOpenSocket() {
+  const TIMEOUT = Symbol('timeout');
   for (const host of ['data', 'prodata']) {
     try {
-      const r = await fetch(`https://${host}.tradingview.com/socket.io/websocket?from=chart%2F&type=chart`, {
-        headers: { Upgrade: 'websocket', Origin: 'https://www.tradingview.com', 'User-Agent': TV_UA },
-      });
-      if (r.webSocket) {
+      const attempt = (async () => {
+        const r = await fetch(`https://${host}.tradingview.com/socket.io/websocket?from=chart%2F&type=chart`, {
+          headers: { Upgrade: 'websocket', Origin: 'https://www.tradingview.com', 'User-Agent': TV_UA },
+        });
+        if (!r.webSocket) return null;
         r.webSocket.accept();
         return r.webSocket;
+      })();
+      const res = await Promise.race([attempt, sleep(5000).then(() => TIMEOUT)]);
+      if (res === TIMEOUT) {
+        console.log(`[tv] mở websocket ${host} quá 5s - thử host khác`);
+        // Socket mở muộn thì đóng luôn, tránh rò rỉ
+        attempt.then((w) => { try { if (w) w.close(); } catch (e) {} }).catch(() => {});
+        continue;
       }
+      if (res) return res;
     } catch (e) {
       console.log(`[tv] mở websocket ${host} lỗi:`, e.message);
     }
@@ -1336,27 +1412,71 @@ async function fetchOandaTickerTV(symbol) {
     tvSend(ws, 'quote_add_symbols', [qs, tvSymbol]);
   });
 }
-/** 1 WS TradingView, 1 series / khung, lấy 3 nến cuối mỗi khung. Không hỗ trợ khung tổng hợp (có mult). */
-async function fetchOandaLiveTV(symbol, intervals) {
+/**
+ * 1 WS TradingView, MỖI khung nền = 1 chart session riêng (tài khoản ẩn danh
+ * chỉ cho 1 series / session). Các khung tổng hợp dùng chung series nền
+ * (1h -> 1h/3h/6h/12h). Trả { '15m': [...], ..., __quote: {...} } hoặc null.
+ */
+async function fetchOandaLiveTV(symbol, intervals, n = 3) {
   const ws = await tvOpenSocket();
   if (!ws) return null;
   const tvSymbol = toTradingViewSymbol(symbol);
 
+  // tv interval nền -> { cs, need, bars }
+  const plan = new Map();
+  intervals.forEach((iv) => {
+    const m = TV_INTERVAL_MAP[iv];
+    if (!m) return;
+    const factor = m.mult ? Math.ceil(m.mult / m.secs) : 1;
+    const need = Math.min(5000, m.mult ? (n + 1) * factor : n);
+    const p = plan.get(m.tv);
+    if (p) p.need = Math.max(p.need, need);
+    else plan.set(m.tv, { cs: tvRand('cs'), need, bars: new Map() });
+  });
+  const byCs = {};
+  plan.forEach((p) => { byCs[p.cs] = p; });
+
   return new Promise((resolve) => {
-    const cs = tvRand('cs');
-    const result = {}; // interval -> [bars]
-    const bySeries = {}; // 'sds_N' -> interval
+    const qs = tvRand('qs');
+    const acc = {};
     const done = new Set();
+    let quoteReady = false;
     let settled = false;
 
+    const build = () => {
+      const out = {};
+      intervals.forEach((iv) => {
+        const m = TV_INTERVAL_MAP[iv];
+        const p = m && plan.get(m.tv);
+        if (!p || p.bars.size === 0) return;
+        let arr = [...p.bars.values()].sort((a, b) => a.time - b.time);
+        if (m.mult) arr = tvAggregate(arr, m.mult);
+        out[iv] = arr.slice(-n);
+      });
+      if (acc.lp != null) {
+        out.__quote = {
+          lastPrice: acc.lp,
+          changePercent: acc.chp || 0,
+          bid: acc.bid ?? acc.lp,
+          ask: acc.ask ?? acc.lp,
+          high: acc.high_price ?? acc.lp,
+          low: acc.low_price ?? acc.lp,
+          open: acc.open_price ?? acc.lp,
+        };
+      }
+      return Object.keys(out).length ? out : null;
+    };
     const finish = () => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       try { ws.close(); } catch (e) {}
-      resolve(Object.keys(result).length ? result : null);
+      resolve(build());
     };
-    const timer = setTimeout(finish, 8000);
+    const maybeFinish = () => {
+      if (done.size >= plan.size && quoteReady) finish();
+    };
+    const timer = setTimeout(finish, 9000);
 
     ws.addEventListener('message', (ev) => {
       for (const msg of tvParseFrames(String(ev.data))) {
@@ -1365,27 +1485,27 @@ async function fetchOandaLiveTV(symbol, intervals) {
         try { j = JSON.parse(msg); } catch (e) { continue; }
 
         if (j.m === 'timescale_update' || j.m === 'du') {
-          const p = j.p && j.p[1];
-          if (!p) continue;
-          Object.keys(p).forEach((sid) => {
-            const iv = bySeries[sid];
-            const s = p[sid] && p[sid].s;
-            if (!iv || !Array.isArray(s)) return;
-            const map = new Map((result[iv] || []).map((b) => [b.time, b]));
-            s.forEach((x) => {
-              const v = x.v;
-              if (v && v[1] != null) {
-                map.set(v[0], { time: v[0], open: v[1], high: v[2], low: v[3], close: v[4], volume: v[5] || 0 });
-              }
-            });
-            result[iv] = [...map.values()].sort((a, b) => a.time - b.time);
+          const plp = byCs[j.p && j.p[0]];
+          const s = plp && j.p[1] && j.p[1].sds_1 && j.p[1].sds_1.s;
+          if (!plp || !Array.isArray(s)) continue;
+          s.forEach((x) => {
+            const v = x.v;
+            if (v && v[1] != null) {
+              plp.bars.set(v[0], { time: v[0], open: v[1], high: v[2], low: v[3], close: v[4], volume: v[5] || 0 });
+            }
           });
         } else if (j.m === 'series_completed') {
-          const sid = j.p && j.p[1];
-          if (sid) done.add(sid);
-          if (done.size >= intervals.length) finish();
-        } else if (j.m === 'symbol_error' || j.m === 'critical_error' || j.m === 'series_error') {
-          finish();
+          if (byCs[j.p && j.p[0]]) done.add(j.p[0]);
+          maybeFinish();
+        } else if (j.m === 'qsd' && j.p && j.p[1] && j.p[1].v) {
+          Object.assign(acc, j.p[1].v);
+          if (acc.lp != null && acc.chp != null) { quoteReady = true; maybeFinish(); }
+        } else if (j.m === 'quote_completed') {
+          quoteReady = true;
+          maybeFinish();
+        } else if (j.m === 'critical_error' || j.m === 'symbol_error' || j.m === 'series_error') {
+          console.log('[tv] lỗi từ TradingView (live):', msg.slice(0, 200));
+          finish(); // trả phần đã có
         }
       }
     });
@@ -1393,12 +1513,13 @@ async function fetchOandaLiveTV(symbol, intervals) {
     ws.addEventListener('error', finish);
 
     tvSend(ws, 'set_auth_token', ['unauthorized_user_token']);
-    tvSend(ws, 'chart_create_session', [cs, '']);
-    tvSend(ws, 'resolve_symbol', [cs, 'sds_sym_1', '=' + JSON.stringify({ symbol: tvSymbol, adjustment: 'splits', session: 'regular' })]);
-    intervals.forEach((iv, i) => {
-      const sid = `sds_${i + 1}`;
-      bySeries[sid] = iv;
-      tvSend(ws, 'create_series', [cs, sid, `s${i + 1}`, 'sds_sym_1', TV_INTERVAL_MAP[iv].tv, 3, '']);
+    plan.forEach((p, tvInterval) => {
+      tvSend(ws, 'chart_create_session', [p.cs, '']);
+      tvSend(ws, 'resolve_symbol', [p.cs, 'sds_sym_1', '=' + JSON.stringify({ symbol: tvSymbol, adjustment: 'splits', session: 'regular' })]);
+      tvSend(ws, 'create_series', [p.cs, 'sds_1', 's1', 'sds_sym_1', tvInterval, p.need, '']);
     });
+    tvSend(ws, 'quote_create_session', [qs]);
+    tvSend(ws, 'quote_set_fields', [qs, 'lp', 'ch', 'chp', 'bid', 'ask', 'high_price', 'low_price', 'open_price']);
+    tvSend(ws, 'quote_add_symbols', [qs, tvSymbol]);
   });
 }

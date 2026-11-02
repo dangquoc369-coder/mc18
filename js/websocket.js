@@ -2,20 +2,20 @@
  * websocket.js
  * Dữ liệu realtime cho từng pane độc lập:
  *   - Binance (spot/futures): WebSocket.
- *   - OANDA (XAUUSD): polling gộp - 1 timer / luồng, mỗi nhịp 1 request, các
- *     khung cùng symbol được gộp vào 1 request /api/oanda/live (api.js) nên
- *     Worker chỉ mở 1 WebSocket TradingView cho tất cả.
+ *   - OANDA (XAUUSD): HUB POLL GỘP THEO SYMBOL.
+ *       + Mọi luồng OANDA của cùng 1 symbol (kline, htf, sl, 7 trend tham khảo
+ *         của MỌI pane) đăng ký vào 1 hub; hub chạy theo LƯỚI thời gian
+ *         (OANDA_GRID_MS) và mỗi nhịp chỉ bắn 1 request /api/oanda/live cho
+ *         các luồng đã đến hạn -> Worker chỉ mở 1 WebSocket TradingView.
+ *       + Giá/% thay đổi lấy từ quote đi kèm response (không poll ticker riêng).
+ *       + Mọi khung (kể cả 3h/6h/12h/2d/3d) đều đi qua /live (Worker tự gộp).
+ *       + Báo "disconnected" chỉ sau OANDA_FAIL_LIMIT lần lỗi liên tiếp, có
+ *         backoff; tab ẩn thì tạm dừng; quay lại / sau lỗi thì xin thêm nến
+ *         (catch-up) để lấp khoảng trống.
  *   - ĐÃ BỎ HOÀN TOÀN Yahoo.
  *
- * ĐỢT TỐI ƯU:
- *   - OANDA: tab ẩn (visibilityState hidden) -> tạm dừng poll; cờ `busy` chống
- *     request chồng nhau; vòng đầu KHÔNG poll ngay (dữ liệu vừa được tải xong).
- *   - Poll kline OANDA phát changePercent = undefined để Store GIỮ nguyên %
- *     thay đổi (trước đây phát null làm mất %).
- *
  * WATCHDOG chống "socket zombie" (Binance): mỗi 10s quét mọi luồng, luồng nào
- * im lặng quá ngưỡng (60s; trendref 25s) thì tự kết nối lại; kiểm tra ngay khi
- * tab hiện lại. OANDA (polling) được bỏ qua trong watchdog.
+ * im lặng quá ngưỡng (60s; trendref 25s) thì tự kết nối lại. OANDA bỏ qua.
  *
  * KHUNG TỔNG HỢP (20m/45m/3h/2d) trên Binance: subscribe khung BASE rồi gộp
  * qua createSyntheticAggregator() (utils.js) trước khi emit.
@@ -45,8 +45,8 @@ function getOrCreateEntry(paneId) {
       htfReconnectTimer: null,
       slReconnectTimer: null,
 
-      // OANDA: key -> setInterval id (kline | htf | sl | ticker | tr:<role>)
-      oanda: {},
+      // OANDA: token huỷ lần lấy giá ban đầu (xem connectOandaTickerStream)
+      oandaTickerToken: null,
 
       meta: { kline: null, ticker: null, htf: null, sl: null, trendref: {} },
       lastMessageAt: { kline: null, ticker: null, htf: null, sl: null, trendref: {} },
@@ -272,87 +272,241 @@ function connectTickerStream(paneId, symbol) {
   };
 }
 
-/* ===================== OANDA: 1 TIMER / LUỒNG, GỘP REQUEST ===================== */
+/* =====================================================================
+ * OANDA: HUB POLL GỘP THEO SYMBOL
+ * ===================================================================== */
 
-// Khung KHÔNG có sẵn trên TradingView (Worker tự gộp) -> không đi qua /live.
-const OANDA_NON_LIVE = new Set(['6h', '8h', '12h', '3d']);
+// Nhịp lưới (ms). Mọi chu kỳ poll là BỘI SỐ của nhịp này nên tự rơi vào cùng
+// 1 request. Muốn giảm tải Worker (đổi lại giá trễ hơn): tăng lên 5000.
+const OANDA_GRID_MS = 3000;
+const OANDA_PERIOD_KLINE = OANDA_GRID_MS * 1; // nến chính + giá
+const OANDA_PERIOD_HTF_SL = OANDA_GRID_MS * 3; // khung cao / khung SL
+const OANDA_PERIOD_TREND_FAST = OANDA_GRID_MS * 5; // trend m5/m15/m30
+const OANDA_PERIOD_TREND_SLOW = OANDA_GRID_MS * 10; // trend khung lớn (2h/6h/12h/1d)
 
-/** Nến cuối của 1 khung OANDA: native -> /live (gộp 1 WS); tổng hợp -> REST thường. */
-async function oandaLastCandle(symbol, interval) {
-  if (isSyntheticInterval(interval) || OANDA_NON_LIVE.has(interval)) {
-    const c = await fetchKlines(symbol, interval, 3);
-    return c[c.length - 1];
+const OANDA_FAIL_LIMIT = 3; // số lần lỗi LIÊN TIẾP mới báo "mất kết nối"
+const OANDA_BACKOFF_MAX_MS = 30000;
+const OANDA_CATCHUP_BARS = 60; // số nến xin lại sau lỗi / sau khi tab ẩn lâu
+const OANDA_CATCHUP_AFTER_HIDDEN_MS = 20000;
+
+const oandaHubs = new Map(); // symbol -> hub
+let oandaHiddenAt = null;
+
+/** Mốc lưới kế tiếp (ms epoch) tính từ `now`. */
+function oandaNextGrid(now) {
+  return Math.floor(now / OANDA_GRID_MS) * OANDA_GRID_MS + OANDA_GRID_MS;
+}
+
+function oandaGetHub(symbol) {
+  let hub = oandaHubs.get(symbol);
+  if (!hub) {
+    hub = {
+      symbol,
+      subs: new Map(), // id -> sub
+      timer: null,
+      running: false,
+      fails: 0,
+      skipUntil: 0,
+      down: false,
+      catchup: false,
+    };
+    oandaHubs.set(symbol, hub);
   }
-  const bars = await fetchOandaLive(symbol, interval);
-  return bars[bars.length - 1];
+  return hub;
+}
+
+function oandaSchedule(hub) {
+  if (hub.timer || hub.running) return;
+  const now = Date.now();
+  let delay = OANDA_GRID_MS - (now % OANDA_GRID_MS) + 30;
+  if (hub.skipUntil > now) delay = Math.max(delay, hub.skipUntil - now);
+  hub.timer = setTimeout(() => oandaTick(hub), delay);
+}
+
+/** Bắt hub chạy ngay (vd. tab vừa hiện lại): mọi luồng thành "đến hạn". */
+function oandaKick(hub) {
+  if (hub.running) return;
+  hub.skipUntil = 0;
+  hub.subs.forEach((s) => {
+    s.nextAt = 0;
+  });
+  clearTimeout(hub.timer);
+  hub.timer = setTimeout(() => oandaTick(hub), 150);
+}
+
+function oandaEmitKlineStatus(hub, status) {
+  hub.subs.forEach((s) => {
+    if (s.key !== 'kline') return;
+    s.statusSent = status === 'connected';
+    EventBus.emit('ws:status', { paneId: s.paneId, status });
+  });
+}
+
+async function oandaTick(hub) {
+  hub.timer = null;
+  if (oandaHubs.get(hub.symbol) !== hub) return;
+  if (hub.subs.size === 0) {
+    oandaHubs.delete(hub.symbol);
+    return;
+  }
+  if (document.visibilityState === 'hidden') {
+    oandaSchedule(hub);
+    return;
+  }
+
+  const now = Date.now();
+  const due = [...hub.subs.values()].filter((s) => s.nextAt <= now);
+  if (due.length === 0) {
+    oandaSchedule(hub);
+    return;
+  }
+
+  hub.running = true;
+  const catchup = hub.catchup;
+  const intervals = [...new Set(due.map((s) => s.interval))];
+
+  try {
+    const data = await fetchOandaLiveMulti(hub.symbol, intervals, catchup ? OANDA_CATCHUP_BARS : 3);
+    if (oandaHubs.get(hub.symbol) !== hub) return;
+
+    hub.fails = 0;
+    hub.skipUntil = 0;
+    hub.catchup = false;
+    hub.down = false;
+
+    const quote = data && data.__quote ? data.__quote : null;
+    const after = Date.now();
+
+    due.forEach((s) => {
+      if (hub.subs.get(s.id) !== s) return; // đã huỷ trong lúc chờ
+      s.nextAt = oandaNextGrid(after) + s.periodMs - OANDA_GRID_MS;
+
+      const all = Array.isArray(data && data[s.interval]) ? data[s.interval] : [];
+      const changed = [];
+      all.forEach((bar) => {
+        const sig = `${bar.open}|${bar.high}|${bar.low}|${bar.close}|${bar.volume}`;
+        if (s.seen.get(bar.time) !== sig) {
+          s.seen.set(bar.time, sig);
+          changed.push(bar);
+        }
+      });
+      while (s.seen.size > 200) s.seen.delete(s.seen.keys().next().value);
+
+      if (all.length === 0 && !quote) return;
+      try {
+        s.onUpdate(changed, quote, all);
+      } catch (err) {
+        console.error(`[oanda-hub] lỗi xử lý ${s.id}:`, err);
+      }
+
+      if (s.key === 'kline' && !s.statusSent && all.length > 0) {
+        s.statusSent = true;
+        EventBus.emit('ws:status', { paneId: s.paneId, status: 'connected' });
+      }
+    });
+  } catch (err) {
+    if (oandaHubs.get(hub.symbol) === hub) {
+      hub.fails++;
+      hub.catchup = true; // lần thành công kế tiếp xin thêm nến để lấp khoảng trống
+      hub.skipUntil = Date.now() + Math.min(OANDA_GRID_MS * Math.pow(2, hub.fails - 1), OANDA_BACKOFF_MAX_MS);
+      console.warn(`[oanda-hub] ${hub.symbol} lỗi lần ${hub.fails}:`, err && err.message ? err.message : err);
+      if (hub.fails >= OANDA_FAIL_LIMIT && !hub.down) {
+        hub.down = true;
+        oandaEmitKlineStatus(hub, 'disconnected');
+      }
+    }
+  } finally {
+    hub.running = false;
+    if (oandaHubs.get(hub.symbol) === hub) oandaSchedule(hub);
+  }
 }
 
 /**
- * Khởi động 1 vòng poll OANDA. KHÔNG poll ngay lần đầu (dữ liệu vừa được tải
- * bằng REST), chỉ bắt đầu sau `periodMs`. Tab ẩn -> bỏ qua nhịp.
+ * Đăng ký 1 luồng vào hub của symbol.
+ * onUpdate(changedBars, quote|null, allBars): gọi mỗi khi luồng đến hạn và có dữ liệu.
  */
-function startOandaLoop(paneId, key, symbol, interval, periodMs, onCandle) {
-  const entry = getOrCreateEntry(paneId);
-  clearOandaLoop(entry, key);
-
-  let busy = false;
-  const poll = async () => {
-    if (busy || document.visibilityState === 'hidden') return;
-    busy = true;
-    try {
-      const c = await oandaLastCandle(symbol, interval);
-      if (c) onCandle(c);
-    } catch (err) {
-      if (key === 'kline') EventBus.emit('ws:status', { paneId, status: 'disconnected' });
-    } finally {
-      busy = false;
-    }
-  };
-  entry.oanda[key] = setInterval(poll, periodMs);
+function oandaSubscribe(paneId, key, symbol, interval, periodMs, onUpdate) {
+  oandaUnsubscribe(paneId, key);
+  const hub = oandaGetHub(symbol);
+  const id = `${paneId}|${key}`;
+  hub.subs.set(id, {
+    id,
+    paneId,
+    key,
+    interval,
+    periodMs,
+    onUpdate,
+    seen: new Map(), // time -> chữ ký OHLCV (chỉ phát nến thay đổi)
+    statusSent: false,
+    nextAt: oandaNextGrid(Date.now()) + periodMs - OANDA_GRID_MS,
+  });
+  oandaSchedule(hub);
 }
 
-function clearOandaLoop(entry, key) {
-  if (entry.oanda && entry.oanda[key]) {
-    clearInterval(entry.oanda[key]);
-    delete entry.oanda[key];
-  }
+function oandaUnsubscribe(paneId, key) {
+  const id = `${paneId}|${key}`;
+  oandaHubs.forEach((hub, symbol) => {
+    if (hub.subs.delete(id) && hub.subs.size === 0) {
+      clearTimeout(hub.timer);
+      hub.timer = null;
+      oandaHubs.delete(symbol);
+    }
+  });
 }
 
 function connectOandaKlineStream(paneId, symbol, interval) {
-  startOandaLoop(paneId, 'kline', symbol, interval, 4000, (candle) => {
-    EventBus.emit('kline:update', { paneId, candle });
-    EventBus.emit('price:update', { paneId, price: candle.close, changePercent: undefined });
-    EventBus.emit('ws:status', { paneId, status: 'connected' });
+  EventBus.emit('ws:status', { paneId, status: 'connecting' });
+  oandaSubscribe(paneId, 'kline', symbol, interval, OANDA_PERIOD_KLINE, (changed, quote, all) => {
+    changed.forEach((candle) => EventBus.emit('kline:update', { paneId, candle }));
+
+    const last = all.length ? all[all.length - 1] : null;
+    const price = quote && Number.isFinite(quote.lastPrice) ? quote.lastPrice : last ? last.close : null;
+    if (price === null || price === undefined) return;
+    EventBus.emit('price:update', {
+      paneId,
+      price,
+      changePercent: quote && Number.isFinite(quote.changePercent) ? quote.changePercent : undefined,
+      bid: quote ? quote.bid : undefined,
+      ask: quote ? quote.ask : undefined,
+    });
   });
-  EventBus.emit('ws:status', { paneId, status: 'connected' });
 }
 
 function connectOandaHigherTF(paneId, symbol, interval) {
-  startOandaLoop(paneId, 'htf', symbol, interval, 10000, (candle) =>
-    EventBus.emit('kline:update:htf', { paneId, candle })
+  oandaSubscribe(paneId, 'htf', symbol, interval, OANDA_PERIOD_HTF_SL, (changed) =>
+    changed.forEach((candle) => EventBus.emit('kline:update:htf', { paneId, candle }))
   );
 }
 
 function connectOandaSLTF(paneId, symbol, interval) {
-  startOandaLoop(paneId, 'sl', symbol, interval, 10000, (candle) =>
-    EventBus.emit('kline:update:sl', { paneId, candle })
+  oandaSubscribe(paneId, 'sl', symbol, interval, OANDA_PERIOD_HTF_SL, (changed) =>
+    changed.forEach((candle) => EventBus.emit('kline:update:sl', { paneId, candle }))
   );
 }
+
+const OANDA_TREND_FAST = new Set(['1m', '3m', '5m', '15m', '30m']);
 
 function connectOandaTrendRef(paneId, role, symbol, interval) {
-  startOandaLoop(paneId, 'tr:' + role, symbol, interval, 15000, (candle) =>
-    EventBus.emit('kline:update:trendref', { paneId, role, candle })
+  const period = OANDA_TREND_FAST.has(interval) ? OANDA_PERIOD_TREND_FAST : OANDA_PERIOD_TREND_SLOW;
+  oandaSubscribe(paneId, 'tr:' + role, symbol, interval, period, (changed) =>
+    changed.forEach((candle) => EventBus.emit('kline:update:trendref', { paneId, role, candle }))
   );
 }
 
+/**
+ * Giá ban đầu của OANDA: lấy 1 lần (thử lại tối đa 3 lần). Sau đó giá + % do
+ * hub cập nhật qua quote trong /live (không còn poll ticker riêng).
+ */
 function connectOandaTickerStream(paneId, symbol) {
   const entry = getOrCreateEntry(paneId);
-  clearOandaLoop(entry, 'ticker');
+  const token = {};
+  entry.oandaTickerToken = token;
 
-  const poll = async () => {
-    if (document.visibilityState === 'hidden') return;
+  const attempt = async (n) => {
+    if (entry.oandaTickerToken !== token) return;
     try {
       const t = await fetch24hTicker(symbol);
+      if (entry.oandaTickerToken !== token) return;
       if (t && typeof t.lastPrice === 'number' && !Number.isNaN(t.lastPrice)) {
         EventBus.emit('price:update', {
           paneId,
@@ -363,21 +517,36 @@ function connectOandaTickerStream(paneId, symbol) {
         });
       }
     } catch (err) {
-      /* bỏ qua - nhịp sau thử lại */
+      if (n < 3) setTimeout(() => attempt(n + 1), 2500);
     }
   };
+  attempt(1);
+}
 
-  poll(); // giá hiển thị ngay (app.js không tải ticker riêng cho OANDA)
-  entry.oanda.ticker = setInterval(poll, 5000);
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      oandaHiddenAt = Date.now();
+      return;
+    }
+    const hiddenFor = oandaHiddenAt ? Date.now() - oandaHiddenAt : 0;
+    oandaHiddenAt = null;
+    if (hiddenFor > 5000) {
+      oandaHubs.forEach((hub) => {
+        if (hiddenFor > OANDA_CATCHUP_AFTER_HIDDEN_MS) hub.catchup = true;
+        oandaKick(hub);
+      });
+    }
+  });
 }
 
 /* ===================== TEARDOWN & SOCKET CLOSURES ===================== */
 
 function closeTrendRefKlineSocket(paneId, role) {
+  oandaUnsubscribe(paneId, 'tr:' + role);
   const entry = connections.get(paneId);
   if (!entry) return;
   clearTimeout(entry.trendRefReconnectTimers[role]);
-  clearOandaLoop(entry, 'tr:' + role);
   delete entry.meta.trendref[role];
   delete entry.lastMessageAt.trendref[role];
   delete entry.aggregators.trendref[role];
@@ -400,10 +569,10 @@ function closeAllTrendRefKlineSockets(paneId) {
 }
 
 function closeKlineSocket(paneId) {
+  oandaUnsubscribe(paneId, 'kline');
   const entry = connections.get(paneId);
   if (!entry) return;
   clearTimeout(entry.klineReconnectTimer);
-  clearOandaLoop(entry, 'kline');
   entry.meta.kline = null;
   entry.lastMessageAt.kline = null;
   entry.aggregators.kline = null;
@@ -418,10 +587,10 @@ function closeKlineSocket(paneId) {
 }
 
 function closeHigherTFKlineSocket(paneId) {
+  oandaUnsubscribe(paneId, 'htf');
   const entry = connections.get(paneId);
   if (!entry) return;
   clearTimeout(entry.htfReconnectTimer);
-  clearOandaLoop(entry, 'htf');
   entry.meta.htf = null;
   entry.lastMessageAt.htf = null;
   entry.aggregators.htf = null;
@@ -436,10 +605,10 @@ function closeHigherTFKlineSocket(paneId) {
 }
 
 function closeSLKlineSocket(paneId) {
+  oandaUnsubscribe(paneId, 'sl');
   const entry = connections.get(paneId);
   if (!entry) return;
   clearTimeout(entry.slReconnectTimer);
-  clearOandaLoop(entry, 'sl');
   entry.meta.sl = null;
   entry.lastMessageAt.sl = null;
   entry.aggregators.sl = null;
@@ -457,7 +626,7 @@ function closeTickerSocket(paneId) {
   const entry = connections.get(paneId);
   if (!entry) return;
   clearTimeout(entry.tickerReconnectTimer);
-  clearOandaLoop(entry, 'ticker');
+  entry.oandaTickerToken = null;
   entry.meta.ticker = null;
   entry.lastMessageAt.ticker = null;
 
@@ -470,11 +639,20 @@ function closeTickerSocket(paneId) {
   }
 }
 
-function closePaneSockets(paneId) {
+/**
+ * Đóng các luồng của CHART (kline, htf, sl, ticker) nhưng GIỮ trend tham khảo.
+ * Dùng khi đổi symbol/timeframe: trend tham khảo có đường tải lại riêng
+ * (đổi symbol) hoặc không cần đổi (chỉ đổi timeframe).
+ */
+function closePaneChartSockets(paneId) {
   closeKlineSocket(paneId);
   closeHigherTFKlineSocket(paneId);
   closeSLKlineSocket(paneId);
   closeTickerSocket(paneId);
+}
+
+function closePaneSockets(paneId) {
+  closePaneChartSockets(paneId);
   closeAllTrendRefKlineSockets(paneId);
   connections.delete(paneId);
 }

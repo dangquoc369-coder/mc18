@@ -153,7 +153,7 @@
     const instance = paneInstances[paneId];
     if (!instance || !Store.getPane(paneId)) return;
 
-    closePaneSockets(paneId);
+    closePaneChartSockets(paneId);
 
     // KHÔNG clearData() ngay: giữ chart cũ hiển thị trong lúc tải (cảm giác
     // nhanh hơn). clearData() được gọi ngay trước khi nạp dữ liệu mới.
@@ -299,17 +299,21 @@
     scheduleTrendRefLoad(paneId, 1500); // nhường băng thông cho chart chính trước
   }
 
-  async function loadTrendReferenceData(paneId, instance, symbol) {
+    async function loadTrendReferenceData(paneId, instance, symbol) {
     closeAllTrendRefKlineSockets(paneId);
     const roles = Object.keys(TrendReferenceModule.ROLE_INTERVAL);
+    const queue = roles.slice();
 
-    await Promise.all(
-      roles.map(async (role) => {
+    const worker = async () => {
+      while (queue.length) {
+        const role = queue.shift();
+        const pre = Store.getPane(paneId);
+        if (!pre || pre.symbol !== symbol) return; // đã đổi symbol giữa chừng
         const interval = TrendReferenceModule.ROLE_INTERVAL[role];
         try {
           const candles = await fetchKlines(symbol, interval, 80);
           const cur = Store.getPane(paneId);
-          if (!cur || cur.symbol !== symbol) return; // đã đổi symbol giữa chừng
+          if (!cur || cur.symbol !== symbol) return;
           instance.setCandles(role, candles);
         } catch (err) {
           console.error(`[${paneId}] Lỗi khi tải nến trend tham khảo (${role}):`, err);
@@ -318,8 +322,11 @@
         if (cur && cur.symbol === symbol) {
           connectTrendRefKlineStream(paneId, role, symbol, interval);
         }
-      })
-    );
+      }
+    };
+
+    // Tối đa 2 khung tải cùng lúc (tránh dồn 7 request OANDA một lượt)
+    await Promise.all([worker(), worker()]);
   }
 
   function onTrendRefKlineUpdate({ paneId, role, candle }) {

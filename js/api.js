@@ -3,13 +3,13 @@
  * Các lời gọi REST tới Binance (spot/futures) và OANDA (qua Worker -> TradingView).
  * Không đụng vào DOM / Store -> chỉ trả dữ liệu đã format sẵn.
  *
- * ĐỢT TỐI ƯU TỐC ĐỘ:
  *   - ĐÃ BỎ HOÀN TOÀN Yahoo.
  *   - fetchKlines(): cache 20s + chống gọi trùng (cùng key đang tải -> dùng chung Promise).
- *   - OANDA gọi THẲNG Worker (bỏ bước thử same-origin gây thừa 1 round-trip).
- *   - fetchOandaLive(): gộp nhiều khung của cùng 1 symbol vào 1 request
- *     (Worker chỉ mở 1 WebSocket TradingView cho tất cả) - dùng cho vòng poll
- *     realtime trong websocket.js.
+ *   - OANDA: mọi request tới Worker đều có TIMEOUT + tự thử lại 1 lần khi lỗi
+ *     mạng / 5xx / 429 (fetchWithRetry) -> 1 lần chớp lỗi không làm rớt kết nối.
+ *   - fetchOandaLiveMulti(): 1 request lấy vài nến cuối của NHIỀU khung + quote
+ *     (giá, %, bid/ask) trong "__quote". Dùng cho hub poll trong websocket.js.
+ *   - fetchOandaLive(): giữ lại cho code cũ (gộp nhiều lời gọi trong 400ms).
  *
  * Khung TỔNG HỢP (20m/45m/3h/2d) trên Binance: tải nến base rồi gộp bằng
  * aggregateCandles() (utils.js).
@@ -46,6 +46,35 @@ function getProviderFor(symbol) {
     return 'binance_futures';
   }
   return 'binance';
+}
+
+/* ===================== FETCH CÓ TIMEOUT + THỬ LẠI ===================== */
+
+/**
+ * fetch với timeout; thử lại khi lỗi mạng / timeout / 5xx / 429.
+ * Trả Response (ok) hoặc ném lỗi.
+ */
+async function fetchWithRetry(url, { timeoutMs = 12000, retries = 1, retryDelayMs = 700 } = {}) {
+  let lastErr = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { signal: ctrl.signal });
+      clearTimeout(to);
+      if (res.ok) return res;
+      lastErr = new Error(`HTTP ${res.status}`);
+      lastErr.status = res.status;
+      const retryable = res.status >= 500 || res.status === 429;
+      if (!retryable) throw lastErr;
+    } catch (err) {
+      clearTimeout(to);
+      lastErr = err;
+      if (err && err.status && !(err.status >= 500 || err.status === 429)) throw err;
+    }
+    if (attempt < retries) await new Promise((r) => setTimeout(r, retryDelayMs));
+  }
+  throw lastErr || new Error('fetch lỗi');
 }
 
 /**
@@ -110,9 +139,11 @@ async function fetchKlinesRaw(symbol, interval, limit, endTime) {
       `${WORKER_FALLBACK_URL}/api/oanda/klines?symbol=${encodeURIComponent(symbol)}` +
       `&interval=${encodeURIComponent(interval)}&limit=${limit}`;
     if (endTime) url += `&endTime=${endTime}`;
-    const res = await fetch(url).catch(() => null);
-    if (!res || !res.ok) {
-      throw new Error(`fetchKlines OANDA lỗi: ${res ? res.status : 'network error'}`);
+    let res;
+    try {
+      res = await fetchWithRetry(url, { timeoutMs: 25000, retries: 1, retryDelayMs: 1000 });
+    } catch (err) {
+      throw new Error(`fetchKlines OANDA lỗi: ${err && err.message ? err.message : 'network error'}`);
     }
     return await res.json();
   }
@@ -145,15 +176,30 @@ async function fetchKlinesRaw(symbol, interval, limit, endTime) {
   }));
 }
 
-/* ===================== OANDA LIVE (GỘP NHIỀU KHUNG / 1 REQUEST) ===================== */
+/* ===================== OANDA LIVE ===================== */
+
+/**
+ * 1 request -> vài nến cuối của NHIỀU khung + quote.
+ * Kết quả: { '15m': [bars], '1h': [bars], ..., __quote: {lastPrice, changePercent, bid, ask, ...} }
+ * Mọi khung (kể cả 3h/6h/12h/2d/3d) đều được Worker hỗ trợ.
+ * @param {number} n số nến cuối mỗi khung (mặc định 3; catch-up có thể xin tới 100)
+ */
+async function fetchOandaLiveMulti(symbol, intervals, n = 3) {
+  const list = [...new Set(intervals)].filter(Boolean);
+  if (list.length === 0) return {};
+  let url =
+    `${WORKER_FALLBACK_URL}/api/oanda/live?symbol=${encodeURIComponent(symbol)}` +
+    `&intervals=${encodeURIComponent(list.join(','))}`;
+  if (n > 3) url += `&n=${Math.min(100, Math.floor(n))}`;
+  const res = await fetchWithRetry(url, { timeoutMs: 12000, retries: 1, retryDelayMs: 700 });
+  return await res.json();
+}
 
 const LIVE_BATCH = new Map(); // symbol -> { intervals:Set, waiters:[], timer }
 
 /**
- * Lấy vài nến cuối của 1 khung OANDA. Mọi lời gọi cùng symbol trong cửa sổ
- * 400ms được gộp thành 1 request /api/oanda/live (Worker mở 1 WebSocket
- * TradingView duy nhất cho tất cả các khung).
- * CHỈ dùng cho khung native của TradingView (không dùng cho 20m/45m/3h/6h/8h/12h/2d/3d).
+ * (Giữ cho code cũ) Lấy vài nến cuối của 1 khung OANDA. Mọi lời gọi cùng
+ * symbol trong cửa sổ 400ms được gộp thành 1 request.
  * @returns {Promise<Array>} mảng nến (tăng dần theo time)
  */
 function fetchOandaLive(symbol, interval) {
@@ -166,12 +212,7 @@ function fetchOandaLive(symbol, interval) {
       b.timer = setTimeout(async () => {
         LIVE_BATCH.delete(symbol);
         try {
-          const res = await fetch(
-            `${WORKER_FALLBACK_URL}/api/oanda/live?symbol=${encodeURIComponent(symbol)}` +
-              `&intervals=${[...b.intervals].join(',')}`
-          );
-          if (!res.ok) throw new Error('live ' + res.status);
-          const data = await res.json();
+          const data = await fetchOandaLiveMulti(symbol, [...b.intervals]);
           b.waiters.forEach((w) => w.resolve(data[w.interval] || []));
         } catch (err) {
           b.waiters.forEach((w) => w.reject(err));
@@ -185,15 +226,19 @@ function fetchOandaLive(symbol, interval) {
 
 /* ===================== TICKER / DANH SÁCH SYMBOL ===================== */
 
-/** Giá 24h hiện tại (hiển thị giá ban đầu / poll ticker OANDA). */
+/** Giá 24h hiện tại (hiển thị giá ban đầu). */
 async function fetch24hTicker(symbol) {
   const provider = getProviderFor(symbol);
 
   if (provider === 'oanda') {
-    const res = await fetch(`${WORKER_FALLBACK_URL}/api/oanda/ticker?symbol=${encodeURIComponent(symbol)}`).catch(
-      () => null
-    );
-    if (!res || !res.ok) {
+    let res;
+    try {
+      res = await fetchWithRetry(`${WORKER_FALLBACK_URL}/api/oanda/ticker?symbol=${encodeURIComponent(symbol)}`, {
+        timeoutMs: 10000,
+        retries: 1,
+        retryDelayMs: 800,
+      });
+    } catch (err) {
       throw new Error('fetch24hTicker OANDA lỗi');
     }
     const data = await res.json();
