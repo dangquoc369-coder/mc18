@@ -70,6 +70,49 @@ const UI = (function () {
     },
   ];
 
+    let lastMagnetOn = 'weak'; // chế độ nam châm "bật" gần nhất (để nút bấm bật lại đúng chế độ)
+
+  function getMagnetMode() {
+    return typeof DrawingModule !== 'undefined' && DrawingModule.getMagnetMode ? DrawingModule.getMagnetMode() : 'off';
+  }
+
+  function setMagnetMode(mode) {
+    if (typeof DrawingModule === 'undefined' || !DrawingModule.setMagnetMode) return;
+    if (mode !== 'off') lastMagnetOn = mode;
+    DrawingModule.setMagnetMode(mode);
+  }
+
+  // Menu chọn Yếu / Mạnh / Tắt (dùng lại cơ chế đóng khi bấm ra ngoài của flyout)
+  function toggleMagnetMenu(anchorBtn) {
+    if (flyoutEl) { hideFlyout(); return; }
+    flyoutEl = document.createElement('div');
+    flyoutEl.className = 'draw-flyout magnet-menu';
+    flyoutAnchor = anchorBtn;
+
+    const cur = getMagnetMode();
+    [
+      ['weak', 'Nam châm yếu', 'Hít khi con trỏ ở gần O/H/L/C'],
+      ['strong', 'Nam châm mạnh', 'Luôn hít vào O/H/L/C gần nhất'],
+      ['off', 'Tắt nam châm', 'Vẽ tự do'],
+    ].forEach(([mode, label, tip]) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'draw-flyout-item' + (cur === mode ? ' active' : '');
+      b.title = tip;
+      b.innerHTML = `<span class="dfi-icon">${Icons.magnet}</span><span class="dfi-label">${label}</span>`;
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        hideFlyout();
+        setMagnetMode(mode);
+      });
+      flyoutEl.appendChild(b);
+    });
+
+    document.body.appendChild(flyoutEl);
+    positionFlyout(flyoutEl, anchorBtn);
+    setTimeout(() => document.addEventListener('click', onDocClickCloseFlyout, true), 0);
+  }
+
   let lastDrawShapeTool = 'trendline'; // nhớ công cụ vẽ hình gần nhất để hiện icon trên nút combo
   let flyoutEl = null;
   let flyoutAnchor = null; // nút mũi tên đã mở bảng
@@ -85,6 +128,10 @@ const UI = (function () {
 .draw-flyout-reset{flex-shrink:0;background:transparent;border:1px solid var(--border-color,rgba(255,255,255,.2));color:var(--text-primary,#fff);border-radius:8px;padding:6px 10px;font-size:11.5px;cursor:pointer}
 .draw-flyout-reset:disabled{opacity:.4;cursor:default}
 @media (hover:hover){.draw-flyout-reset:not(:disabled):hover{background:var(--bg-hover,rgba(255,255,255,.08))}}
+.draw-tool-btn.magnet-strong{position:relative}
+.draw-tool-btn.magnet-strong::after{content:'';position:absolute;right:3px;top:3px;width:6px;height:6px;border-radius:50%;background:var(--accent-blue,#2962ff);pointer-events:none}
+.draw-flyout.magnet-menu{min-width:190px;display:flex;flex-direction:column;gap:4px;padding:8px}
+.draw-flyout.magnet-menu .draw-flyout-item{flex-direction:row;justify-content:flex-start;width:100%}
 `;
 
   function ensureUiStyles() {
@@ -537,6 +584,40 @@ const UI = (function () {
     combo.appendChild(caretBtn);
     groupEl.appendChild(combo);
 
+        // 2b. Nam châm: bấm = bật/tắt, mũi tên = chọn Yếu / Mạnh
+    const magMode = getMagnetMode();
+    if (magMode !== 'off') lastMagnetOn = magMode;
+    const magCombo = document.createElement('div');
+    magCombo.className = 'draw-tool-combo';
+
+    const magBtn = makeToolbarBtn(
+      'magnet',
+      magMode === 'off'
+        ? 'Nam châm: đang tắt (giữ Ctrl để bật tạm)'
+        : magMode === 'weak'
+          ? 'Nam châm yếu: bấm để tắt'
+          : 'Nam châm mạnh: bấm để tắt',
+      magMode !== 'off',
+      () => setMagnetMode(getMagnetMode() === 'off' ? lastMagnetOn : 'off'),
+      true
+    );
+    magBtn.classList.add('draw-tool-combo-main');
+    if (magMode === 'strong') magBtn.classList.add('magnet-strong');
+
+    const magCaret = document.createElement('button');
+    magCaret.type = 'button';
+    magCaret.className = 'draw-tool-btn draw-tool-combo-caret';
+    magCaret.innerHTML = iconHTML('chevronDown');
+    magCaret.title = 'Chọn kiểu nam châm';
+    magCaret.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleMagnetMenu(magCaret);
+    });
+
+    magCombo.appendChild(magBtn);
+    magCombo.appendChild(magCaret);
+    groupEl.appendChild(magCombo);
+
     // 3. Cảnh báo giá
     groupEl.appendChild(makeToolbarBtn('bell', 'Đặt cảnh báo giá (click lên chart)', activeTool === 'alert', () => selectDrawTool('alert'), true));
 
@@ -710,6 +791,7 @@ const UI = (function () {
 
     // Kho style nhớ thay đổi (drawing.js phát) -> cập nhật chấm màu trên nút combo
     window.addEventListener('drawing:styleChanged', () => renderSharedDrawGroup());
+        window.addEventListener('drawing:magnetChanged', () => renderSharedDrawGroup());
   }
 
   return { init, renderSharedDrawGroup, renderSharedTimeframeGroup };

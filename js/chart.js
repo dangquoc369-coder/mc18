@@ -566,16 +566,19 @@ const ChartModule = (function () {
       EventBus.on('alerts:changed', renderAlertLines);
       EventBus.on('theme:changed', handleThemeChanged);
 
-      drawing = DrawingModule.create(paneId, chart, candleSeries, container, {
-        onAlertRequested: (price) => {
-          const pane = Store.getPane(paneId);
-          if (!pane) return;
-          AlertsModule.addPriceAlert(pane.symbol, price);
-        },
-        onToolChanged: () => {
-          EventBus.emit('pane:drawToolChanged', { paneId });
-        },
-      });
+  drawing = DrawingModule.create(paneId, chart, candleSeries, container, {
+  getCandles: () => currentCandles,
+
+  onAlertRequested: (price) => {
+    const pane = Store.getPane(paneId);
+    if (!pane) return;
+    AlertsModule.addPriceAlert(pane.symbol, price);
+  },
+
+  onToolChanged: () => {
+    EventBus.emit('pane:drawToolChanged', { paneId });
+  },
+});
 
       // Nạp hình vẽ đã lưu của symbol hiện tại + theo dõi các lần đổi symbol sau.
       const initPane = Store.getPane(paneId);

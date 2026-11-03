@@ -42,6 +42,7 @@ Object.assign(Icons, {
   ruler: `<svg ${_S}><path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/></svg>`,
 
   // --- Công cụ vẽ (đầu mút rỗng, kiểu TradingView) ---
+  magnet: `<svg ${_S}><path d="M6 15V5h4v10a2 2 0 0 0 4 0V5h4v10a6 6 0 0 1-12 0z"/><path d="M6 9h4M14 9h4"/></svg>`,
   cursor: `<svg ${_S}><path d="M5 4l5.4 15 2.3-6.3L19 10.4z"/></svg>`,
   trendline: `<svg ${_S}><circle cx="5" cy="19" r="2"/><circle cx="19" cy="5" r="2"/><path d="M6.4 17.6L17.6 6.4"/></svg>`,
   ray: `<svg ${_S}><circle cx="5" cy="19" r="2"/><path d="M6.4 17.6L20 4M15 4h5v5"/></svg>`,

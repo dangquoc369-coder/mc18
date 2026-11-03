@@ -637,7 +637,7 @@ button .icon-svg-inline,
   overflow: hidden;
   display: grid;
   background: var(--border-color);
-  padding: 2px;
+  padding: 1px;
 }
 
 .grid-splitter {

@@ -241,9 +241,31 @@ function ensureStyles() {
     else toolStyles = {};
     saveToolStyles();
   }
+  
+    // ===================== NAM CHÂM (MAGNET) - DÙNG CHUNG 4 PANE =====================
+  const MAGNET_KEY = 'drawing_magnet_mode';       // 'off' | 'weak' | 'strong'
+  const MAGNET_WEAK_PX = 24;                      // yếu: chỉ hít khi cách O/H/L/C <= 24px
+  let magnetMode = null;
+
+  function getMagnetMode() {
+    if (magnetMode === null) {
+      const saved = hasLocalStore() ? LocalStore.read(MAGNET_KEY, 'off') : 'off';
+      magnetMode = ['off', 'weak', 'strong'].includes(saved) ? saved : 'off';
+    }
+    return magnetMode;
+  }
+
+  function setMagnetMode(mode) {
+    if (!['off', 'weak', 'strong'].includes(mode)) return;
+    magnetMode = mode;
+    if (hasLocalStore()) LocalStore.write(MAGNET_KEY, mode);
+    try {
+      window.dispatchEvent(new CustomEvent('drawing:magnetChanged', { detail: { mode } }));
+    } catch (e) { /* bỏ qua */ }
+  }
 
   function create(paneId, chart, candleSeries, container, options = {}) {
-    const { onAlertRequested, onToolChanged, timeframes, getTimeframe } = options;
+    const { onAlertRequested, onToolChanged, timeframes, getTimeframe, getCandles } = options;
     ensureStyles();
 
     let currentTool = 'cursor';
@@ -311,28 +333,80 @@ function ensureStyles() {
       redraw();
     }
 
-    // ===================== CHUYỂN ĐỔI TỌA ĐỘ (hỗ trợ vùng tương lai) =====================
-    function pointToX(p) {
-      if (!p) return null;
-      const timeScale = chart.timeScale();
-      if (p.logicalIndex !== undefined && p.logicalIndex !== null) {
-        return timeScale.logicalToCoordinate(p.logicalIndex);
-      }
-      if (p.time !== undefined && p.time !== null) {
-        const x = timeScale.timeToCoordinate(p.time);
-        if (x !== null) return x;
-      }
-      return null;
-    }
+    function candleList() {
+  const c = typeof getCandles === 'function' ? getCandles() : null;
+  return Array.isArray(c) ? c : [];
+}
+
+// Độ rộng 1 nến = chênh lệch nhỏ nhất giữa các nến gần đầu/cuối (tránh bị lệch bởi khoảng nghỉ cuối tuần)
+function barInterval(c, atEnd) {
+  const n = c.length;
+  if (n < 2) return 60;
+  const from = atEnd ? Math.max(1, n - 10) : 1;
+  const to = atEnd ? n - 1 : Math.min(n - 1, 10);
+  let m = Infinity;
+  for (let i = from; i <= to; i++) {
+    const d = c[i].time - c[i - 1].time;
+    if (d > 0 && d < m) m = d;
+  }
+  return Number.isFinite(m) ? m : 60;
+}
+
+// Thời gian -> vị trí nến NGUYÊN (nến chứa mốc thời gian đó), giống TradingView
+function timeToLogical(t) {
+  const c = candleList();
+  const n = c.length;
+  if (!n || typeof t !== 'number' || Number.isNaN(t)) return null;
+  if (t >= c[n - 1].time) {
+    return n - 1 + Math.floor((t - c[n - 1].time) / barInterval(c, true) + 1e-6);
+  }
+  if (t < c[0].time) {
+    return Math.floor((t - c[0].time) / barInterval(c, false) + 1e-6);
+  }
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (c[mid].time <= t) lo = mid; else hi = mid;
+  }
+  return c[hi].time <= t ? hi : lo;
+}
+
+// Vị trí nến -> thời gian MỞ của nến đó (vùng tương lai/quá khứ: ngoại suy theo độ rộng nến)
+function logicalToTime(l) {
+  const c = candleList();
+  const n = c.length;
+  if (!n || typeof l !== 'number' || Number.isNaN(l)) return null;
+  const r = Math.round(l);
+  if (r > n - 1) return c[n - 1].time + (r - (n - 1)) * barInterval(c, true);
+  if (r < 0) return c[0].time + r * barInterval(c, false);
+  return c[r].time;
+}
+
+function pointToX(p) {
+  if (!p) return null;
+  let t = p.time;
+  // Hình cũ chỉ có logicalIndex: đổi sang time 1 lần
+  if ((t === undefined || t === null) && p.logicalIndex !== undefined && p.logicalIndex !== null) {
+    const conv = logicalToTime(p.logicalIndex);
+    if (conv === null) return null;
+    p.time = conv;
+    delete p.logicalIndex;
+    t = conv;
+  }
+  if (t === undefined || t === null) return null;
+  const l = timeToLogical(t);
+  return l === null ? null : chart.timeScale().logicalToCoordinate(l);
+}
+
+function xToPointInfo(x) {
+  const l = chart.timeScale().coordinateToLogical(x);
+  return { time: l === null || l === undefined ? null : logicalToTime(l) };
+}
 
     function priceToY(price) {
       return candleSeries.priceToCoordinate(price);
     }
 
-    function xToPointInfo(x) {
-      const timeScale = chart.timeScale();
-      return { logicalIndex: timeScale.coordinateToLogical(x), time: timeScale.coordinateToTime(x) };
-    }
 
     function yToPrice(y) {
       return candleSeries.coordinateToPrice(y);
@@ -940,6 +1014,16 @@ function ensureStyles() {
       ctx.strokeStyle = 'rgba(120, 123, 134, 0.65)';
       ctx.lineWidth = 1;
       ctx.setLineDash([3, 3]);
+      
+            if (hoverPoint.snapped) {
+        ctx.beginPath();
+        ctx.arc(x, y, 5, 0, 2 * Math.PI);
+        ctx.fillStyle = 'rgba(41, 98, 255, 0.25)';
+        ctx.fill();
+        ctx.strokeStyle = '#2962ff';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
 
       ctx.beginPath();
       ctx.moveTo(0, y);
@@ -1012,11 +1096,61 @@ function ensureStyles() {
       ctx.restore();
     }
 
-    function pointFromEvent(e) {
-      const { x, y } = getScreenXY(e);
+        // Giữ Ctrl/⌘ = đảo trạng thái nam châm tạm thời (tắt -> yếu, bật -> tắt)
+    function effectiveMagnet(e) {
+      const m = getMagnetMode();
+      if (e && (e.ctrlKey || e.metaKey)) return m === 'off' ? 'weak' : 'off';
+      return m;
+    }
+
+    // Tìm giá O/H/L/C gần con trỏ nhất của cây nến đang trỏ tới
+    function snapToOHLC(x, y, mode) {
+      const c = candleList();
+      const n = c.length;
+      if (!n) return null;
+      const lg = chart.timeScale().coordinateToLogical(x);
+      if (lg === null || lg === undefined) return null;
+      const i = Math.round(lg);
+      if (i < 0 || i > n - 1) return null;          // vùng tương lai/quá khứ: không có nến để hít
+      const k = c[i];
+      let best = null, bestD = Infinity;
+      [k.open, k.high, k.low, k.close].forEach((p) => {
+        const py = priceToY(p);
+        if (py === null || py === undefined) return;
+        const dd = Math.abs(py - y);
+        if (dd < bestD) { bestD = dd; best = p; }
+      });
+      if (best === null) return null;
+      if (mode === 'weak' && bestD > MAGNET_WEAK_PX) return null;
+      return { price: best };
+    }
+
+    // Từ toạ độ màn hình -> toạ độ/giá sau khi áp nam châm
+    function resolveMagnet(x, y, mode) {
+      const out = { x, y, price: yToPrice(y), snapped: false };
+      if (mode === 'off') return out;
+      // Trục thời gian: luôn dính vào giữa nến
       const info = xToPointInfo(x);
-      const price = yToPrice(y);
-      return { logicalIndex: info.logicalIndex, time: info.time, price: price };
+      if (info.time !== null && info.time !== undefined) {
+        const px = pointToX({ time: info.time });
+        if (px !== null && px !== undefined) out.x = px;
+      }
+      // Trục giá: hít vào O/H/L/C
+      const m = snapToOHLC(x, y, mode);
+      if (m) {
+        out.price = m.price;
+        const py = priceToY(m.price);
+        if (py !== null && py !== undefined) out.y = py;
+        out.snapped = true;
+      }
+      return out;
+    }
+
+    function pointFromEvent(e, useMagnet) {
+      const { x, y } = getScreenXY(e);
+      const r = resolveMagnet(x, y, useMagnet ? effectiveMagnet(e) : 'off');
+      const info = xToPointInfo(r.x);
+      return { logicalIndex: info.logicalIndex, time: info.time, price: r.price };
     }
 
     function distToSegment(xp, yp, x1, y1, x2, y2) {
@@ -1490,7 +1624,8 @@ function ensureStyles() {
         .map((a) => {
           const target = a.key === 'self' ? d : d[a.key];
           if (!target) return '';
-          const bar = target.logicalIndex !== undefined && target.logicalIndex !== null ? Math.round(target.logicalIndex * 100) / 100 : '';
+          const lg = target.time !== undefined && target.time !== null ? timeToLogical(target.time) : null;
+const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
           return `
           <div class="dtv-modal-row">
             <span>${a.label}</span>
@@ -1680,7 +1815,14 @@ function ensureStyles() {
           const v = parseFloat(input.value);
           if (!Number.isFinite(v)) return;
           const target = input.dataset.key === 'self' ? d : d[input.dataset.key];
-          if (target) target[input.dataset.field] = v;
+          if (target) {
+  if (input.dataset.field === 'logicalIndex') {
+    target.time = logicalToTime(v);
+    delete target.logicalIndex;
+  } else {
+    target[input.dataset.field] = v;
+  }
+}
         });
         const rrInput = q('#coordRR');
         if (rrInput) {
@@ -1766,12 +1908,15 @@ function ensureStyles() {
     const clampNum = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
     function touchPoint() {
-      const info = xToPointInfo(touchCursor.x);
-      return { logicalIndex: info.logicalIndex, time: info.time, price: yToPrice(touchCursor.y) };
+      const r = resolveMagnet(touchCursor.x, touchCursor.y, getMagnetMode());
+      const info = xToPointInfo(r.x);
+      return { logicalIndex: info.logicalIndex, time: info.time, price: r.price };
     }
 
     function syncTouchHover() {
-      if (touchCursor) hoverPoint = { x: touchCursor.x, y: touchCursor.y, price: yToPrice(touchCursor.y) };
+      if (!touchCursor) return;
+      const r = resolveMagnet(touchCursor.x, touchCursor.y, getMagnetMode());
+      hoverPoint = { x: r.x, y: r.y, price: r.price, snapped: r.snapped };
     }
 
     function resetTouchDrawing() {
@@ -1890,7 +2035,7 @@ function ensureStyles() {
     function onPointerDown(e) {
       if (isTouchDrawing(e)) { touchDown(e); return; }      // <-- THÊM
       if (pendingThirdPoint) {
-        const pt = pointFromEvent(e);
+        const pt = pointFromEvent(e, true);
         if (pt.price !== null && pt.price !== undefined) {
           drawings.push({ ...pendingThirdPoint, p3: pt });
           pendingThirdPoint = null;
@@ -1901,7 +2046,7 @@ function ensureStyles() {
         return;
       }
 
-      const pt = pointFromEvent(e);
+      const pt = pointFromEvent(e, currentTool !== 'cursor' && currentTool !== 'eraser');
 
       if (currentTool === 'cursor') {
         const handleName = findHandleAt(pt);
@@ -2007,9 +2152,11 @@ function ensureStyles() {
 
     function handlePointerMove(e) {
       if (isTouchDrawing(e)) { touchMove(e); return; }      // <-- THÊM
+      const wantMagnet = (currentTool !== 'cursor' && currentTool !== 'eraser') || isDraggingHandle;
       const { x, y } = getScreenXY(e);
-      const pt = pointFromEvent(e);
-      hoverPoint = { x, y, price: pt.price };
+      const r = resolveMagnet(x, y, wantMagnet ? effectiveMagnet(e) : 'off');
+      const pt = pointFromEvent(e, wantMagnet);
+      hoverPoint = { x: r.x, y: r.y, price: r.price, snapped: r.snapped };
 
       if (e.pointerType === 'touch' && currentTool !== 'cursor') {
         const rect = canvas.getBoundingClientRect();
@@ -2129,7 +2276,7 @@ function ensureStyles() {
 
       if (pendingTouchPlacement) {
         const tool = pendingTouchPlacement;
-        const pt = pointFromEvent(e);
+        const pt = pointFromEvent(e, true);
         pendingTouchPlacement = null;
         previewDrawing = null;
 
@@ -2178,7 +2325,7 @@ function ensureStyles() {
         return;
       }
 
-      const pt = pointFromEvent(e);
+      const pt = pointFromEvent(e, true);
       let shapeCreated = false;
 
       if (TWO_ANCHOR_TOOLS.includes(currentTool)) {
@@ -2430,16 +2577,35 @@ function ensureStyles() {
     }
 
     return {
-      setTool,
-      clearAll,
-      redraw,
-      getTool: () => currentTool,
-      isAwaitingThirdPoint: () => !!pendingThirdPoint,
-      setAllHidden,
-      getAllHidden,
-      loadForSymbol,
-      flushSave,
+  setTool,
+  clearAll,
+  redraw,
+  getTool: () => currentTool,
+  isAwaitingThirdPoint: () => !!pendingThirdPoint,
+  setAllHidden,
+  getAllHidden,
+  loadForSymbol,
+  flushSave,
+
+  getOldestTime() {
+    let m = Infinity;
+    const take = (p) => {
+      if (p && typeof p.time === 'number' && p.time < m) {
+        m = p.time;
+      }
     };
+
+    drawings.forEach((d) => {
+      take(d);
+      take(d.p);
+      take(d.p1);
+      take(d.p2);
+      take(d.p3);
+    });
+
+    return m;
+  },
+};
   }
 
   function formatPrice(v) {
@@ -2447,9 +2613,11 @@ function ensureStyles() {
     return Number(v).toLocaleString('en-US', { maximumFractionDigits: 6 });
   }
 
-  return {
+    return {
     create,
     getToolStyle: styleOf,
     resetToolStyles,
+    getMagnetMode,
+    setMagnetMode,
   };
 })();

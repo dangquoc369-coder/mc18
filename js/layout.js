@@ -35,15 +35,15 @@
  */
 
 const LayoutModule = (function () {
-  const SPLITTER_SIZE = 6; // px
+  const SPLITTER_SIZE = 2; // px
 
   const DEFAULT_RATIOS = {
-    '2-landscape': { a: 0.5 },
-    '2-portrait': { a: 0.5 },
-    '3-landscape': { col: 0.42, row: 0.5 },
-    '3-portrait': { r1: 0.34, r2: 0.67 },
-    '4-landscape': { col: 0.5, row: 0.5 },
-  };
+  '2-landscape': { a: 0.5 },
+  '2-portrait': { a: 0.5 },
+  '3-landscape': { col: 0.5, row: 0.5 },
+  '3-portrait': { r1: 1 / 3, r2: 2 / 3 },
+  '4-landscape': { col: 0.5, row: 0.5 },
+};
 
   function clamp(v, min, max) {
     return Math.max(min, Math.min(max, v));
@@ -160,6 +160,7 @@ const LayoutModule = (function () {
   }
 
   let splitterEls = {};
+  let lastLayout = null;
 
   function clearSplitters(chartArea) {
     Object.values(splitterEls).forEach((el) => el.remove());
@@ -175,6 +176,12 @@ const LayoutModule = (function () {
     if (!chartArea) return;
 
     const visible = Store.getVisiblePaneIds();
+    // Đổi số ô -> đặt lại tỉ lệ về mức cân đối (lần vẽ đầu tiên giữ nguyên tỉ lệ đã lưu)
+if (lastLayout !== null && lastLayout !== layout) {
+  const def = DEFAULT_RATIOS[`${layout}-${orientation}`];
+  if (def) saveRatios(layout, orientation, { ...def });
+}
+lastLayout = layout;
     const ratios = getRatios(layout, orientation);
     const structure = computeStructure(layout, orientation, ratios);
 
