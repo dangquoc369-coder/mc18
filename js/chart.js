@@ -50,6 +50,10 @@ const ChartModule = (function () {
   };
 
   const MAX_EMA_LINES = 10;
+  // >1 = nhạy hơn. 1 = như mặc định, 1.8-2.5 là hợp với mobile
+  const PINCH_ZOOM_GAIN = 2.0;
+  const MAX_BAR_SPACING = 60;
+  const MIN_BAR_SPACING = 0.5;
   const EMA_SOURCES = ['close', 'open', 'high', 'low'];
 
   // ===== RSI BY NĐQ: các phần vẽ thêm lên pane RSI (giống chỉ báo trên TradingView) =====
@@ -482,20 +486,37 @@ const ChartModule = (function () {
       const initialColors = CHART_THEME[initialTheme] || CHART_THEME.dark;
 
       chart = LightweightCharts.createChart(container, {
-        autoSize: true, // để thư viện tự resize theo container
-        layout: {
-          background: { type: 'solid', color: initialColors.background },
-          textColor: initialColors.text,
-          panes: { separatorColor: initialColors.border },
-        },
-        grid: {
-          vertLines: { color: initialColors.grid },
-          horzLines: { color: initialColors.grid },
-        },
-        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-        rightPriceScale: { borderColor: initialColors.border },
-        timeScale: { borderColor: initialColors.border, timeVisible: true, secondsVisible: false },
-      });
+  autoSize: true, // để thư viện tự resize theo container
+
+  handleScale: {
+    pinch: false, // Tắt zoom bằng thao tác chụm/mở 2 ngón tay
+  },
+
+  layout: {
+    background: { type: 'solid', color: initialColors.background },
+    textColor: initialColors.text,
+    panes: { separatorColor: initialColors.border },
+  },
+
+  grid: {
+    vertLines: { color: initialColors.grid },
+    horzLines: { color: initialColors.grid },
+  },
+
+  crosshair: {
+    mode: LightweightCharts.CrosshairMode.Normal
+  },
+
+  rightPriceScale: {
+    borderColor: initialColors.border
+  },
+
+  timeScale: {
+    borderColor: initialColors.border,
+    timeVisible: true,
+    secondsVisible: false
+  },
+});
 
              candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
         upColor: CANDLE_UP,
@@ -530,6 +551,7 @@ const ChartModule = (function () {
       syncEmaSeries();
 
       updatePaneStretchFactors();
+      setupPinchZoom(container);
 
       setupResize(container);
 
@@ -577,6 +599,69 @@ const ChartModule = (function () {
       lastHeight = height;
       chart.resize(width, height);
     }
+    
+    let pinchCleanup = null;
+
+function setupPinchZoom(container) {
+  if (pinchCleanup) pinchCleanup();
+
+  let startDist = 0;
+  let startSpacing = 0;
+  let anchorLogical = null;
+  let anchorX = 0;
+
+  const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+
+  function onStart(e) {
+    if (e.touches.length !== 2 || !chart) {
+      startDist = 0;
+      return;
+    }
+    const ts = chart.timeScale();
+    const rect = container.getBoundingClientRect();
+    startDist = dist(e.touches);
+    startSpacing = ts.options().barSpacing;
+    // Điểm giữa 2 ngón = điểm neo, zoom quanh điểm này
+    anchorX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+    anchorLogical = ts.coordinateToLogical(anchorX);
+  }
+
+  function onMove(e) {
+    if (e.touches.length !== 2 || !startDist || !chart || anchorLogical === null) return;
+    e.preventDefault();
+
+    const ts = chart.timeScale();
+    const ratio = dist(e.touches) / startDist;
+    const spacing = Math.min(
+      MAX_BAR_SPACING,
+      Math.max(MIN_BAR_SPACING, startSpacing * Math.pow(ratio, PINCH_ZOOM_GAIN))
+    );
+    ts.applyOptions({ barSpacing: spacing });
+
+    // Giữ nến dưới điểm neo đứng yên: tính lại rightOffset
+    const lastIndex = currentCandles.length - 1;
+    const W = ts.width();
+    const rightOffset = (W - anchorX) / spacing - 0.5 - (lastIndex - anchorLogical);
+    ts.scrollToPosition(rightOffset, false);
+  }
+
+  function onEnd(e) {
+    if (e.touches.length < 2) startDist = 0;
+  }
+
+  container.addEventListener('touchstart', onStart, { passive: true });
+  container.addEventListener('touchmove', onMove, { passive: false });
+  container.addEventListener('touchend', onEnd, { passive: true });
+  container.addEventListener('touchcancel', onEnd, { passive: true });
+
+  pinchCleanup = () => {
+    container.removeEventListener('touchstart', onStart);
+    container.removeEventListener('touchmove', onMove);
+    container.removeEventListener('touchend', onEnd);
+    container.removeEventListener('touchcancel', onEnd);
+    pinchCleanup = null;
+  };
+}
 
     function setupResize(container) {
       if (resizeObserver) resizeObserver.disconnect();
@@ -1386,6 +1471,7 @@ const ChartModule = (function () {
         clearTimeout(recomputeRafId);
         recomputeRafId = null;
       }
+      if (pinchCleanup) pinchCleanup();
       if (chart) chart.remove();
       chart = null;
       emaSeriesMap.clear();
