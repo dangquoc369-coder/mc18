@@ -81,6 +81,7 @@ const IndicatorLegend = (function () {
     container.appendChild(buildRSIGroupChip(paneId, instance, RSI_CLASSIC));
     container.appendChild(buildRSIGroupChip(paneId, instance, RSI_NDQ));
     container.appendChild(buildMACDGroupChip(paneId, instance));
+    container.appendChild(buildIchimokuChip(paneId, instance));
 
     container.appendChild(buildSimpleToggleChip('#787b86', 'Volume', instance.getVolumeVisible(), (next) => {
       instance.setVolumeVisible(next);
@@ -1444,6 +1445,47 @@ const IndicatorLegend = (function () {
   }
 
   document.addEventListener('click', closeAnyOpenPopover);
+
+    // --- ICHIMOKU CHIP ---
+  // Bấm chấm/tên = bật/tắt. Bấm ⚙ = mở hộp thoại cài đặt 3 tab (ichimoku-ui.js).
+  function buildIchimokuChip(paneId, instance) {
+    const ich = instance.getIndicatorConfig().ichimoku;
+
+    const chip = document.createElement('div');
+    chip.className = 'indicator-chip' + (ich.enabled ? '' : ' disabled');
+
+    const dot = document.createElement('span');
+    dot.className = 'indicator-dot';
+    dot.style.background = ich.lines.conv.color;
+
+    const name = document.createElement('span');
+    name.className = 'indicator-name';
+    name.textContent = `Ichimoku ${ich.conversion},${ich.base},${ich.spanB},${ich.lagging}`;
+
+    const gear = document.createElement('span');
+    gear.className = 'indicator-gear';
+    gear.title = 'Cài đặt Ichimoku';
+    gear.textContent = '⚙';
+
+    function toggle(e) {
+      e.stopPropagation();
+      instance.setIchimoku({ enabled: !ich.enabled });
+      render(paneId, instance);
+    }
+
+    dot.addEventListener('click', toggle);
+    name.addEventListener('click', toggle);
+    gear.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeAnyOpenPopover();
+      if (typeof IchimokuUI !== 'undefined') IchimokuUI.open(paneId);
+    });
+
+    chip.appendChild(dot);
+    chip.appendChild(name);
+    chip.appendChild(gear);
+    return chip;
+  }
 
   return { render };
 })();

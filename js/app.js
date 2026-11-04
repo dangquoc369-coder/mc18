@@ -205,6 +205,7 @@
     instance.clearData(); // dọn chart cũ ngay trước khi nạp dữ liệu mới
     Store.setPaneCandles(paneId, candles);
     instance.loadInitialData(candles);
+    IndicatorLegend.render(paneId, instance);
     connectSockets(paneId, symbol, timeframe);
 
     if (tickerP) {

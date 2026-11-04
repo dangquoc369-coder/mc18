@@ -251,7 +251,162 @@ const ChartModule = (function () {
     }
   }
   
-    // ===== MÀU NẾN + RÂU DÀY (giống TradingView) =====
+    // ===== ICHIMOKU (giống TradingView) =====
+  const ICHIMOKU_DEFAULT = {
+    enabled: false,
+    conversion: 9,
+    base: 26,
+    spanB: 52,
+    lagging: 26,
+    lines: {
+      conv: { show: true, color: '#2962ff', width: 1 },
+      base: { show: true, color: '#b71c1c', width: 1 },
+      lag: { show: true, color: '#43a047', width: 1 },
+      spanA: { show: true, color: '#a5d6a7', width: 1 },
+      spanB: { show: true, color: '#ef9a9a', width: 1 },
+      kumoUp: { show: false, color: '#8aa4ff', width: 1 },
+      kumoLow: { show: false, color: '#8aa4ff', width: 1 },
+    },
+    cloud: { show: true, color0: '#43a047', alpha0: 0.15, color1: '#f23645', alpha1: 0.15 },
+    tfs: null, // null = hiện ở mọi khung; hoặc ['15m','1h',...]
+  };
+  const ICHI_LINE_KEYS = ['conv', 'base', 'lag', 'spanA', 'spanB', 'kumoUp', 'kumoLow'];
+
+  function sanitizeIchimoku(src) {
+    const d = ICHIMOKU_DEFAULT;
+    const s = src || {};
+    const int = (v, def, hi) => {
+      const n = parseInt(v, 10);
+      return n >= 1 ? Math.min(n, hi) : def;
+    };
+    const alpha = (v, def) => {
+      const n = parseFloat(v);
+      return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : def;
+    };
+    const lines = {};
+    ICHI_LINE_KEYS.forEach((k) => {
+      const dl = d.lines[k];
+      const sl = (s.lines && s.lines[k]) || {};
+      const w = parseInt(sl.width, 10);
+      lines[k] = {
+        show: sl.show === undefined ? dl.show : !!sl.show,
+        color: isHexColor(sl.color) ? sl.color : dl.color,
+        width: w >= 1 && w <= 4 ? w : dl.width,
+      };
+    });
+    const sc = s.cloud || {};
+    return {
+      enabled: !!s.enabled,
+      conversion: int(s.conversion, d.conversion, 500),
+      base: int(s.base, d.base, 500),
+      spanB: int(s.spanB, d.spanB, 500),
+      lagging: int(s.lagging, d.lagging, 500),
+      lines,
+      cloud: {
+        show: sc.show === undefined ? d.cloud.show : !!sc.show,
+        color0: isHexColor(sc.color0) ? sc.color0 : d.cloud.color0,
+        alpha0: alpha(sc.alpha0, d.cloud.alpha0),
+        color1: isHexColor(sc.color1) ? sc.color1 : d.cloud.color1,
+        alpha1: alpha(sc.alpha1, d.cloud.alpha1),
+      },
+      tfs: Array.isArray(s.tfs) && s.tfs.length ? s.tfs.map(String) : null,
+    };
+  }
+
+  /** Tô đám mây (Kumo) giữa Leading Span A và B, đổi màu khi 2 đường cắt nhau. Gắn vào candleSeries. */
+  class IchimokuCloudPrimitive {
+    constructor(getState) {
+      this._getState = getState;
+      this._chart = null;
+      this._series = null;
+      this._requestUpdate = null;
+      this._views = [{ zOrder: () => 'bottom', renderer: () => ({ draw: (t) => this._draw(t) }) }];
+    }
+
+    attached(p) {
+      this._chart = p.chart;
+      this._series = p.series;
+      this._requestUpdate = p.requestUpdate;
+    }
+
+    detached() {
+      this._chart = null;
+      this._series = null;
+      this._requestUpdate = null;
+    }
+
+    updateAllViews() {}
+
+    paneViews() {
+      return this._views;
+    }
+
+    requestRedraw() {
+      if (this._requestUpdate) this._requestUpdate();
+    }
+
+    _draw(target) {
+      const chart = this._chart;
+      const series = this._series;
+      if (!chart || !series) return;
+      const { cfg, data } = this._getState();
+      if (!data || !cfg.cloud.show) return;
+      const ts = chart.timeScale();
+      const range = ts.getVisibleLogicalRange();
+      if (!range) return;
+      const from = Math.max(0, Math.floor(range.from) - 1);
+      const to = Math.min(data.a.length - 2, Math.ceil(range.to) + 1);
+
+      target.useBitmapCoordinateSpace((scope) => {
+        const ctx = scope.context;
+        const hr = scope.horizontalPixelRatio;
+        const vr = scope.verticalPixelRatio;
+        const X = (j) => {
+          const x = ts.logicalToCoordinate(j);
+          return x === null ? null : x * hr;
+        };
+        const Y = (p) => {
+          const y = series.priceToCoordinate(p);
+          return y === null ? null : y * vr;
+        };
+        const p0 = new Path2D();
+        const p1 = new Path2D();
+        const poly = (path, pts) => {
+          path.moveTo(pts[0][0], pts[0][1]);
+          for (let k = 1; k < pts.length; k++) path.lineTo(pts[k][0], pts[k][1]);
+          path.closePath();
+        };
+
+        for (let j = from; j <= to; j++) {
+          const a0 = data.a[j], b0 = data.b[j], a1 = data.a[j + 1], b1 = data.b[j + 1];
+          if (a0 == null || b0 == null || a1 == null || b1 == null) continue;
+          const x0 = X(j), x1 = X(j + 1);
+          if (x0 === null || x1 === null) continue;
+          const ya0 = Y(a0), yb0 = Y(b0), ya1 = Y(a1), yb1 = Y(b1);
+          if (ya0 === null || yb0 === null || ya1 === null || yb1 === null) continue;
+          const d0 = a0 - b0, d1 = a1 - b1;
+          if (d0 >= 0 && d1 >= 0) {
+            poly(p0, [[x0, ya0], [x1, ya1], [x1, yb1], [x0, yb0]]);
+          } else if (d0 <= 0 && d1 <= 0) {
+            poly(p1, [[x0, ya0], [x1, ya1], [x1, yb1], [x0, yb0]]);
+          } else {
+            // 2 đường cắt nhau giữa 2 nến: tách thành 2 tam giác
+            const t = d0 / (d0 - d1);
+            const xi = x0 + (x1 - x0) * t;
+            const yi = ya0 + (ya1 - ya0) * t;
+            poly(d0 > 0 ? p0 : p1, [[x0, ya0], [xi, yi], [x0, yb0]]);
+            poly(d1 > 0 ? p0 : p1, [[xi, yi], [x1, ya1], [x1, yb1]]);
+          }
+        }
+        ctx.fillStyle = hexToRgba(cfg.cloud.color0, cfg.cloud.alpha0);
+        ctx.fill(p0);
+        ctx.fillStyle = hexToRgba(cfg.cloud.color1, cfg.cloud.alpha1);
+        ctx.fill(p1);
+      });
+    }
+  }
+
+  // ===== MÀU NẾN + RÂU DÀY (giống TradingView) =====
   const CANDLE_UP = '#089981';
   const CANDLE_DOWN = '#F23645';
   const VOLUME_UP = 'rgba(8,153,129,0.5)';
@@ -359,6 +514,21 @@ const ChartModule = (function () {
     let rsiPrimHost = null;
 
     let currentCandles = [];
+    
+    let ichimoku = sanitizeIchimoku(null);
+    const ichiSeries = {};      // chỉ tạo series cho đường đang hiển thị
+    let ichiCloudData = null;
+    let ichiPrim = null;
+    let restoring = false;      // đang khôi phục prefs: không render/lưu lặp
+    let pendingViewReset = false;
+    const VIEW_RIGHT_PAD = 8;   // số nến trống bên phải khi nhảy tới nến mới nhất
+    const OVERLAY_OPTS = {
+      lineWidth: 1,
+      title: '',
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    };
 
     let loadingOlder = false;
     let noMoreOlder = false;
@@ -534,21 +704,24 @@ const ChartModule = (function () {
       });
       volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
 
-      const overlayOpts = {
-        lineWidth: 1,
-        title: '',
-        priceLineVisible: false,
-        lastValueVisible: false,
-        crosshairMarkerVisible: false,
-        visible: false,
-      };
-      sma50Series = chart.addSeries(LightweightCharts.LineSeries, { ...overlayOpts, color: '#2962ff' }, 0);
-      bbUpperSeries = chart.addSeries(LightweightCharts.LineSeries, { ...overlayOpts, color: '#26a69a' }, 0);
-      bbMiddleSeries = chart.addSeries(LightweightCharts.LineSeries, { ...overlayOpts, color: '#787b86' }, 0);
-      bbLowerSeries = chart.addSeries(LightweightCharts.LineSeries, { ...overlayOpts, color: '#ef5350' }, 0);
-
-      // Tạo series cho các đường EMA hiện có
-      syncEmaSeries();
+          /** Chỉ tạo series cho đường EMA đang BẬT; đường tắt thì gỡ khỏi chart. */
+    function syncEmaSeries() {
+      if (!chart) return;
+      const wanted = new Set(emaLines.filter((l) => l.enabled).map((l) => l.id));
+      emaSeriesMap.forEach((s, id) => {
+        if (!wanted.has(id)) {
+          try { chart.removeSeries(s); } catch (err) { /* bỏ qua */ }
+          emaSeriesMap.delete(id);
+        }
+      });
+      emaLines.forEach((l) => {
+        if (!l.enabled) return;
+        const opts = { ...OVERLAY_OPTS, color: l.color, lineWidth: l.width };
+        const s = emaSeriesMap.get(l.id);
+        if (s) s.applyOptions(opts);
+        else emaSeriesMap.set(l.id, chart.addSeries(LightweightCharts.LineSeries, opts, 0));
+      });
+    }
 
       updatePaneStretchFactors();
       setupPinchZoom(container);
@@ -601,6 +774,7 @@ const ChartModule = (function () {
       lastWidth = width;
       lastHeight = height;
       chart.resize(width, height);
+      if (pendingViewReset) resetView();
     }
     
     let pinchCleanup = null;
@@ -684,6 +858,177 @@ function setupPinchZoom(container) {
         resizeRafId = null;
       }
       applyResize();
+    }
+    
+        // ===== NHẢY TỚI VÙNG CÓ NẾN KHI ĐỔI SYMBOL / KHUNG =====
+    function resetView() {
+      if (!chart || currentCandles.length === 0) return;
+      const ts = chart.timeScale();
+      const w = ts.width();
+      if (!w) {            // ô chưa có kích thước (đang ẩn) -> làm lại khi resize
+        pendingViewReset = true;
+        return;
+      }
+      pendingViewReset = false;
+      try {
+        // Người dùng từng kéo trục giá thì autoScale bị tắt -> bật lại, tránh "lạc" khỏi vùng giá mới
+        chart.priceScale('right').applyOptions({ autoScale: true });
+        const n = currentCandles.length;
+        const bars = Math.max(20, w / Math.max(MIN_BAR_SPACING, ts.options().barSpacing));
+        const to = n - 1 + VIEW_RIGHT_PAD;
+        ts.setVisibleLogicalRange({ from: to - bars, to });
+      } catch (err) {
+        // bỏ qua
+      }
+    }
+
+    // ===== ICHIMOKU =====
+    function ichimokuActive() {
+      if (!ichimoku.enabled) return false;
+      if (!ichimoku.tfs) return true;
+      const p = Store.getPane(paneId);
+      return !!p && ichimoku.tfs.includes(p.timeframe);
+    }
+
+    /** Tạo / xoá series theo đúng những đường đang bật (đường tắt thì không tồn tại -> không tốn tài nguyên). */
+    function syncIchimokuSeries(active) {
+      if (!chart) return;
+      ICHI_LINE_KEYS.forEach((k) => {
+        const l = ichimoku.lines[k];
+        const cur = ichiSeries[k];
+        if (!(active && l.show)) {
+          if (cur) {
+            try { chart.removeSeries(cur); } catch (err) { /* bỏ qua */ }
+            delete ichiSeries[k];
+          }
+          return;
+        }
+        const opts = { ...OVERLAY_OPTS, color: l.color, lineWidth: l.width };
+        if (cur) cur.applyOptions(opts);
+        else ichiSeries[k] = chart.addSeries(LightweightCharts.LineSeries, opts, 0);
+      });
+
+      const needPrim = active && ichimoku.cloud.show;
+      if (needPrim && !ichiPrim) {
+        ichiPrim = new IchimokuCloudPrimitive(() => ({ cfg: ichimoku, data: ichiCloudData }));
+        candleSeries.attachPrimitive(ichiPrim);
+      } else if (!needPrim && ichiPrim) {
+        try { candleSeries.detachPrimitive(ichiPrim); } catch (err) { /* bỏ qua */ }
+        ichiPrim = null;
+      }
+    }
+
+    function renderIchimoku(candles) {
+      const active = ichimokuActive();
+      syncIchimokuSeries(active);
+      if (!active) {
+        ichiCloudData = null;
+        return;
+      }
+      const n = candles ? candles.length : 0;
+      if (n < 2) return;
+
+      const cfg = ichimoku;
+      const disp = cfg.lagging - 1; // TradingView: dịch (lagging - 1) nến
+      const L = cfg.lines;
+      const needSpans = L.spanA.show || L.spanB.show || L.kumoUp.show || L.kumoLow.show || cfg.cloud.show;
+
+      const donchian = (len) => {
+        const out = new Array(n).fill(null);
+        for (let i = len - 1; i < n; i++) {
+          let hi = -Infinity, lo = Infinity;
+          for (let j = i - len + 1; j <= i; j++) {
+            if (candles[j].high > hi) hi = candles[j].high;
+            if (candles[j].low < lo) lo = candles[j].low;
+          }
+          out[i] = (hi + lo) / 2;
+        }
+        return out;
+      };
+
+      // Độ rộng 1 nến (khớp cách drawing.js tính) để kéo dài thời gian sang tương lai
+      let step = 60;
+      if (n >= 2) {
+        let m = Infinity;
+        for (let i = Math.max(1, n - 10); i < n; i++) {
+          const dt = candles[i].time - candles[i - 1].time;
+          if (dt > 0 && dt < m) m = dt;
+        }
+        if (Number.isFinite(m)) step = m;
+      }
+      const timeAt = (j) => (j < n ? candles[j].time : candles[n - 1].time + (j - (n - 1)) * step);
+
+      const conv = donchian(cfg.conversion);
+      const base = donchian(cfg.base);
+
+      if (ichiSeries.conv) {
+        const d = [];
+        conv.forEach((v, i) => { if (v !== null) d.push({ time: candles[i].time, value: v }); });
+        ichiSeries.conv.setData(d);
+      }
+      if (ichiSeries.base) {
+        const d = [];
+        base.forEach((v, i) => { if (v !== null) d.push({ time: candles[i].time, value: v }); });
+        ichiSeries.base.setData(d);
+      }
+      if (ichiSeries.lag) {
+        const d = [];
+        for (let i = 0; i + disp < n; i++) d.push({ time: candles[i].time, value: candles[i + disp].close });
+        ichiSeries.lag.setData(d);
+      }
+
+      if (!needSpans) {
+        ichiCloudData = null;
+        return;
+      }
+      const b52 = donchian(cfg.spanB);
+      const m = n + disp;
+      const a = new Array(m).fill(null);
+      const b = new Array(m).fill(null);
+      for (let i = 0; i < n; i++) {
+        if (conv[i] !== null && base[i] !== null) a[i + disp] = (conv[i] + base[i]) / 2;
+        if (b52[i] !== null) b[i + disp] = b52[i];
+      }
+
+      const spanData = (arr) => {
+        const d = [];
+        for (let j = 0; j < m; j++) if (arr[j] !== null) d.push({ time: timeAt(j), value: arr[j] });
+        return d;
+      };
+      if (ichiSeries.spanA) ichiSeries.spanA.setData(spanData(a));
+      if (ichiSeries.spanB) ichiSeries.spanB.setData(spanData(b));
+      if (ichiSeries.kumoUp || ichiSeries.kumoLow) {
+        const up = [], low = [];
+        for (let j = 0; j < m; j++) {
+          if (a[j] === null || b[j] === null) continue;
+          up.push({ time: timeAt(j), value: Math.max(a[j], b[j]) });
+          low.push({ time: timeAt(j), value: Math.min(a[j], b[j]) });
+        }
+        if (ichiSeries.kumoUp) ichiSeries.kumoUp.setData(up);
+        if (ichiSeries.kumoLow) ichiSeries.kumoLow.setData(low);
+      }
+
+      ichiCloudData = { a, b };
+      if (ichiPrim) ichiPrim.requestRedraw();
+    }
+
+    function getIchimoku() {
+      return JSON.parse(JSON.stringify(ichimoku));
+    }
+
+    /** Đổi cài đặt Ichimoku (gộp từng phần: lines/cloud được merge sâu). */
+    function setIchimoku(partial) {
+      const cur = getIchimoku();
+      const p = partial || {};
+      const merged = { ...cur, ...p, lines: { ...cur.lines }, cloud: { ...cur.cloud, ...(p.cloud || {}) } };
+      if (p.lines) {
+        Object.keys(p.lines).forEach((k) => {
+          merged.lines[k] = { ...cur.lines[k], ...p.lines[k] };
+        });
+      }
+      ichimoku = sanitizeIchimoku(merged);
+      renderIchimoku(currentCandles);
+      persistIndicatorPrefs();
     }
 
     // ===== NHÓM EMA =====
@@ -861,6 +1206,7 @@ function setupPinchZoom(container) {
 
     function renderIndicators(candles) {
       if (!candles || candles.length === 0) return;
+      renderIchimoku(candles);
       const closes = candles.map((c) => c.close);
 
       // Chỉ tính các đường EMA đang bật
@@ -964,6 +1310,7 @@ function setupPinchZoom(container) {
       });
       prefs.emaLines = emaLines.map((l) => ({ ...l }));
       prefs.rsiExtras = JSON.parse(JSON.stringify(rsiExtras));
+      prefs.ichimoku = JSON.parse(JSON.stringify(ichimoku));
       prefs.volumeVisible = volumeVisible;
       IndicatorPrefsModule.setPanePrefs(paneId, prefs);
     }
@@ -971,51 +1318,50 @@ function setupPinchZoom(container) {
     /** Khôi phục chỉ báo đã lưu của pane này - gọi sau khi nến đầu tiên đã
      * tải xong (xem loadInitialData). Đặt period TRƯỚC khi bật để lần render
      * đầu đã đúng luôn. */
-    function restoreIndicatorPrefs() {
+        function restoreIndicatorPrefs() {
       if (typeof IndicatorPrefsModule === 'undefined') return;
       const saved = IndicatorPrefsModule.getPanePrefs(paneId);
       if (!saved) return;
 
-      // EMA: đọc danh sách mới, hoặc di trú dữ liệu cũ ema21/ema200.
-      // (Không gọi persist ở đây để khỏi ghi đè prefs khi các chỉ báo khác
-      // chưa được khôi phục xong.)
-      if (Array.isArray(saved.emaLines)) {
-        emaLines = saved.emaLines.slice(0, MAX_EMA_LINES).map(sanitizeEmaLine);
-        syncEmaSeries();
-        scheduleRecompute(true);
-      } else if (saved.ema21 || saved.ema200) {
-        emaLines = emaLines.map((l, i) => {
-          const s = i === 0 ? saved.ema21 : saved.ema200;
-          return s ? { ...l, period: s.period || l.period, enabled: !!s.enabled } : l;
-        });
-        syncEmaSeries();
-        scheduleRecompute(true);
-      }
-
-      // RSI mở rộng (nguồn giá, mức RSI, bảng giá, SnR...)
-      if (saved.rsiExtras) {
-        rsiExtras = sanitizeRsiExtras(saved.rsiExtras);
-        scheduleRecompute(true);
-      }
-      
-      // Volume: khôi phục trạng thái bật/tắt đã lưu (mặc định bật nếu chưa từng lưu)
-      if (typeof saved.volumeVisible === 'boolean') {
-        volumeVisible = saved.volumeVisible;
-        if (volumeSeries) volumeSeries.applyOptions({ visible: volumeVisible });
-      }
-
-      Object.keys(saved).forEach((k) => {
-        if (!indicatorConfig[k]) return;
-        if (saved[k].period) indicatorConfig[k].period = saved[k].period;
-        if (STYLABLE_KEYS.includes(k)) {
-          if (typeof saved[k].color === 'string' && /^#[0-9a-f]{6}$/i.test(saved[k].color)) {
-            indicatorConfig[k].color = saved[k].color;
+      restoring = true;
+      try {
+        if (Array.isArray(saved.emaLines)) {
+          const next = saved.emaLines.slice(0, MAX_EMA_LINES).map(sanitizeEmaLine);
+          if (JSON.stringify(next) !== JSON.stringify(emaLines)) {
+            emaLines = next;
+            syncEmaSeries();
           }
-          const w = parseInt(saved[k].width, 10);
-          if (w >= 1 && w <= 4) indicatorConfig[k].width = w;
+        } else if (saved.ema21 || saved.ema200) {
+          emaLines = emaLines.map((l, i) => {
+            const s = i === 0 ? saved.ema21 : saved.ema200;
+            return s ? { ...l, period: s.period || l.period, enabled: !!s.enabled } : l;
+          });
+          syncEmaSeries();
         }
-        if (saved[k].enabled) setIndicatorVisible(k, true);
-      });
+
+        if (saved.rsiExtras) rsiExtras = sanitizeRsiExtras(saved.rsiExtras);
+        if (saved.ichimoku) ichimoku = sanitizeIchimoku(saved.ichimoku);
+
+        if (typeof saved.volumeVisible === 'boolean') {
+          volumeVisible = saved.volumeVisible;
+          if (volumeSeries) volumeSeries.applyOptions({ visible: volumeVisible });
+        }
+
+        Object.keys(saved).forEach((k) => {
+          if (!indicatorConfig[k]) return;
+          if (saved[k].period) indicatorConfig[k].period = saved[k].period;
+          if (STYLABLE_KEYS.includes(k)) {
+            if (typeof saved[k].color === 'string' && /^#[0-9a-f]{6}$/i.test(saved[k].color)) {
+              indicatorConfig[k].color = saved[k].color;
+            }
+            const w = parseInt(saved[k].width, 10);
+            if (w >= 1 && w <= 4) indicatorConfig[k].width = w;
+          }
+          if (saved[k].enabled && !indicatorConfig[k].enabled) setIndicatorVisible(k, true);
+        });
+      } finally {
+        restoring = false;
+      }
     }
 
     function seriesForKey(key) {
@@ -1206,9 +1552,12 @@ function setupPinchZoom(container) {
               },
               2
             );
-          } else {
-            const s = seriesForKey(key);
-            if (s) s.applyOptions({ visible: true });
+                    } else if (['sma50', 'bbUpper', 'bbMiddle', 'bbLower'].includes(key)) {
+            const s = chart.addSeries(LightweightCharts.LineSeries, { ...OVERLAY_OPTS, color: cfg.color }, 0);
+            if (key === 'sma50') sma50Series = s;
+            else if (key === 'bbUpper') bbUpperSeries = s;
+            else if (key === 'bbMiddle') bbMiddleSeries = s;
+            else bbLowerSeries = s;
           }
         } else {
           series.applyOptions({ visible: true });
@@ -1216,10 +1565,9 @@ function setupPinchZoom(container) {
       } else {
         const series = seriesForKey(key);
         if (series) {
-          if (
-            ['rsi', 'emaRsi', 'wmaRsi', 'rsiC', 'emaRsiC', 'wmaRsiC', 'macdLine', 'macdSignal', 'macdHist'].includes(
-              key
-            )
+                    if (
+            ['rsi', 'emaRsi', 'wmaRsi', 'rsiC', 'emaRsiC', 'wmaRsiC', 'macdLine', 'macdSignal', 'macdHist',
+              'sma50', 'bbUpper', 'bbMiddle', 'bbLower'].includes(key)
           ) {
             chart.removeSeries(series);
             if (key === 'rsi') rsiSeries = null;
@@ -1231,6 +1579,10 @@ function setupPinchZoom(container) {
             else if (key === 'macdLine') macdLineSeries = null;
             else if (key === 'macdSignal') macdSignalSeries = null;
             else if (key === 'macdHist') macdHistSeries = null;
+            else if (key === 'sma50') sma50Series = null;
+            else if (key === 'bbUpper') bbUpperSeries = null;
+            else if (key === 'bbMiddle') bbMiddleSeries = null;
+            else if (key === 'bbLower') bbLowerSeries = null;
           } else {
             series.applyOptions({ visible: false });
           }
@@ -1239,9 +1591,11 @@ function setupPinchZoom(container) {
 
       applyLineStyle(key);
       ensureRsiPrimitive();
-      scheduleRecompute(true);
       updatePaneStretchFactors();
-      persistIndicatorPrefs();
+      if (!restoring) {
+        scheduleRecompute(true);
+        persistIndicatorPrefs();
+      }
     }
 
     const STYLABLE_KEYS = ['rsi', 'emaRsi', 'wmaRsi', 'rsiC', 'emaRsiC', 'wmaRsiC'];
@@ -1278,6 +1632,7 @@ function setupPinchZoom(container) {
         ...JSON.parse(JSON.stringify(indicatorConfig)),
         emaLines: getEmaLines(),
         rsiExtras: getRsiExtras(),
+        ichimoku: getIchimoku(),
       };
     }
 
@@ -1360,6 +1715,7 @@ function setupPinchZoom(container) {
 
     function loadInitialData(candles) {
       currentCandles = candles.slice();
+      restoreIndicatorPrefs(); // trước khi render để chỉ tính chỉ báo ĐÚNG 1 LẦN
 
       candleSeries.setData(
         candles.map((c) => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close }))
@@ -1375,7 +1731,7 @@ function setupPinchZoom(container) {
       renderIndicators(currentCandles);
       runBreakout();
       renderAlertLines();
-      restoreIndicatorPrefs();
+      resetView(); // luôn nhảy tới vùng có nến mới nhất
     }
 
     function clearData() {
@@ -1395,6 +1751,9 @@ function setupPinchZoom(container) {
       if (macdLineSeries) macdLineSeries.setData([]);
       if (macdSignalSeries) macdSignalSeries.setData([]);
       if (macdHistSeries) macdHistSeries.setData([]);
+      Object.values(ichiSeries).forEach((s) => s.setData([]));
+      ichiCloudData = null;
+      if (ichiPrim) ichiPrim.requestRedraw();
       currentCandles = [];
       higherTFCandles = [];
       slCandles = null;
@@ -1493,6 +1852,7 @@ function setupPinchZoom(container) {
       setEmaLines,
       setEmaGroupVisible,
       setRsiExtras,
+      setIchimoku,
       setVolumeVisible,
       getVolumeVisible,
       setHigherTFCandles,
@@ -1513,5 +1873,6 @@ function setupPinchZoom(container) {
     };
   }
 
-  return { create, getHigherTimeframeFor, ENTRY_TO_HIGHER_TF };
+    return {create, getHigherTimeframeFor, ENTRY_TO_HIGHER_TF, getIchimokuDefaults: () => sanitizeIchimoku(null),
+  };
 })();
