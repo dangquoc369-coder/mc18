@@ -107,7 +107,7 @@ const AlertsModule = (function () {
       if (crossedUp || crossedDown) {
         a.triggered = true;
         changed = true;
-        NotificationsModule.notify('🔔 Cảnh báo giá', `${symbol} đã chạm mức ${formatPrice(a.price)}`);
+        NotificationsModule.notify('Cảnh báo giá', `${symbol} đã chạm mức ${formatPrice(a.price)}`);
       }
     });
 
@@ -142,7 +142,7 @@ const AlertsModule = (function () {
     btn.id = 'alertsListBtn';
     btn.className = 'topbar-btn';
     btn.type = 'button';
-    btn.innerHTML = btn.innerHTML = `<span class="btn-icon">${iconHTML('bell')}</span><span class="btn-text"> Cảnh báo</span>`;;
+    btn.innerHTML = `<span class="btn-icon">${iconHTML('bell')}</span><span class="btn-text"> Cảnh báo</span>`;
     btn.title = 'Xem và quản lý cảnh báo';
     btn.addEventListener('click', () => {
       if (panelEl.classList.contains('open')) {
@@ -212,7 +212,7 @@ const AlertsModule = (function () {
     // ---- Mục 1: Cảnh báo giá (như cũ) ----
     let priceHTML = '';
     if (list.length === 0) {
-      priceHTML = `<div class="ms-row ms-muted">Chưa có cảnh báo nào. Chọn công cụ 🔔 trong thanh vẽ rồi click lên chart để đặt mức giá.</div>`;
+            priceHTML = `<div class="ms-row ms-muted">Chưa có cảnh báo nào. Chọn công cụ <span class="ms-ico">${Icons.bell}</span> trong thanh vẽ rồi click lên chart để đặt mức giá.</div>`;
     } else {
       priceHTML = list
         .slice()
@@ -236,7 +236,7 @@ const AlertsModule = (function () {
     // bật khung nào và xoá tay được, y hệt cảnh báo giá.
     let signalHTML = '';
     if (enabledTFs.length === 0) {
-      signalHTML = `<div class="ms-row ms-muted">Chưa bật thông báo tín hiệu BUY/SELL ở khung nào. Mở ⚙ cài đặt của chip BUY/SELL trên chart để chọn khung.</div>`;
+            signalHTML = `<div class="ms-row ms-muted">Chưa bật thông báo tín hiệu BUY/SELL ở khung nào. Mở <span class="ms-ico">${Icons.settings}</span> cài đặt của chip BUY/SELL trên chart để chọn khung.</div>`;
     } else {
       signalHTML = enabledTFs
         .map(

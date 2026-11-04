@@ -24,6 +24,23 @@
 
 const IndicatorLegend = (function () {
   const collapsedState = {};
+    const LEGEND_CSS = `
+.legend-toggle-btn{display:inline-flex;align-items:center;gap:4px}
+.legend-toggle-btn svg{width:14px;height:14px;display:block;flex-shrink:0}
+.legend-toggle-btn .lt-chev svg{width:12px;height:12px}
+.indicator-gear{display:inline-flex;align-items:center;justify-content:center}
+.indicator-gear svg{width:9px;height:9px;display:block}
+.ip-cancel svg{width:12px;height:12px;display:block}
+.ip-sound-btn{display:inline-flex;align-items:center;gap:5px}
+.ip-sound-btn svg{width:13px;height:13px}
+`;
+  function ensureLegendCss() {
+    if (document.getElementById('legend-icon-css')) return;
+    const st = document.createElement('style');
+    st.id = 'legend-icon-css';
+    st.textContent = LEGEND_CSS;
+    document.head.appendChild(st);
+  }
 
   const MAX_EMA_LINES = 10;
   const EMA_PALETTE = [
@@ -55,6 +72,7 @@ const IndicatorLegend = (function () {
   }
 
   function render(paneId, instance) {
+    ensureLegendCss();
     const container = document.getElementById(`${paneId}-legend`);
     if (!container) return;
     container.innerHTML = '';
@@ -92,7 +110,10 @@ const IndicatorLegend = (function () {
     const btn = document.createElement('div');
     btn.className = 'legend-toggle-btn';
     btn.title = collapsed ? 'Mở rộng danh sách chỉ báo' : 'Thu gọn danh sách chỉ báo';
-    btn.textContent = collapsed ? '📊 Chỉ báo ▸' : 'Chỉ báo ▾';
+    btn.innerHTML =
+      iconHTML('indicators') +
+      '<span>Chỉ báo</span>' +
+      `<span class="lt-chev">${iconHTML(collapsed ? 'chevronRight' : 'chevronDown')}</span>`;
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       collapsedState[paneId] = !collapsed;
@@ -116,7 +137,7 @@ const IndicatorLegend = (function () {
     const gear = document.createElement('span');
     gear.className = 'indicator-gear';
     gear.title = 'Chỉnh chu kỳ';
-    gear.textContent = '⚙';
+        gear.innerHTML = iconHTML('settings');
 
     function toggle(e) {
       e.stopPropagation();
@@ -180,7 +201,7 @@ const IndicatorLegend = (function () {
     const gear = document.createElement('span');
     gear.className = 'indicator-gear';
     gear.title = 'Cài đặt breakout (số nến / nguồn SL / thông báo)';
-    gear.textContent = '⚙';
+        gear.innerHTML = iconHTML('settings');
 
     function toggle(e) {
       e.stopPropagation();
@@ -420,7 +441,7 @@ const IndicatorLegend = (function () {
     notifyHint.style.gap = '6px';
     notifyHint.innerHTML = `
       <span>Chọn các khung thời gian bạn muốn nhận thông báo khi có tín hiệu BUY/SELL mới (kèm âm thanh chuông).</span>
-      <button type="button" id="boTestSoundBtn" style="align-self:flex-start; background:none; border:1px solid currentColor; padding:2px 8px; border-radius:4px; cursor:pointer; font-size:11px;">🔊 Thử âm thanh chuông</button>
+      <button type="button" id="boTestSoundBtn" class="ip-sound-btn" style="align-self:flex-start; background:none; border:1px solid currentColor; padding:2px 8px; border-radius:4px; cursor:pointer; font-size:11px;">${iconHTML('volume')}<span>Thử âm thanh chuông</span></button>
     `;
     setTimeout(() => {
       const b = notifyHint.querySelector('#boTestSoundBtn');
@@ -521,7 +542,7 @@ const IndicatorLegend = (function () {
     const gear = document.createElement('span');
     gear.className = 'indicator-gear';
     gear.title = 'Cài đặt các đường EMA';
-    gear.textContent = '⚙';
+        gear.innerHTML = iconHTML('settings');
 
     function toggle(e) {
       e.stopPropagation();
@@ -652,7 +673,7 @@ const IndicatorLegend = (function () {
       del.type = 'button';
       del.className = 'ip-cancel';
       del.title = 'Xóa đường này';
-      del.textContent = '✕';
+      del.innerHTML = iconHTML('close');
       del.addEventListener('click', () => {
         draft.splice(index, 1);
         renderRows();
@@ -737,7 +758,7 @@ const IndicatorLegend = (function () {
     const gear = document.createElement('span');
     gear.className = 'indicator-gear';
     gear.title = 'Cài đặt Bollinger Bands';
-    gear.textContent = '⚙';
+        gear.innerHTML = iconHTML('settings');
 
     function toggle(e) {
       e.stopPropagation();
@@ -1069,7 +1090,7 @@ const IndicatorLegend = (function () {
   const gear = document.createElement('span');
   gear.className = 'indicator-gear';
   gear.title = variant.gearTitle;
-  gear.textContent = '⚙';
+      gear.innerHTML = iconHTML('settings');
 
   function toggle(e) {
     e.stopPropagation();
@@ -1276,7 +1297,7 @@ const IndicatorLegend = (function () {
     const gear = document.createElement('span');
     gear.className = 'indicator-gear';
     gear.title = 'Cài đặt MACD';
-    gear.textContent = '⚙';
+        gear.innerHTML = iconHTML('settings');
 
     function toggle(e) {
       e.stopPropagation();
@@ -1467,7 +1488,7 @@ const IndicatorLegend = (function () {
     const gear = document.createElement('span');
     gear.className = 'indicator-gear';
     gear.title = 'Cài đặt Ichimoku';
-    gear.textContent = '⚙';
+        gear.innerHTML = iconHTML('settings');
 
     function toggle(e) {
       e.stopPropagation();

@@ -41,6 +41,7 @@ const IchimokuUI = (function () {
 .ich-btn{padding:8px 18px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;border:1px solid var(--border-color,rgba(128,128,128,.5));background:transparent;color:inherit}
 .ich-btn.primary{background:var(--accent-blue,#2962ff);border-color:var(--accent-blue,#2962ff);color:#fff}
 .ich-group{display:flex;gap:10px}
+.ich-x svg{width:18px;height:18px;display:block;margin:auto}
 `;
 
   function ensureCss() {
@@ -73,7 +74,7 @@ const IchimokuUI = (function () {
     backdrop.className = 'ich-backdrop';
     backdrop.innerHTML = `
       <div class="ich-modal">
-        <div class="ich-head"><span class="ich-title">Ichimoku</span><button type="button" class="ich-x">×</button></div>
+        <div class="ich-head"><span class="ich-title">Ichimoku</span><button type="button" class="ich-x">${iconHTML('close')}</button></div>
         <div class="ich-tabs">
           <button type="button" class="ich-tab active" data-t="inputs">Inputs</button>
           <button type="button" class="ich-tab" data-t="style">Style</button>

@@ -40,6 +40,7 @@ const RsiNdqUI = (function () {
 .ndq-btn{padding:8px 18px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;border:1px solid var(--border-color,rgba(128,128,128,.5));background:transparent;color:inherit}
 .ndq-btn.primary{background:var(--accent-blue,#2962ff);border-color:var(--accent-blue,#2962ff);color:#fff}
 .ndq-group{display:flex;gap:10px}
+.ndq-x svg{width:18px;height:18px;display:block;margin:auto}
 `;
 
   function ensureCss() {
@@ -86,7 +87,7 @@ const RsiNdqUI = (function () {
     backdrop.className = 'ndq-backdrop';
     backdrop.innerHTML = `
       <div class="ndq-modal">
-        <div class="ndq-head"><span class="ndq-title">RSI By NĐQ</span><button type="button" class="ndq-x">×</button></div>
+        <div class="ndq-head"><span class="ndq-title">RSI By NĐQ</span><button type="button" class="ndq-x">${iconHTML('close')}</button></div>
         <div class="ndq-tabs">
           <button type="button" class="ndq-tab active" data-t="inputs">Inputs</button>
           <button type="button" class="ndq-tab" data-t="style">Style</button>
