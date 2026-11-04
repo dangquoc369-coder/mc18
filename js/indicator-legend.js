@@ -78,7 +78,6 @@ const IndicatorLegend = (function () {
     }
 
     container.appendChild(buildBBGroupChip(paneId, instance));
-    container.appendChild(buildRSIGroupChip(paneId, instance, RSI_CLASSIC));
     container.appendChild(buildRSIGroupChip(paneId, instance, RSI_NDQ));
     container.appendChild(buildMACDGroupChip(paneId, instance));
     container.appendChild(buildIchimokuChip(paneId, instance));
@@ -1040,14 +1039,6 @@ const IndicatorLegend = (function () {
   }
 
   // --- RSI GROUP CHIP & POPOVER ---
-  // Hai biến thể: RSI cổ điển (bản cũ) và RSI NĐQ (có bảng giá, SnR...).
-  const RSI_CLASSIC = {
-    keys: ['rsiC', 'emaRsiC', 'wmaRsiC'],
-    label: 'RSI',
-    title: 'Cấu hình RSI:',
-    gearTitle: 'Cài đặt RSI, EMA(RSI) và WMA(RSI)',
-    extras: false,
-  };
   const RSI_NDQ = {
     keys: ['rsi', 'emaRsi', 'wmaRsi'],
     label: 'RSI NĐQ',
@@ -1057,55 +1048,66 @@ const IndicatorLegend = (function () {
   };
 
   function buildRSIGroupChip(paneId, instance, variant) {
-    const config = instance.getIndicatorConfig();
-    const rsi = config[variant.keys[0]];
-    const emaRsi = config[variant.keys[1]];
-    const wmaRsi = config[variant.keys[2]];
+  const config = instance.getIndicatorConfig();
+  const rsi = config[variant.keys[0]];
+  const emaRsi = config[variant.keys[1]];
+  const wmaRsi = config[variant.keys[2]];
 
-    const isAnyEnabled = rsi.enabled || emaRsi.enabled || wmaRsi.enabled;
+  const isAnyEnabled = rsi.enabled || emaRsi.enabled || wmaRsi.enabled;
 
-    const chip = document.createElement('div');
-    chip.className = 'indicator-chip' + (isAnyEnabled ? '' : ' disabled');
+  const chip = document.createElement('div');
+  chip.className = 'indicator-chip' + (isAnyEnabled ? '' : ' disabled');
 
-    const dot = document.createElement('span');
-    dot.className = 'indicator-dot';
-    dot.style.background = rsi.color;
+  const dot = document.createElement('span');
+  dot.className = 'indicator-dot';
+  dot.style.background = rsi.color;
 
-    const name = document.createElement('span');
-    name.className = 'indicator-name';
-    name.textContent = `${variant.label} ${rsi.period}`;
+  const name = document.createElement('span');
+  name.className = 'indicator-name';
+  name.textContent = `${variant.label} ${rsi.period}`;
 
-    const gear = document.createElement('span');
-    gear.className = 'indicator-gear';
-    gear.title = variant.gearTitle;
-    gear.textContent = '⚙';
+  const gear = document.createElement('span');
+  gear.className = 'indicator-gear';
+  gear.title = variant.gearTitle;
+  gear.textContent = '⚙';
 
-    function toggle(e) {
-      e.stopPropagation();
-      if (isAnyEnabled) {
-        instance.setIndicatorVisible(variant.keys[0], false);
-        instance.setIndicatorVisible(variant.keys[1], false);
-        instance.setIndicatorVisible(variant.keys[2], false);
-      } else {
-        instance.setIndicatorVisible(variant.keys[0], true);
-        instance.setIndicatorVisible(variant.keys[1], true);
-        instance.setIndicatorVisible(variant.keys[2], true);
-      }
-      render(paneId, instance);
+  function toggle(e) {
+    e.stopPropagation();
+
+    if (isAnyEnabled) {
+      instance.setIndicatorVisible(variant.keys[0], false);
+      instance.setIndicatorVisible(variant.keys[1], false);
+      instance.setIndicatorVisible(variant.keys[2], false);
+    } else {
+      instance.setIndicatorVisible(variant.keys[0], true);
+      instance.setIndicatorVisible(variant.keys[1], true);
+      instance.setIndicatorVisible(variant.keys[2], true);
     }
 
-    dot.addEventListener('click', toggle);
-    name.addEventListener('click', toggle);
-    gear.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openRSIGroupPopover(chip, paneId, instance, variant);
-    });
-
-    chip.appendChild(dot);
-    chip.appendChild(name);
-    chip.appendChild(gear);
-    return chip;
+    render(paneId, instance);
   }
+
+  // Click vào bánh răng để mở cài đặt
+  gear.addEventListener('click', (e) => {
+    e.stopPropagation();
+
+    if (variant.extras && typeof RsiNdqUI !== 'undefined') {
+      closeAnyOpenPopover();
+      RsiNdqUI.open(paneId);
+    } else {
+      openRSIGroupPopover(chip, paneId, instance, variant);
+    }
+  });
+
+  // Click vào chip để bật/tắt nhóm RSI
+  chip.addEventListener('click', toggle);
+
+  chip.appendChild(dot);
+  chip.appendChild(name);
+  chip.appendChild(gear);
+
+  return chip;
+}
 
   function openRSIGroupPopover(chip, paneId, instance, variant) {
     closeAnyOpenPopover();

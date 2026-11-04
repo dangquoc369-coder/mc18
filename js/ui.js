@@ -482,7 +482,7 @@ const UI = (function () {
     // Chân bảng: đặt lại toàn bộ style đã nhớ
     const footer = document.createElement('div');
     footer.className = 'draw-flyout-footer';
-    footer.innerHTML = '<span class="draw-flyout-hint">Chấm xanh = công cụ đã nhớ style của bạn</span>';
+    footer.innerHTML = '<span class="draw-flyout-hint">Chấm ở góc = công cụ đã nhớ style của bạn</span>';
     const resetBtn = document.createElement('button');
     resetBtn.type = 'button';
     resetBtn.className = 'draw-flyout-reset';

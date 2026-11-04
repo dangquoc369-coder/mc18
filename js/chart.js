@@ -56,20 +56,7 @@ const ChartModule = (function () {
   const MIN_BAR_SPACING = 0.5;
   const EMA_SOURCES = ['close', 'open', 'high', 'low'];
 
-  // ===== RSI BY NĐQ: các phần vẽ thêm lên pane RSI (giống chỉ báo trên TradingView) =====
-  const RSI_EXTRAS_DEFAULT = {
-    source: 'close',
-    levels: [20, 30, 40, 50, 60, 70, 80],
-    showFill: true, // nền mờ giữa mức 30 và 70
-    showLadder: true, // bảng giá theo mức RSI (Price ladder)
-    ladderColor: '#cfcfcf',
-    ladderWmaColor: '#f23645',
-    showSnr: true, // đường hỗ trợ / kháng cự RSI tự động
-    snrLookbacks: [34, 89, 200],
-    snrResistanceColor: '#5289ff',
-    snrSupportColor: '#5289ff',
-  };
-  const RSI_LABEL_OFFSET_BARS = 15; // Pine vẽ nhãn / đường tới bar_index + 15
+  
 
   function isHexColor(c) {
     return typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c);
@@ -82,8 +69,44 @@ const ChartModule = (function () {
     const b = parseInt(h.slice(5, 7), 16);
     return `rgba(${r},${g},${b},${alpha})`;
   }
+  const RSI_LABEL_OFFSET_BARS = 15; // Pine vẽ nhãn / đường tới bar_index + 15
+  const RSI_LINE_DEFAULT = { show: true, color: '#787b86', alpha: 0.5, style: 'dotted' };
+  const RSI_LINE_STYLES = ['solid', 'dashed', 'dotted'];
+  const RSI_EXTRAS_DEFAULT = {
+    source: 'close',
+    levels: [20, 30, 40, 50, 60, 70, 80],
+    levelStyles: [0, 1, 2, 3, 4, 5, 6].map(() => ({ ...RSI_LINE_DEFAULT })),
+    bandLow: { ...RSI_LINE_DEFAULT, value: 30 },
+    bandHigh: { ...RSI_LINE_DEFAULT, value: 70 },
+    bg: { show: true, color: '#5970b9', alpha: 0.1 }, // "Hlines Background"
+    showLadder: true,
+    ladderColor: '#cfcfcf',
+    ladderWmaColor: '#f23645',
+    showSnr: true,
+    snrLookbacks: [34, 89, 200],
+    snrResistanceColor: '#5289ff',
+    snrSupportColor: '#5289ff',
+    snrResistanceAlpha: 0.5,
+    snrSupportAlpha: 0.5,
+    tfs: null, // null = hiện ở mọi khung
+  };
 
-  /** Chuẩn hoá cài đặt RSI mở rộng (chặn giá trị sai từ popover / localStorage). */
+  function clampAlpha(v, def) {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : def;
+  }
+
+  function sanitizeRsiLine(src, def) {
+    const s = src || {};
+    return {
+      show: s.show === undefined ? def.show : !!s.show,
+      color: isHexColor(s.color) ? s.color : def.color,
+      alpha: clampAlpha(s.alpha, def.alpha),
+      style: RSI_LINE_STYLES.includes(s.style) ? s.style : def.style,
+    };
+  }
+
+  /** Chuẩn hoá cài đặt RSI mở rộng (chặn giá trị sai từ hộp thoại / localStorage). */
   function sanitizeRsiExtras(src) {
     const d = RSI_EXTRAS_DEFAULT;
     const s = src || {};
@@ -91,14 +114,31 @@ const ChartModule = (function () {
       const v = parseFloat(s.levels && s.levels[i]);
       return Number.isFinite(v) ? Math.min(99, Math.max(1, v)) : def;
     });
+    const levelStyles = d.levelStyles.map((def, i) => sanitizeRsiLine(s.levelStyles && s.levelStyles[i], def));
+    const band = (key) => {
+      const b = sanitizeRsiLine(s[key], d[key]);
+      const v = parseFloat(s[key] && s[key].value);
+      b.value = Number.isFinite(v) ? Math.min(99, Math.max(1, v)) : d[key].value;
+      return b;
+    };
     const snrLookbacks = d.snrLookbacks.map((def, i) => {
       const v = parseInt(s.snrLookbacks && s.snrLookbacks[i], 10);
       return v >= 2 ? Math.min(v, 1000) : def;
     });
+    const sb = s.bg || {};
+    // tương thích dữ liệu cũ: showFill -> bg.show
+    const bgShow = sb.show !== undefined ? !!sb.show : s.showFill !== undefined ? !!s.showFill : d.bg.show;
     return {
       source: EMA_SOURCES.includes(s.source) ? s.source : d.source,
       levels,
-      showFill: s.showFill === undefined ? d.showFill : !!s.showFill,
+      levelStyles,
+      bandLow: band('bandLow'),
+      bandHigh: band('bandHigh'),
+      bg: {
+        show: bgShow,
+        color: isHexColor(sb.color) ? sb.color : d.bg.color,
+        alpha: clampAlpha(sb.alpha, d.bg.alpha),
+      },
       showLadder: s.showLadder === undefined ? d.showLadder : !!s.showLadder,
       ladderColor: isHexColor(s.ladderColor) ? s.ladderColor : d.ladderColor,
       ladderWmaColor: isHexColor(s.ladderWmaColor) ? s.ladderWmaColor : d.ladderWmaColor,
@@ -106,6 +146,9 @@ const ChartModule = (function () {
       snrLookbacks,
       snrResistanceColor: isHexColor(s.snrResistanceColor) ? s.snrResistanceColor : d.snrResistanceColor,
       snrSupportColor: isHexColor(s.snrSupportColor) ? s.snrSupportColor : d.snrSupportColor,
+      snrResistanceAlpha: clampAlpha(s.snrResistanceAlpha, d.snrResistanceAlpha),
+      snrSupportAlpha: clampAlpha(s.snrSupportAlpha, d.snrSupportAlpha),
+      tfs: Array.isArray(s.tfs) && s.tfs.length ? s.tfs.map(String) : null,
     };
   }
 
@@ -129,6 +172,7 @@ const ChartModule = (function () {
       this._views = [
         { zOrder: () => 'bottom', renderer: () => ({ draw: (t) => this._drawBackground(t) }) },
         { zOrder: () => 'top', renderer: () => ({ draw: (t) => this._drawForeground(t) }) },
+        { zOrder: () => 'normal', renderer: () => ({ draw: (t) => this._drawLevels(t) }) },
       ];
     }
 
@@ -154,7 +198,7 @@ const ChartModule = (function () {
       if (this._requestUpdate) this._requestUpdate();
     }
 
-    _drawBackground(target) {
+      _drawBackground(target) {
       const series = this._series;
       if (!series) return;
       const { config } = this._getState();
@@ -167,32 +211,58 @@ const ChartModule = (function () {
           const c = series.priceToCoordinate(price);
           return c === null ? null : c * vr;
         };
+        
+        
 
-        if (config.showFill) {
-          const y70 = toY(70);
-          const y30 = toY(30);
-          if (y70 !== null && y30 !== null) {
-            ctx.fillStyle = 'rgba(89,112,185,0.10)';
-            ctx.fillRect(0, Math.min(y70, y30), width, Math.abs(y30 - y70));
+        if (config.bg.show) {
+          const yH = toY(config.bandHigh.value);
+          const yL = toY(config.bandLow.value);
+          if (yH !== null && yL !== null) {
+            ctx.fillStyle = hexToRgba(config.bg.color, config.bg.alpha);
+            ctx.fillRect(0, Math.min(yH, yL), width, Math.abs(yL - yH));
           }
         }
 
-        ctx.save();
-        ctx.strokeStyle = 'rgba(120,123,134,0.5)';
-        ctx.lineWidth = Math.max(1, Math.round(hr));
-        ctx.setLineDash([2 * hr, 3 * hr]);
-        config.levels.forEach((level) => {
-          const y = toY(level);
-          if (y === null) return;
-          ctx.beginPath();
-          ctx.moveTo(0, y);
-          ctx.lineTo(width, y);
-          ctx.stroke();
-        });
-        ctx.restore();
+        
       });
     }
 
+        _drawLevels(target) {
+      const series = this._series;
+      if (!series) return;
+      const { config } = this._getState();
+      target.useBitmapCoordinateSpace((scope) => {
+        const ctx = scope.context;
+        const hr = scope.horizontalPixelRatio;
+        const vr = scope.verticalPixelRatio;
+        const width = scope.bitmapSize.width;
+        const lw = Math.max(1, Math.floor(hr));
+        const step = { dashed: [4 * lw, 4 * lw], dotted: [lw, 2 * lw] };
+
+        // Mỗi mức giá chỉ vẽ một lần (band 30/70 trùng level 2/6 thì band thắng)
+        const lines = new Map();
+        config.levels.forEach((v, i) => {
+          if (config.levelStyles[i].show) lines.set(v, config.levelStyles[i]);
+        });
+        [config.bandLow, config.bandHigh].forEach((b) => {
+          if (b.show) lines.set(b.value, b);
+        });
+
+        lines.forEach((l, v) => {
+          const yc = series.priceToCoordinate(v);
+          if (yc === null) return;
+          const y = Math.round(yc * vr) - Math.floor(lw / 2);
+          ctx.fillStyle = hexToRgba(l.color, l.alpha);
+          if (l.style === 'solid') {
+            ctx.fillRect(0, y, width, lw);
+            return;
+          }
+          const [on, off] = step[l.style] || step.dotted;
+          for (let x = 0; x < width; x += on + off) ctx.fillRect(x, y, on, lw);
+        });
+      });
+    }
+    
     _drawForeground(target) {
       const series = this._series;
       const chart = this._chart;
@@ -214,18 +284,20 @@ const ChartModule = (function () {
 
         if (config.showSnr && xEnd !== null) {
           ctx.save();
-          ctx.lineWidth = Math.max(1, Math.round(hr));
+          ctx.lineWidth = Math.max(1, Math.floor(hr));
           data.snr.forEach((item) => {
             const x1 = timeScale.logicalToCoordinate(item.startIndex);
             const y = toY(item.value);
             if (x1 === null || y === null) return;
-            ctx.strokeStyle = hexToRgba(
-              item.kind === 'high' ? config.snrResistanceColor : config.snrSupportColor,
-              0.5
-            );
+                        ctx.strokeStyle =
+              item.kind === 'high'
+                ? hexToRgba(config.snrResistanceColor, config.snrResistanceAlpha)
+                : hexToRgba(config.snrSupportColor, config.snrSupportAlpha);
             ctx.beginPath();
-            ctx.moveTo(x1 * hr, y);
-            ctx.lineTo(xEnd * hr, y);
+            const lwS = Math.max(1, Math.floor(hr));
+            const ys = Math.round(y - (lwS % 2 ? 0.5 : 0)) + (lwS % 2 ? 0.5 : 0);
+            ctx.moveTo(Math.round(x1 * hr), ys);
+            ctx.lineTo(Math.round(xEnd * hr), ys);
             ctx.stroke();
           });
           ctx.restore();
@@ -499,10 +571,6 @@ const ChartModule = (function () {
     let rsiSeries = null;
     let emaRsiSeries = null;
     let wmaRsiSeries = null;
-    // RSI cổ điển (bản cũ): 3 series riêng, độc lập với "RSI NĐQ" ở trên
-    let rsiCSeries = null;
-    let emaRsiCSeries = null;
-    let wmaRsiCSeries = null;
     let macdLineSeries = null;
     let macdSignalSeries = null;
     let macdHistSeries = null;
@@ -550,10 +618,6 @@ const ChartModule = (function () {
       rsi: { label: 'RSI', color: '#9c27b0', width: 1, period: 14, enabled: false },
       emaRsi: { label: 'EMA(RSI)', color: '#2962ff', width: 1, period: 9, enabled: false },
       wmaRsi: { label: 'WMA(RSI)', color: '#ff9800', width: 1, period: 45, enabled: false },
-      // RSI cổ điển (bản cũ): màu/chu kỳ như trước, trục cố định 36-84, có vạch 30/40/50/60/70
-      rsiC: { label: 'RSI', color: '#7e57c2', width: 1, period: 14, enabled: false },
-      emaRsiC: { label: 'EMA(RSI)', color: '#26a69a', width: 1, period: 9, enabled: false },
-      wmaRsiC: { label: 'WMA(RSI)', color: '#ef5350', width: 1, period: 45, enabled: false },
       macdLine: { label: 'MACD Line', color: '#2962ff', period: 12, enabled: false },
       macdSignal: { label: 'MACD Signal', color: '#ff9800', period: 9, enabled: false },
       macdHist: { label: 'MACD Hist', color: '#26a69a', period: 26, enabled: false },
@@ -704,24 +768,6 @@ const ChartModule = (function () {
       });
       volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
 
-          /** Chỉ tạo series cho đường EMA đang BẬT; đường tắt thì gỡ khỏi chart. */
-    function syncEmaSeries() {
-      if (!chart) return;
-      const wanted = new Set(emaLines.filter((l) => l.enabled).map((l) => l.id));
-      emaSeriesMap.forEach((s, id) => {
-        if (!wanted.has(id)) {
-          try { chart.removeSeries(s); } catch (err) { /* bỏ qua */ }
-          emaSeriesMap.delete(id);
-        }
-      });
-      emaLines.forEach((l) => {
-        if (!l.enabled) return;
-        const opts = { ...OVERLAY_OPTS, color: l.color, lineWidth: l.width };
-        const s = emaSeriesMap.get(l.id);
-        if (s) s.applyOptions(opts);
-        else emaSeriesMap.set(l.id, chart.addSeries(LightweightCharts.LineSeries, opts, 0));
-      });
-    }
 
       updatePaneStretchFactors();
       setupPinchZoom(container);
@@ -1047,30 +1093,19 @@ function setupPinchZoom(container) {
       };
     }
 
-    /** Đồng bộ series trên chart với danh sách emaLines (thêm/xóa/cập nhật style). */
+        /** Chỉ tạo series cho đường EMA đang BẬT; đường tắt thì gỡ khỏi chart. */
     function syncEmaSeries() {
       if (!chart) return;
-      const ids = new Set(emaLines.map((l) => l.id));
+      const wanted = new Set(emaLines.filter((l) => l.enabled).map((l) => l.id));
       emaSeriesMap.forEach((s, id) => {
-        if (!ids.has(id)) {
-          try {
-            chart.removeSeries(s);
-          } catch (err) {
-            // Series có thể đã bị huỷ - bỏ qua an toàn.
-          }
+        if (!wanted.has(id)) {
+          try { chart.removeSeries(s); } catch (err) { /* bỏ qua */ }
           emaSeriesMap.delete(id);
         }
       });
       emaLines.forEach((l) => {
-        const opts = {
-          color: l.color,
-          lineWidth: l.width,
-          visible: l.enabled,
-          title: '',
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerVisible: false,
-        };
+        if (!l.enabled) return;
+        const opts = { ...OVERLAY_OPTS, color: l.color, lineWidth: l.width };
         const s = emaSeriesMap.get(l.id);
         if (s) s.applyOptions(opts);
         else emaSeriesMap.set(l.id, chart.addSeries(LightweightCharts.LineSeries, opts, 0));
@@ -1094,14 +1129,41 @@ function setupPinchZoom(container) {
       return emaLines.map((l) => ({ ...l }));
     }
 
+
+        // Khung giờ hiện tại có được phép hiện RSI NĐQ không (tab Visibility)
+    function rsiTfOk() {
+      if (!rsiExtras.tfs) return true;
+      const p = Store.getPane(paneId);
+      return !!p && rsiExtras.tfs.includes(p.timeframe);
+    }
+
+    function tfAllowed(key) {
+      return ['rsi', 'emaRsi', 'wmaRsi'].includes(key) ? rsiTfOk() : true;
+    }
+
+    /** Đồng bộ series RSI NĐQ với khung hiện tại: khung bị ẩn thì gỡ series (không tính, không tốn tài nguyên). */
+    function reconcileRsiTf() {
+      const prev = restoring;
+      restoring = true;
+      try {
+        const should = rsiTfOk();
+        ['rsi', 'emaRsi', 'wmaRsi'].forEach((k) => {
+          if (!indicatorConfig[k].enabled) return;
+          if (should !== !!seriesForKey(k)) setIndicatorVisible(k, true);
+        });
+      } finally {
+        restoring = prev;
+      }
+    }
+
     // ===== RSI BY NĐQ: dữ liệu + vẽ thêm =====
 
         /** Trục RSI: tối thiểu 30-70, luôn gồm cả các mức ngang, tự nới ra nếu dữ liệu vượt biên. */
     function rsiAutoscaleProvider(original) {
       const info = original();
       if (!info || !info.priceRange) return info;
-      let min = Math.min(30, info.priceRange.minValue);
-      let max = Math.max(70, info.priceRange.maxValue);
+      let min = Math.min(rsiExtras.bandLow.value, info.priceRange.minValue);
+      let max = Math.max(rsiExtras.bandHigh.value, info.priceRange.maxValue);
       if (rsiExtras.levels.length) {
         min = Math.min(min, ...rsiExtras.levels);
         max = Math.max(max, ...rsiExtras.levels);
@@ -1199,6 +1261,7 @@ function setupPinchZoom(container) {
     /** Đổi cài đặt RSI mở rộng (nguồn giá, mức RSI, bảng giá, SnR, màu...). */
     function setRsiExtras(partial) {
       rsiExtras = sanitizeRsiExtras({ ...rsiExtras, ...(partial || {}) });
+      reconcileRsiTf();
       renderIndicators(currentCandles);
       if (rsiPrim) rsiPrim.requestRedraw();
       persistIndicatorPrefs();
@@ -1239,21 +1302,8 @@ function setupPinchZoom(container) {
         updateRsiExtras(candles, rsi, wmaOfRsi);
       }
 
-      // RSI cổ điển (luôn tính theo close, không có phần vẽ thêm)
-      if (rsiCSeries || emaRsiCSeries || wmaRsiCSeries) {
-        const rsiC = IndicatorModule.calcRSI(candles, indicatorConfig.rsiC.period);
-        if (rsiCSeries) rsiCSeries.setData(IndicatorModule.toSeriesData(candles, rsiC));
-        if (emaRsiCSeries) {
-          const v = IndicatorModule.calcEMA(rsiC, indicatorConfig.emaRsiC.period);
-          emaRsiCSeries.setData(IndicatorModule.toSeriesData(candles, v));
-        }
-        if (wmaRsiCSeries) {
-          const v = IndicatorModule.calcWMA(rsiC, indicatorConfig.wmaRsiC.period);
-          wmaRsiCSeries.setData(IndicatorModule.toSeriesData(candles, v));
-        }
-      }
 
-            if (macdLineSeries || macdSignalSeries || macdHistSeries) {
+        if (macdLineSeries || macdSignalSeries || macdHistSeries) {
         const macd = IndicatorModule.calcMACD(
           closes,
           indicatorConfig.macdLine.period,
@@ -1373,9 +1423,6 @@ function setupPinchZoom(container) {
         rsi: rsiSeries,
         emaRsi: emaRsiSeries,
         wmaRsi: wmaRsiSeries,
-        rsiC: rsiCSeries,
-        emaRsiC: emaRsiCSeries,
-        wmaRsiC: wmaRsiCSeries,
         macdLine: macdLineSeries,
         macdSignal: macdSignalSeries,
         macdHist: macdHistSeries,
@@ -1388,14 +1435,7 @@ function setupPinchZoom(container) {
         const panes = chart.panes();
         if (!panes || panes.length === 0) return;
 
-        const pane1Active = !!(
-          rsiSeries ||
-          emaRsiSeries ||
-          wmaRsiSeries ||
-          rsiCSeries ||
-          emaRsiCSeries ||
-          wmaRsiCSeries
-        );
+        const pane1Active = !!(rsiSeries || emaRsiSeries || wmaRsiSeries);
         const pane2Active = !!(macdLineSeries || macdSignalSeries || macdHistSeries);
 
         let f0 = 1.0;
@@ -1427,7 +1467,7 @@ function setupPinchZoom(container) {
       if (!cfg) return;
       cfg.enabled = visible;
 
-      if (visible) {
+      if (visible && tfAllowed(key)) {
         const series = seriesForKey(key);
         if (!series) {
           const fixedRSIRangeProvider = rsiAutoscaleProvider;
@@ -1476,45 +1516,7 @@ function setupPinchZoom(container) {
               1
             );
           } else if (key === 'rsiC' || key === 'emaRsiC' || key === 'wmaRsiC') {
-                        // RSI cổ điển: trục tối thiểu 30-70, tự nới ra nếu dữ liệu vượt biên
-            const classicRangeProvider = (original) => {
-              const info = original();
-              if (!info || !info.priceRange) return info;
-              return {
-                priceRange: {
-                  minValue: Math.min(30, info.priceRange.minValue),
-                  maxValue: Math.max(70, info.priceRange.maxValue),
-                },
-                margins: info.margins,
-              };
-            };
-            const s = chart.addSeries(
-              LightweightCharts.LineSeries,
-              {
-                color: cfg.color,
-                lineWidth: cfg.width,
-                title: '',
-                priceLineVisible: false,
-                lastValueVisible: false,
-                crosshairMarkerVisible: false,
-                autoscaleInfoProvider: classicRangeProvider,
-              },
-              1
-            );
-            if (key === 'rsiC') {
-              rsiCSeries = s;
-              [50, 40, 60, 30, 70].forEach((level) => {
-                s.createPriceLine({
-                  price: level,
-                  color: level === 50 ? '#5d6274' : '#595e6d',
-                  lineWidth: 1,
-                  lineStyle: LightweightCharts.LineStyle.Dotted,
-                  axisLabelVisible: true,
-                  title: '',
-                });
-              });
-            } else if (key === 'emaRsiC') emaRsiCSeries = s;
-            else wmaRsiCSeries = s;
+          
           } else if (key === 'macdLine') {
             macdLineSeries = chart.addSeries(
               LightweightCharts.LineSeries,
@@ -1566,16 +1568,13 @@ function setupPinchZoom(container) {
         const series = seriesForKey(key);
         if (series) {
                     if (
-            ['rsi', 'emaRsi', 'wmaRsi', 'rsiC', 'emaRsiC', 'wmaRsiC', 'macdLine', 'macdSignal', 'macdHist',
+            ['rsi', 'emaRsi', 'wmaRsi', 'macdLine', 'macdSignal', 'macdHist',
               'sma50', 'bbUpper', 'bbMiddle', 'bbLower'].includes(key)
           ) {
             chart.removeSeries(series);
             if (key === 'rsi') rsiSeries = null;
             else if (key === 'emaRsi') emaRsiSeries = null;
             else if (key === 'wmaRsi') wmaRsiSeries = null;
-            else if (key === 'rsiC') rsiCSeries = null;
-            else if (key === 'emaRsiC') emaRsiCSeries = null;
-            else if (key === 'wmaRsiC') wmaRsiCSeries = null;
             else if (key === 'macdLine') macdLineSeries = null;
             else if (key === 'macdSignal') macdSignalSeries = null;
             else if (key === 'macdHist') macdHistSeries = null;
@@ -1598,7 +1597,7 @@ function setupPinchZoom(container) {
       }
     }
 
-    const STYLABLE_KEYS = ['rsi', 'emaRsi', 'wmaRsi', 'rsiC', 'emaRsiC', 'wmaRsiC'];
+    const STYLABLE_KEYS = ['rsi', 'emaRsi', 'wmaRsi'];
 
     /** Áp màu + độ dày nét đã lưu trong indicatorConfig lên series (nếu series đang tồn tại). */
     function applyLineStyle(key) {
@@ -1716,6 +1715,7 @@ function setupPinchZoom(container) {
     function loadInitialData(candles) {
       currentCandles = candles.slice();
       restoreIndicatorPrefs(); // trước khi render để chỉ tính chỉ báo ĐÚNG 1 LẦN
+      reconcileRsiTf(); // đổi khung giờ: tự gỡ / dựng lại RSI NĐQ theo tab Visibility
 
       candleSeries.setData(
         candles.map((c) => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close }))
@@ -1745,9 +1745,6 @@ function setupPinchZoom(container) {
       if (rsiSeries) rsiSeries.setData([]);
       if (emaRsiSeries) emaRsiSeries.setData([]);
       if (wmaRsiSeries) wmaRsiSeries.setData([]);
-      if (rsiCSeries) rsiCSeries.setData([]);
-      if (emaRsiCSeries) emaRsiCSeries.setData([]);
-      if (wmaRsiCSeries) wmaRsiCSeries.setData([]);
       if (macdLineSeries) macdLineSeries.setData([]);
       if (macdSignalSeries) macdSignalSeries.setData([]);
       if (macdHistSeries) macdHistSeries.setData([]);
@@ -1834,6 +1831,10 @@ function setupPinchZoom(container) {
         recomputeRafId = null;
       }
       if (pinchCleanup) pinchCleanup();
+      Object.keys(ichiSeries).forEach((k) => delete ichiSeries[k]);
+      ichiPrim = null;
+      rsiPrim = null;
+      rsiPrimHost = null;
       if (chart) chart.remove();
       chart = null;
       emaSeriesMap.clear();
@@ -1873,6 +1874,6 @@ function setupPinchZoom(container) {
     };
   }
 
-    return {create, getHigherTimeframeFor, ENTRY_TO_HIGHER_TF, getIchimokuDefaults: () => sanitizeIchimoku(null),
+    return {create, getHigherTimeframeFor, ENTRY_TO_HIGHER_TF, getIchimokuDefaults: () => sanitizeIchimoku(null), getRsiDefaults: () => sanitizeRsiExtras(null),
   };
 })();
