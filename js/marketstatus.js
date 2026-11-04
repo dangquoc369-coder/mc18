@@ -1,6 +1,6 @@
 /**
  * marketstatus.js
- * Nút "Trạng thái thị trường" - CHỈ 1 NÚT DUY NHẤT dùng chung cho cả 4 pane.
+ * Nút "Phân Tích" - CHỈ 1 NÚT DUY NHẤT dùng chung cho cả 4 pane.
  *
  * Lịch sử: getMarketStatus nhận { entryCandles, higherTFCandles }; panel bám
  * theme sáng/tối (không hardcode màu); nút 🔄 làm mới thủ công (đá lại socket
@@ -109,7 +109,7 @@
     panel.className = 'ms-panel';
     panel.innerHTML = `
       <div class="ms-header">
-        <span>${iconInline('marketStatus')} Trạng thái thị trường</span>
+        <span>${iconInline('marketStatus')} Phân Tích</span>
         <span class="ms-header-actions">
           <span class="ms-reload" title="Làm mới ngay">${iconHTML('reload')}</span>
           <span class="ms-close" title="Đóng">${iconHTML('close')}</span>
@@ -173,8 +173,8 @@
     btn.id = 'marketStatusBtn';
     btn.className = 'topbar-btn';
     btn.type = 'button';
-    btn.innerHTML = `<span class="btn-icon">${iconHTML('marketStatus')}</span><span class="btn-text"> Trạng thái thị trường</span>`;
-    btn.title = 'Xem trạng thái thị trường';
+    btn.innerHTML = `<span class="btn-icon">${iconHTML('marketStatus')}</span><span class="btn-text"> Phân Tích</span>`;
+    btn.title = 'Xem Phân Tích';
     btn.addEventListener('click', () => {
       if (panel.classList.contains('open')) {
         panel.classList.remove('open');

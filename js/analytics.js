@@ -1,6 +1,6 @@
 /**
  * analytics.js
- * Phân Tích Nhật Ký Lệnh Trading (Trading Analytics & Performance Journal)
+ * Định Lượng Nhật Ký Lệnh Trading (Trading Analytics & Performance Journal)
  *
  * LOCAL-FIRST (đợt này):
  *   - Nhật ký lệnh, vốn ban đầu, danh sách lệnh đã xoá (tombstone) đều lưu
@@ -392,7 +392,7 @@ const AnalyticsModule = (function () {
         <!-- Top Header Bar -->
         <div class="an-header">
           <div class="an-header-title-box">
-            <h2 class="an-title">${getIconSvg('tabAnalytics', 'margin-right:6px;')} Phân Tích Nhật Ký Lệnh Trading (Quant Analytics)</h2>
+            <h2 class="an-title">${getIconSvg('tabAnalytics', 'margin-right:6px;')} Định Lượng Nhật Ký Lệnh Trading (Quant Analytics)</h2>
             <div class="an-subtitle">
               Tài khoản: <strong>${username ? escapeHtml(username) : 'Khách'}</strong> &bull; Vốn ban đầu: <strong>${fmtUSD(initialCapital)}</strong> &bull; Dữ liệu lưu trên thiết bị này &bull; Tác Giả: <strong>DangQuoc</strong>
             </div>

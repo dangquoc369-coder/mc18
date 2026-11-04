@@ -6,7 +6,7 @@
  *   level 0: đầy đủ - cụm "1 ô / 2 ô / 3 ô / 4 ô" + nút khung giờ nhanh + chữ trên mọi nút
  *   level 1: cụm số ô thu thành 1 ô chọn "N ô ▾"
  *   level 2: + ẩn nút khung giờ nhanh, chỉ còn ô chọn khung
- *   level 3: + nút "Trạng thái thị trường" chỉ còn icon
+ *   level 3: + nút "Phân Tích" chỉ còn icon
  *   level 4: + mọi nút chỉ còn icon
  *
  * Mỗi lần đo bắt đầu lại từ level 0 rồi tăng dần tới khi vừa, nên khi rộng
