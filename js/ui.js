@@ -325,7 +325,7 @@ const UI = (function () {
 
   /* ===================== HÀNG TIMEFRAME DÙNG CHUNG ===================== */
 
-  function renderSharedTimeframeGroup() {
+    function renderSharedTimeframeGroup() {
     const groupEl = document.getElementById('sharedTimeframeGroup');
     if (!groupEl) return;
     const activePane = Store.getActivePane();
@@ -334,14 +334,17 @@ const UI = (function () {
     const quickGroup = document.createElement('div');
     quickGroup.className = 'timeframe-quick-btns';
 
-    const popular = [
-      { label: '15m', value: '15m' },
-      { label: '1H', value: '1h' },
-      { label: '4H', value: '4h' },
-      { label: '1D', value: '1d' }
-    ];
+    // Toàn bộ khung theo thứ tự ưu tiên; timeframe-fit.js sẽ ẩn bớt khung nào không đủ chỗ
+    const list = typeof TimeframeFit !== 'undefined'
+      ? TimeframeFit.getList()
+      : [
+          { label: '15m', value: '15m' },
+          { label: '1H', value: '1h' },
+          { label: '4H', value: '4h' },
+          { label: '1D', value: '1d' },
+        ];
 
-    popular.forEach((tf) => {
+    list.forEach((tf) => {
       const btn = document.createElement('button');
       btn.className = 'timeframe-btn' + (tf.value === activePane.timeframe ? ' active' : '');
       btn.textContent = tf.label;
@@ -368,6 +371,11 @@ const UI = (function () {
     });
 
     groupEl.appendChild(select);
+
+    if (typeof TimeframeFit !== 'undefined') {
+      groupEl.appendChild(TimeframeFit.makeSettingsButton());
+      TimeframeFit.schedule();
+    }
   }
 
   /* ===================== HÀNG CÔNG CỤ VẼ DÙNG CHUNG (THU GỌN) ===================== */

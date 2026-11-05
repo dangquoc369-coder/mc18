@@ -13,6 +13,7 @@
 const CountdownModule = (function () {
   const TIMEFRAME_MS = {
   '1m': 60_000,
+  '3m': 180_000,   // mới
   '5m': 300_000,
   '15m': 900_000,
   '20m': 1_200_000,   // mới

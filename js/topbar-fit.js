@@ -25,7 +25,7 @@
     return false;
   }
 
-  function fit() {
+    function fit() {
     scheduled = false;
     const topbar = document.getElementById('topbar');
     const bar = document.getElementById('controlBar');
@@ -36,12 +36,16 @@
       return;
     }
 
+    if (typeof TimeframeFit !== 'undefined') TimeframeFit.collapse();   // MỚI
+
     let level = 0;
     root.setAttribute('data-tb-level', '0');
     while (level < MAX_LEVEL && overflowing(topbar, bar)) {
       level++;
       root.setAttribute('data-tb-level', String(level));
     }
+
+    if (typeof TimeframeFit !== 'undefined') TimeframeFit.fit();        // MỚI
   }
 
   function schedule() {

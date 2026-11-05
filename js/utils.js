@@ -107,7 +107,9 @@ function uid(prefix = 'id') {
  */
 const TIMEFRAMES = [
   { label: '1m', value: '1m' },
+  { label: '3m', value: '3m' },      // mới - native Binance
   { label: '5m', value: '5m' },
+  { label: '10m', value: '10m' },    // mới - tổng hợp từ 2 nến 5m
   { label: '15m', value: '15m' },
   { label: '20m', value: '20m' },   // mới - tổng hợp
   { label: '30m', value: '30m' },
@@ -141,6 +143,7 @@ const TIMEFRAMES = [
  * quyết định, không đi qua luồng này) - xem ghi chú trong api.js.
  * ===================================================================== */
 const SYNTHETIC_TIMEFRAMES = {
+  '10m': { base: '5m', baseSeconds: 5 * 60, factor: 2 },   // mới
   '20m': { base: '5m', baseSeconds: 5 * 60, factor: 4 },
   '45m': { base: '15m', baseSeconds: 15 * 60, factor: 3 },
   '3h':  { base: '1h', baseSeconds: 60 * 60, factor: 3 },

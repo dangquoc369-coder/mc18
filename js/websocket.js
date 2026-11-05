@@ -425,18 +425,34 @@ async function oandaTick(hub) {
  * Đăng ký 1 luồng vào hub của symbol.
  * onUpdate(changedBars, quote|null, allBars): gọi mỗi khi luồng đến hạn và có dữ liệu.
  */
+const OANDA_CLIENT_SYNTH = new Set(['10m']);   // khung Worker không có -> tự gộp từ khung base
+
 function oandaSubscribe(paneId, key, symbol, interval, periodMs, onUpdate) {
   oandaUnsubscribe(paneId, key);
+
+  let fetchInterval = interval;
+  if (OANDA_CLIENT_SYNTH.has(interval)) {
+    const info = getSyntheticInfo(interval);
+    const agg = createSyntheticAggregator(interval);
+    fetchInterval = info.base;
+    const inner = onUpdate;
+    onUpdate = (changed, quote, all) => {
+      // nến base đến theo thứ tự thời gian -> gộp dần thành nến 10m
+      const merged = changed.map((b) => agg.push(b));
+      inner(merged, quote, all);
+    };
+  }
+
   const hub = oandaGetHub(symbol);
   const id = `${paneId}|${key}`;
   hub.subs.set(id, {
     id,
     paneId,
     key,
-    interval,
+    interval: fetchInterval,   // hub hỏi Worker khung base
     periodMs,
     onUpdate,
-    seen: new Map(), // time -> chữ ký OHLCV (chỉ phát nến thay đổi)
+    seen: new Map(),
     statusSent: false,
     nextAt: oandaNextGrid(Date.now()) + periodMs - OANDA_GRID_MS,
   });
