@@ -312,6 +312,7 @@ const UI = (function () {
             ${m.name ? `<span class="ssi-name">${m.name}</span>` : ''}
           </div>
           <span class="ssi-source">${m.source}</span>
+          ${typeof WatchlistModule !== 'undefined' ? WatchlistModule.starHTML(m.symbol) : ''}
         </div>`
         )
         .join('');

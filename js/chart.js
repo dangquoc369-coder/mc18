@@ -1871,6 +1871,8 @@ function setupPinchZoom(container) {
       getCandles: () => currentCandles.slice(),
       getBreakout: () => breakout,
       getDrawing: () => drawing,
+      getSeries: () => candleSeries,   // MỚI
+      getChart: () => chart,           // MỚI
     };
   }
 
