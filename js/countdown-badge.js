@@ -9,9 +9,9 @@
 const CountdownBadge = (function () {
   const UP = '#089981';
   const DOWN = '#F23645';
-  const LINE1_H = 18;       // chiều cao dòng giá (px) - khớp nhãn giá gốc
-  const LINE2_H = 15;       // chiều cao dòng đếm ngược (px)
-  const PAD_X = 6;          // lề trái chữ (px)
+  const LINE1_H = 21;       // chiều cao dòng giá (px) - khớp nhãn giá gốc
+  const LINE2_H = 18;       // chiều cao dòng đếm ngược (px)
+  const PAD_X = 9;          // lề trái chữ (px)
   const RADIUS = 3;
   const state = {};         // paneId -> { prim, series, key }
 
