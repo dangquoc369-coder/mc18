@@ -30,18 +30,24 @@ const CountdownModule = (function () {
   '2d': 172_800_000,  // mới
   '3d': 259_200_000,
   '1w': 604_800_000,
+  '2w': 1_209_600_000,   // mới
 };
 
-  /** '1M' (tháng) không có độ dài cố định -> tính theo lịch dương thật. */
-  function nextCloseTime(timeframe, now) {
+const WEEK_ANCHOR_MS = 345_600_000; // Thứ Hai 00:00 UTC
+
+function nextCloseTime(timeframe, now) {
   if (timeframe === '1M') {
     const d = new Date(now);
     return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1, 0, 0, 0);
   }
+  if (timeframe === '1w') {
+    const ms = 604_800_000;
+    return Math.ceil((now - WEEK_ANCHOR_MS) / ms) * ms + WEEK_ANCHOR_MS;
+  }
   if (isSyntheticInterval(timeframe)) {
-    const bucketSeconds = getSyntheticBucketSeconds(timeframe);
-    const bucketMs = bucketSeconds * 1000;
-    return Math.ceil(now / bucketMs) * bucketMs;
+    const bucketMs = getSyntheticBucketSeconds(timeframe) * 1000;
+    const anchorMs = getSyntheticAnchorSeconds(timeframe) * 1000;
+    return Math.ceil((now - anchorMs) / bucketMs) * bucketMs + anchorMs;
   }
   const ms = TIMEFRAME_MS[timeframe] || TIMEFRAME_MS['1h'];
   return Math.ceil(now / ms) * ms;

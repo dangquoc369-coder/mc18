@@ -584,6 +584,7 @@ function xToPointInfo(x) {
   if (previewDrawing) drawShape(previewDrawing, true);
   drawCrosshair();
   if (primitiveUpdate) primitiveUpdate();
+  extraUpdaters.forEach((f) => f());   // <-- THÊM
   scheduleSave();
 }
     function toRGBA(baseColor, alpha) {
@@ -2548,6 +2549,49 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
       }),
     };
 
+    // ===== ĐƯỜNG DỌC TRÊN CÁC PANE PHỤ (RSI / MACD) =====
+const extraUpdaters = new Set();
+
+const vlineExtraView = {
+  zOrder: () => 'top',
+  renderer: () => ({
+    draw(target) {
+      if (allDrawingsHidden) return;
+      target.useMediaCoordinateSpace((scope) => {
+        const c = scope.context;
+        const { height } = scope.mediaSize;
+        drawings.forEach((d, idx) => {
+          if (d.type !== 'vline' || !isVisibleNow(d)) return;
+          const x = pointToX(d);
+          if (x === null || x === undefined) return;
+          const selected = idx === selectedDrawingIndex;
+          c.save();
+          c.globalAlpha = d.opacity === undefined ? 1 : d.opacity;
+          c.strokeStyle = d.color || '#f2a339';
+          c.lineWidth = (d.width || 1.5) + (selected ? 1 : 0);
+          if (d.dashed !== false) c.setLineDash([4, 3]);
+          c.beginPath();
+          c.moveTo(x, 0);
+          c.lineTo(x, height);
+          c.stroke();
+          c.restore();
+        });
+      });
+    },
+  }),
+};
+
+/** Primitive chỉ vẽ đường dọc - chart.js gắn vào series của pane RSI / MACD. */
+function createVlinePrimitive() {
+  let upd = null;
+  return {
+    attached: ({ requestUpdate }) => { upd = requestUpdate; extraUpdaters.add(upd); },
+    detached: () => { if (upd) extraUpdaters.delete(upd); upd = null; },
+    updateAllViews() {},
+    paneViews: () => [vlineExtraView],
+  };
+}
+
     candleSeries.attachPrimitive({
       attached: ({ requestUpdate }) => { primitiveUpdate = requestUpdate; },
       detached: () => { primitiveUpdate = null; },
@@ -2586,6 +2630,7 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
   getAllHidden,
   loadForSymbol,
   flushSave,
+  createVlinePrimitive,   // <-- THÊM
 
   getOldestTime() {
     let m = Infinity;

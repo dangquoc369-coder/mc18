@@ -125,6 +125,7 @@ const TIMEFRAMES = [
   { label: '2D', value: '2d' },     // mới - tổng hợp
   { label: '3D', value: '3d' },
   { label: 'W', value: '1w' },
+  { label: '2W', value: '2w' },   // mới - tổng hợp từ 2 nến 1w
   { label: 'M', value: '1M' },
 ];
 
@@ -148,6 +149,9 @@ const SYNTHETIC_TIMEFRAMES = {
   '45m': { base: '15m', baseSeconds: 15 * 60, factor: 3 },
   '3h':  { base: '1h', baseSeconds: 60 * 60, factor: 3 },
   '2d':  { base: '1d', baseSeconds: 24 * 60 * 60, factor: 2 },
+  // Mốc neo = Thứ Hai 00:00 UTC đầu tiên sau epoch (05/01/1970) = 345600s.
+  // Muốn đổi cách ghép cặp tuần (chẵn/lẻ) cho khớp TradingView: đổi thành 950400 (+1 tuần).
+  '2w':  { base: '1w', baseSeconds: 7 * 24 * 3600, factor: 2, anchorSeconds: 345600 },
 };
 
 function isSyntheticInterval(interval) {
@@ -161,6 +165,18 @@ function getSyntheticInfo(interval) {
 function getSyntheticBucketSeconds(interval) {
   const info = SYNTHETIC_TIMEFRAMES[interval];
   return info ? info.baseSeconds * info.factor : null;
+}
+
+function getSyntheticAnchorSeconds(interval) {
+  const info = SYNTHETIC_TIMEFRAMES[interval];
+  return info && info.anchorSeconds ? info.anchorSeconds : 0;
+}
+
+/** Mốc bắt đầu bucket chứa thời điểm t (giây), có tính mốc neo. */
+function syntheticBucketStart(info, t) {
+  const a = info.anchorSeconds || 0;
+  const b = info.baseSeconds * info.factor;
+  return Math.floor((t - a) / b) * b + a;
 }
 
 /**
@@ -178,7 +194,7 @@ function aggregateCandles(baseCandles, interval) {
   const order = [];
 
   baseCandles.forEach((c) => {
-    const bucketStart = Math.floor(c.time / bucketSeconds) * bucketSeconds;
+    const bucketStart = syntheticBucketStart(info, c.time);
     let agg = buckets.get(bucketStart);
     if (!agg) {
       agg = { time: bucketStart, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume };
@@ -235,7 +251,7 @@ function createSyntheticAggregator(interval) {
   }
 
   function push(baseCandle) {
-    const bStart = Math.floor(baseCandle.time / bucketSeconds) * bucketSeconds;
+    const bStart = syntheticBucketStart(info, baseCandle.time);
     const idx = Math.round((baseCandle.time - bStart) / info.baseSeconds);
 
     if (bucketTime !== bStart) {

@@ -136,7 +136,7 @@ async function fetchKlinesRaw(symbol, interval, limit, endTime) {
 
   if (provider === 'oanda') {
     // 10m: Worker không hỗ trợ -> tải 5m rồi gộp ở client
-    if (interval === '10m') return fetchSyntheticKlines(symbol, interval, limit, endTime);
+     if (interval === '10m' || interval === '2w') return fetchSyntheticKlines(symbol, interval, limit, endTime);
 
     let url =
       `${WORKER_FALLBACK_URL}/api/oanda/klines?symbol=${encodeURIComponent(symbol)}` +

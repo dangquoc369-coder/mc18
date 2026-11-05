@@ -584,6 +584,28 @@ const ChartModule = (function () {
     let rsiPrim = null;
     let rsiPrimHost = null;
 
+        // Primitive đường dọc ở pane 1 (RSI) và pane 2 (MACD)
+    const vlineHosts = { 1: { host: null, prim: null }, 2: { host: null, prim: null } };
+
+    function ensureVlinePrimitive(slot, host) {
+      const cur = vlineHosts[slot];
+      if (cur.host === host) return;
+      if (cur.host && cur.prim) {
+        try { cur.host.detachPrimitive(cur.prim); } catch (err) { /* series đã bị gỡ */ }
+      }
+      cur.host = null;
+      cur.prim = null;
+      if (!host || !drawing || typeof drawing.createVlinePrimitive !== 'function') return;
+      cur.prim = drawing.createVlinePrimitive();
+      host.attachPrimitive(cur.prim);
+      cur.host = host;
+    }
+
+    function syncVlinePrimitives() {
+      ensureVlinePrimitive(1, rsiSeries || emaRsiSeries || wmaRsiSeries || null);
+      ensureVlinePrimitive(2, macdLineSeries || macdSignalSeries || macdHistSeries || null);
+    }
+
     let currentCandles = [];
     
     let ichimoku = sanitizeIchimoku(null);
@@ -1593,6 +1615,7 @@ function setupPinchZoom(container) {
 
       applyLineStyle(key);
       ensureRsiPrimitive();
+      syncVlinePrimitives();      // <-- THÊM
       updatePaneStretchFactors();
       if (!restoring) {
         scheduleRecompute(true);
@@ -1838,6 +1861,8 @@ function setupPinchZoom(container) {
       ichiPrim = null;
       rsiPrim = null;
       rsiPrimHost = null;
+      vlineHosts[1] = { host: null, prim: null };   // <-- THÊM
+      vlineHosts[2] = { host: null, prim: null };
       if (chart) chart.remove();
       chart = null;
       emaSeriesMap.clear();

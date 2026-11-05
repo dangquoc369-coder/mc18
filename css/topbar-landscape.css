@@ -313,3 +313,36 @@ html.tb-merged #backupPanel {
     justify-content: center;
   }
 }
+/* Thanh kéo trong popup chọn khung giờ / số ô:
+   luôn trắng (kể cả khi rê chuột), chỉ đổi màu cam khi đang bấm giữ để kéo */
+.timeframe-select::-webkit-scrollbar,
+.layout-select::-webkit-scrollbar {
+  width: 10px;
+}
+.timeframe-select::-webkit-scrollbar-track,
+.layout-select::-webkit-scrollbar-track {
+  background: transparent;
+}
+.timeframe-select::-webkit-scrollbar-thumb,
+.timeframe-select::-webkit-scrollbar-thumb:hover,
+.layout-select::-webkit-scrollbar-thumb,
+.layout-select::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.timeframe-select::-webkit-scrollbar-thumb:active,
+.layout-select::-webkit-scrollbar-thumb:active {
+  background: var(--accent-blue);
+  background-clip: padding-box;
+}
+
+/* Nền sáng: dùng xám để thấy được */
+:root[data-theme="light"] .timeframe-select::-webkit-scrollbar-thumb,
+:root[data-theme="light"] .timeframe-select::-webkit-scrollbar-thumb:hover,
+:root[data-theme="light"] .layout-select::-webkit-scrollbar-thumb,
+:root[data-theme="light"] .layout-select::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.35);
+  background-clip: padding-box;
+}

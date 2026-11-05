@@ -425,7 +425,7 @@ async function oandaTick(hub) {
  * Đăng ký 1 luồng vào hub của symbol.
  * onUpdate(changedBars, quote|null, allBars): gọi mỗi khi luồng đến hạn và có dữ liệu.
  */
-const OANDA_CLIENT_SYNTH = new Set(['10m']);   // khung Worker không có -> tự gộp từ khung base
+const OANDA_CLIENT_SYNTH = new Set(['10m', '2w']);   // khung Worker không có -> tự gộp từ khung base
 
 function oandaSubscribe(paneId, key, symbol, interval, periodMs, onUpdate) {
   oandaUnsubscribe(paneId, key);
