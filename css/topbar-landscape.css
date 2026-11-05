@@ -337,12 +337,11 @@ html.tb-merged #backupPanel {
   background: var(--accent-blue);
   background-clip: padding-box;
 }
-
 /* Nền sáng: dùng xám để thấy được */
 :root[data-theme="light"] .timeframe-select::-webkit-scrollbar-thumb,
 :root[data-theme="light"] .timeframe-select::-webkit-scrollbar-thumb:hover,
 :root[data-theme="light"] .layout-select::-webkit-scrollbar-thumb,
 :root[data-theme="light"] .layout-select::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(0, 0, 0, 0.066);
   background-clip: padding-box;
 }
