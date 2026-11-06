@@ -20,6 +20,9 @@
  */
 const ChartModule = (function () {
   const ENTRY_TO_HIGHER_TF = {
+    '1d': '1M',
+    '12h': '2w',
+    '6h': '1w',
     '3h': '3d',
     '2h': '2d',
     '1h': '1d',
