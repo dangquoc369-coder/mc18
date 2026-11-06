@@ -632,7 +632,7 @@ export default {
       const data = await memoAsync(
         LIVE_MEM,
         key,
-        2000,
+        700,  // cache ngắn hơn nhịp poll 1s; vẫn gộp được các client hỏi cùng lúc
         async () => {
           let out = (await fetchOandaLiveTV(symbol, intervals, n)) || {};
           // Bù các khung còn thiếu bằng 1 kết nối khác (chia nhỏ từng nhóm 3 khung)

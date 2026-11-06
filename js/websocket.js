@@ -276,13 +276,15 @@ function connectTickerStream(paneId, symbol) {
  * OANDA: HUB POLL GỘP THEO SYMBOL
  * ===================================================================== */
 
-// Nhịp lưới (ms). Mọi chu kỳ poll là BỘI SỐ của nhịp này nên tự rơi vào cùng
-// 1 request. Muốn giảm tải Worker (đổi lại giá trễ hơn): tăng lên 5000.
-const OANDA_GRID_MS = 3000;
-const OANDA_PERIOD_KLINE = OANDA_GRID_MS * 1; // nến chính + giá
-const OANDA_PERIOD_HTF_SL = OANDA_GRID_MS * 3; // khung cao / khung SL
-const OANDA_PERIOD_TREND_FAST = OANDA_GRID_MS * 5; // trend m5/m15/m30
-const OANDA_PERIOD_TREND_SLOW = OANDA_GRID_MS * 10; // trend khung lớn (2h/6h/12h/1d)
+// Nhịp lưới 1s. Mọi chu kỳ là BỘI SỐ của nhịp này nên các luồng đến hạn cùng lúc
+// vẫn gộp thành 1 request.
+const OANDA_GRID_MS = 1000;
+const OANDA_PERIOD_KLINE_FAST = 1000;   // ô ĐANG CHỌN: 1s
+const OANDA_PERIOD_KLINE_SLOW = 3000;   // các ô khác: 3s
+const OANDA_PERIOD_HTF_SL = 9000;       // khung cao / khung SL (như cũ)
+const OANDA_PERIOD_TREND_FAST = 15000;  // trend m5/m15/m30 (như cũ)
+const OANDA_PERIOD_TREND_SLOW = 30000;  // trend khung lớn (như cũ)
+const OANDA_BACKOFF_BASE_MS = 3000;     // nền cho backoff khi lỗi (trước đây dùng chung OANDA_GRID_MS)
 
 const OANDA_FAIL_LIMIT = 3; // số lần lỗi LIÊN TIẾP mới báo "mất kết nối"
 const OANDA_BACKOFF_MAX_MS = 30000;
@@ -408,7 +410,7 @@ async function oandaTick(hub) {
     if (oandaHubs.get(hub.symbol) === hub) {
       hub.fails++;
       hub.catchup = true; // lần thành công kế tiếp xin thêm nến để lấp khoảng trống
-      hub.skipUntil = Date.now() + Math.min(OANDA_GRID_MS * Math.pow(2, hub.fails - 1), OANDA_BACKOFF_MAX_MS);
+      hub.skipUntil = Date.now() + Math.min(OANDA_BACKOFF_BASE_MS * Math.pow(2, hub.fails - 1), OANDA_BACKOFF_MAX_MS);
       console.warn(`[oanda-hub] ${hub.symbol} lỗi lần ${hub.fails}:`, err && err.message ? err.message : err);
       if (hub.fails >= OANDA_FAIL_LIMIT && !hub.down) {
         hub.down = true;
@@ -470,9 +472,29 @@ function oandaUnsubscribe(paneId, key) {
   });
 }
 
+/** Ô đang chọn poll nhanh (1s), các ô khác poll chậm (3s). */
+function oandaKlinePeriodFor(paneId) {
+  const active = Store.getState().activePaneId;
+  return paneId === active ? OANDA_PERIOD_KLINE_FAST : OANDA_PERIOD_KLINE_SLOW;
+}
+
+/** Đổi ô đang chọn -> chỉnh lại nhịp ngay, không phải tải lại luồng. */
+function oandaRetuneKlinePeriods() {
+  oandaHubs.forEach((hub) => {
+    hub.subs.forEach((s) => {
+      if (s.key !== 'kline') return;
+      const p = oandaKlinePeriodFor(s.paneId);
+      if (p === s.periodMs) return;
+      s.periodMs = p;
+      if (p === OANDA_PERIOD_KLINE_FAST) s.nextAt = 0; // vừa thành ô đang chọn -> lấy ngay nhịp tới
+    });
+  });
+}
+EventBus.on('pane:focused', oandaRetuneKlinePeriods);
+
 function connectOandaKlineStream(paneId, symbol, interval) {
   EventBus.emit('ws:status', { paneId, status: 'connecting' });
-  oandaSubscribe(paneId, 'kline', symbol, interval, OANDA_PERIOD_KLINE, (changed, quote, all) => {
+  oandaSubscribe(paneId, 'kline', symbol, interval, oandaKlinePeriodFor(paneId), (changed, quote, all) => {
     changed.forEach((candle) => EventBus.emit('kline:update', { paneId, candle }));
 
     const last = all.length ? all[all.length - 1] : null;

@@ -194,7 +194,7 @@ async function fetchOandaLiveMulti(symbol, intervals, n = 3) {
     `${WORKER_FALLBACK_URL}/api/oanda/live?symbol=${encodeURIComponent(symbol)}` +
     `&intervals=${encodeURIComponent(list.join(','))}`;
   if (n > 3) url += `&n=${Math.min(100, Math.floor(n))}`;
-  const res = await fetchWithRetry(url, { timeoutMs: 12000, retries: 1, retryDelayMs: 700 });
+  const res = await fetchWithRetry(url, { timeoutMs: 6000, retries: 1, retryDelayMs: 500 });
   return await res.json();
 }
 
