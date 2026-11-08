@@ -26,6 +26,9 @@
   const paneInstances = {}; // paneId -> ChartModule instance
   const trendRefInstances = {}; // paneId -> TrendReferenceModule instance
   const trendRefTimers = {}; // paneId -> timeout id (tải trend tham khảo trễ)
+  const trailTimers = {}; // paneId -> interval id (làm mới nến khung trailing của chế độ MA)
+  const bkTrailTimers = {}; 
+  const bkTrailKeys = {};
 
   window.PaneRegistry = {
     get(paneId) {
@@ -154,6 +157,7 @@
     if (!instance || !Store.getPane(paneId)) return;
 
     closePaneChartSockets(paneId);
+    delete bkTrailKeys[paneId];
 
     // KHÔNG clearData() ngay: giữ chart cũ hiển thị trong lúc tải (cảm giác
     // nhanh hơn). clearData() được gọi ngay trước khi nạp dữ liệu mới.
@@ -380,7 +384,9 @@
     });
 
     // Cập nhật trạng thái hiển thị của chỉ báo breakout theo cấu hình lưu trữ
-    instance.getBreakout().setVisible(!!pane.breakoutVisible);
+    instance.setSignalState(pane.signalMode || 'breakout', !!pane.breakoutVisible);
+    syncMaTrail(paneId, instance, pane); // tải nến khung trailing ở nền, không chặn luồng
+    syncBreakoutTrail(paneId, instance, pane);
 
     if (pane.slMode === 'custom' && pane.slTimeframe) {
       await loadSLData(paneId, instance, pane.symbol, pane.slTimeframe);
@@ -389,6 +395,82 @@
     }
   }
 
+
+  async function syncBreakoutTrail(paneId, instance, pane) {
+  const cfg = instance.getBreakoutSettings();
+  const active = (pane.signalMode || 'breakout') === 'breakout' && !!pane.breakoutVisible;
+  if (!active || !BreakoutModule.needsExternalTrail(cfg, pane.timeframe)) {
+    clearInterval(bkTrailTimers[paneId]);
+    delete bkTrailTimers[paneId];
+    delete bkTrailKeys[paneId];
+    instance.setBreakoutTrailCandles(null);
+    return;
+  }
+  const { symbol, timeframe } = pane;
+  const trailTf = cfg.trailTf;
+  const key = `${symbol}|${timeframe}|${trailTf}`;
+  if (bkTrailKeys[paneId] === key) return; // đã/đang tải đúng cấu hình này
+  bkTrailKeys[paneId] = key;
+  clearInterval(bkTrailTimers[paneId]);
+
+  const load = async () => {
+    const cur = Store.getPane(paneId);
+    if (!cur || cur.symbol !== symbol || cur.timeframe !== timeframe) return;
+    try {
+      const candles = await fetchKlines(symbol, trailTf, KLINES_LIMIT);
+      const again = Store.getPane(paneId);
+      if (!again || again.symbol !== symbol || again.timeframe !== timeframe) return;
+      instance.setBreakoutTrailCandles(candles);
+    } catch (err) {
+      console.error(`[${paneId}] Lỗi khi tải nến khung trailing breakout (${trailTf}):`, err);
+    }
+  };
+
+  await load();
+  if (bkTrailKeys[paneId] === key) {
+    clearInterval(bkTrailTimers[paneId]);
+    bkTrailTimers[paneId] = setInterval(load, 60000);
+  }
+}
+
+  /**
+   * Chế độ "MA Tự Co Giãn" + Trailing: cần nến của khung trailing khi khung đó LỚN hơn khung vào lệnh.
+   * Tải 1 lần rồi làm mới mỗi 60 giây (chỉ dùng nến đã đóng nên không cần realtime).
+   */
+  async function syncMaTrail(paneId, instance, pane) {
+    clearInterval(trailTimers[paneId]);
+    delete trailTimers[paneId];
+ 
+    const cfg = instance.getMaSignalConfig();
+    const active = (pane.signalMode || 'breakout') === 'ma' && !!pane.breakoutVisible;
+    if (!active || !MaSignalModule.needsExternalTrail(cfg, pane.timeframe)) {
+      instance.setMaTrailCandles(null);
+      return;
+    }
+ 
+    const { symbol, timeframe } = pane;
+    const trailTf = cfg.trailTf;
+    const load = async () => {
+      const cur = Store.getPane(paneId);
+      if (!cur || cur.symbol !== symbol || cur.timeframe !== timeframe) return;
+      try {
+        const candles = await fetchKlines(symbol, trailTf, KLINES_LIMIT);
+        const again = Store.getPane(paneId);
+        if (!again || again.symbol !== symbol || again.timeframe !== timeframe) return;
+        instance.setMaTrailCandles(candles);
+      } catch (err) {
+        console.error(`[${paneId}] Lỗi khi tải nến khung trailing (${trailTf}):`, err);
+      }
+    };
+ 
+    await load();
+    const cur = Store.getPane(paneId);
+    if (cur && cur.symbol === symbol && cur.timeframe === timeframe) {
+      clearInterval(trailTimers[paneId]);
+      trailTimers[paneId] = setInterval(load, 60000);
+    }
+  }
+ 
   async function onBreakoutConfigChanged({ paneId }) {
     if (paneId) {
       const instance = paneInstances[paneId];

@@ -28,7 +28,9 @@ const DrawingModule = (function () {
   const TWO_ANCHOR_TOOLS = ['trendline', 'ray', 'extendedline', 'rectangle', 'circle', 'arrow', 'fib', 'long', 'short'];
   const THREE_ANCHOR_TOOLS = ['triangle', 'channel', 'fibextension'];
   const DASHED_STYLE_TOOLS = ['hline', 'vline', 'hray', 'trendline', 'ray', 'extendedline', 'rectangle', 'circle', 'triangle', 'arrow', 'channel'];
-    // Các công cụ KHÔNG làm đậm/phát sáng khi chạm hoặc rê chuột - chỉ hiện điểm tròn khi được chọn
+  // Hình có vùng tô nền bên trong: có thể tắt nền, khi tắt chỉ còn đường bao quanh
+  const FILL_TOOLS = ['rectangle', 'circle', 'triangle', 'channel', 'long', 'short'];
+  // (Không công cụ nào còn bị phát sáng / đậm lên khi chạm hoặc rê chuột - chỉ hiện điểm tròn di chuyển)
   const NO_GLOW_TOOLS = ['trendline', 'ray', 'extendedline', 'arrow', 'hline', 'vline', 'hray', 'channel'];
 
   const TOOL_DISPLAY_NAMES = {
@@ -103,6 +105,8 @@ const DrawingModule = (function () {
     trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
     star: '<svg viewBox="0 0 24 24"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg>',
     check: '<svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>',
+    fill: '<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 19l8-14M4 14l9-9M12 19l8-8"/></svg>',
+    textT: '<svg viewBox="0 0 24 24"><path d="M5 6V4h14v2M12 4v16M9 20h6"/></svg>',
   };
 
 
@@ -147,6 +151,7 @@ const DTV_CSS = `
 .dtv-input[type=number]{width:96px;font-family:monospace}
 .dtv-color{width:32px;height:26px;padding:0;border:none;background:transparent;cursor:pointer;border-radius:4px}
 .dtv-range{width:150px;accent-color:#2962ff;cursor:pointer}
+textarea.dtv-input{width:100%;min-height:56px;resize:vertical;font-family:inherit;line-height:1.4}
 .dtv-fib-item{display:flex;align-items:center;gap:8px}
 .dtv-fib-item input[type=number]{width:70px;background:#12151c;border:1px solid rgba(255,255,255,.15);border-radius:4px;color:#fff;padding:4px 6px;font-size:12px;font-family:monospace}
 .dtv-fib-item input[type=color]{width:26px;height:26px;padding:0;border:none;background:transparent;cursor:pointer;border-radius:3px}
@@ -182,7 +187,7 @@ function ensureStyles() {
   // ===================== KHO STYLE NHỚ THEO CÔNG CỤ (DÙNG CHUNG CẢ 4 PANE) =====================
   // Dạng: { trendline: {color,width,dashed,opacity}, fib: {...cấu hình Fib...}, long: {..., rr}, ... }
   const TOOL_STYLES_KEY = 'drawing_tool_styles';
-  const STYLE_KEYS = ['color', 'width', 'dashed', 'opacity', 'rr'];
+  const STYLE_KEYS = ['color', 'width', 'dashed', 'opacity', 'rr', 'fill', 'textColor', 'fontSize', 'textH', 'textV', 'bold', 'italic'];
   // Chữ ghi chú của Fib là riêng từng hình nên không nhớ
   const FIB_KEYS = Object.keys(FIB_DEFAULTS).filter((k) => k !== 'text');
   let toolStyles = null;
@@ -560,6 +565,57 @@ function xToPointInfo(x) {
       ctx.restore();
     }
 
+    function drawBoxText(d, rx, ry, rw, rh, baseColor) {
+      if (!d.text || rw < 8 || rh < 8) return;
+      const fs = Number(d.fontSize) || 12;
+      const pad = 6;
+      ctx.save();
+      ctx.shadowBlur = 0;
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.rect(rx, ry, rw, rh);
+      ctx.clip();
+      ctx.font = `${d.italic ? 'italic ' : ''}${d.bold ? 700 : 500} ${fs}px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+      ctx.textBaseline = 'alphabetic';
+ 
+      // Tự xuống dòng theo bề rộng hình, giữ các dòng người dùng tự ngắt
+      const maxW = Math.max(10, rw - pad * 2);
+      const lines = [];
+      String(d.text).split('\n').forEach((para) => {
+        let cur = '';
+        para.split(/\s+/).forEach((w) => {
+          const test = cur ? cur + ' ' + w : w;
+          if (cur && ctx.measureText(test).width > maxW) {
+            lines.push(cur);
+            cur = w;
+          } else {
+            cur = test;
+          }
+        });
+        lines.push(cur);
+      });
+ 
+      const lh = fs * 1.25;
+      const blockH = lines.length * lh;
+      const h = d.textH || 'center';
+      const v = d.textV || 'middle';
+      let top;
+      if (v === 'top') top = ry + pad;
+      else if (v === 'bottom') top = ry + rh - pad - blockH;
+      else top = ry + (rh - blockH) / 2;
+ 
+      let tx;
+      let align;
+      if (h === 'left') { tx = rx + pad; align = 'left'; }
+      else if (h === 'right') { tx = rx + rw - pad; align = 'right'; }
+      else { tx = rx + rw / 2; align = 'center'; }
+ 
+      ctx.textAlign = align;
+      ctx.fillStyle = d.textColor || baseColor;
+      lines.forEach((ln, i) => ctx.fillText(ln, tx, top + i * lh + fs));
+      ctx.restore();
+    }
+ 
     function extendPointBeyond(x1, y1, x2, y2, factor) {
       return { x: x1 + (x2 - x1) * factor, y: y1 + (y2 - y1) * factor };
     }
@@ -709,7 +765,27 @@ function xToPointInfo(x) {
     }
 
     // ===================== VẼ HÌNH =====================
+    const NOOP_DRAW = function () {};
+ 
+    /** Vẽ 1 hình. Hình có nền mà đã tắt nền thì chỉ còn đường bao quanh (bỏ qua mọi lệnh tô màu). */
     function drawShape(d, isPreview, idx) {
+      const noFill = d.fill === false && FILL_TOOLS.includes(d.type);
+      const c = ctx;
+      if (noFill) {
+        c.fill = NOOP_DRAW;
+        c.fillRect = NOOP_DRAW;
+      }
+      try {
+        drawShapeInner(d, isPreview, idx);
+      } finally {
+        if (noFill) {
+          delete c.fill;
+          delete c.fillRect;
+        }
+      }
+    }
+ 
+    function drawShapeInner(d, isPreview, idx) {
       const isHovered = idx !== undefined && idx === hoveredDrawingIndex;
       const isSelected = idx !== undefined && idx === selectedDrawingIndex;
       const showHandles = isSelected || (isHovered && !isCoarsePointer() && !drawings[idx].locked);
@@ -721,13 +797,7 @@ function xToPointInfo(x) {
       const baseWidth = d.width || 1.5;
       ctx.strokeStyle = isPreview ? (baseColor === '#f2a339' ? 'rgba(242, 163, 57, 0.55)' : baseColor + '88') : baseColor;
 
-      if ((isHovered || isSelected) && !NO_GLOW_TOOLS.includes(d.type)) {
-        ctx.lineWidth = baseWidth + 1;
-        ctx.shadowColor = baseColor;
-        ctx.shadowBlur = 4;
-      } else {
-        ctx.lineWidth = baseWidth;
-      }
+      ctx.lineWidth = baseWidth; // không còn phát sáng / đậm lên khi chạm hoặc rê chuột
 
       if (d.type === 'hline') {
         const y = priceToY(d.price);
@@ -819,6 +889,7 @@ function xToPointInfo(x) {
         ctx.fillRect(rx, ry, rw, rh);
         if (d.dashed) ctx.setLineDash([6, 4]);
         ctx.strokeRect(rx, ry, rw, rh);
+        drawBoxText(d, rx, ry, rw, rh, baseColor);
         ctx.setLineDash([]);
         if (showHandles) { drawHandle(x1, y1); drawHandle(x2, y2); }
 
@@ -992,7 +1063,7 @@ function xToPointInfo(x) {
         ctx.fillStyle = fillColor;
         ctx.fillText(d.text, x, y);
 
-        if (isSelected || isHovered) {
+        if (isSelected) {
           const textWidth = ctx.measureText(d.text).width;
           ctx.strokeStyle = baseColor;
           ctx.lineWidth = 1;
@@ -1172,6 +1243,46 @@ function xToPointInfo(x) {
         const handleHitR = () => (isCoarsePointer() ? 24 : HANDLE_RADIUS + 6);
     const hitTol = () => (isCoarsePointer() ? 9 : 6);
     // ===================== HIT TEST =====================
+    function outlineHit(d, x, y) {
+      const tol = hitTol();
+      const P = (p) => ({ x: pointToX(p), y: priceToY(p.price) });
+      const valid = (...ps) => ps.every((p) => p.x !== null && p.x !== undefined && p.y !== null && p.y !== undefined);
+      const near = (a, b) => distToSegment(x, y, a.x, a.y, b.x, b.y) <= tol;
+ 
+      if (d.type === 'rectangle') {
+        const a = P(d.p1);
+        const b = P(d.p2);
+        if (!valid(a, b)) return false;
+        const l = Math.min(a.x, b.x), r = Math.max(a.x, b.x);
+        const t = Math.min(a.y, b.y), bt = Math.max(a.y, b.y);
+        return near({ x: l, y: t }, { x: r, y: t }) || near({ x: r, y: t }, { x: r, y: bt }) ||
+               near({ x: r, y: bt }, { x: l, y: bt }) || near({ x: l, y: bt }, { x: l, y: t });
+      }
+      if (d.type === 'circle') {
+        const a = P(d.p1);
+        const b = P(d.p2);
+        if (!valid(a, b)) return false;
+        const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+        const rx = Math.abs(b.x - a.x) / 2, ry = Math.abs(b.y - a.y) / 2;
+        if (rx < 1 || ry < 1) return Math.hypot(x - cx, y - cy) <= tol + Math.max(rx, ry);
+        const k = Math.hypot((x - cx) / rx, (y - cy) / ry);
+        return Math.abs(k - 1) * Math.min(rx, ry) <= tol;
+      }
+      if (d.type === 'triangle') {
+        const a = P(d.p1), b = P(d.p2), c = P(d.p3);
+        if (!valid(a, b, c)) return false;
+        return near(a, b) || near(b, c) || near(c, a);
+      }
+      if (d.type === 'channel') {
+        const a = P(d.p1), b = P(d.p2), c = P(d.p3);
+        if (!valid(a, b, c)) return false;
+        const lineYAt = (px) => (b.x === a.x ? a.y : a.y + ((px - a.x) / (b.x - a.x)) * (b.y - a.y));
+        const off = c.y - lineYAt(c.x);
+        return near(a, b) || near({ x: a.x, y: a.y + off }, { x: b.x, y: b.y + off });
+      }
+      return false;
+    }
+ 
     function findHandleAt(pt) {
       if (allDrawingsHidden || selectedDrawingIndex === null) return null;
       const d = drawings[selectedDrawingIndex];
@@ -1217,6 +1328,12 @@ function xToPointInfo(x) {
       for (let i = drawings.length - 1; i >= 0; i--) {
         const d = drawings[i];
         if (!isVisibleNow(d)) continue;
+ 
+        // Hình đã tắt nền: chỉ chọn được khi chạm trúng ĐƯỜNG BAO, không chọn khi chạm vào bên trong
+        if (d.fill === false && ['rectangle', 'circle', 'triangle', 'channel'].includes(d.type)) {
+          if (outlineHit(d, x, y)) return { index: i };
+          continue;
+        }
 
         if (d.type === 'hline') {
           const dy = priceToY(d.price);
@@ -1353,6 +1470,58 @@ function xToPointInfo(x) {
       redraw();
     }
 
+    function openBoxTextEditor(idx) {
+      const d = drawings[idx];
+      if (!d || d.type !== 'rectangle') return;
+      const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
+      const x2 = pointToX(d.p2), y2 = priceToY(d.p2.price);
+      if ([x1, y1, x2, y2].some((v) => v === null || v === undefined)) return;
+      hideToolbar();
+ 
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = d.text || '';
+      input.placeholder = 'Nhập chữ trong hình...';
+      input.style.position = 'absolute';
+      input.style.left = `${Math.max(4, (x1 + x2) / 2 - 90)}px`;
+      input.style.top = `${Math.max(4, (y1 + y2) / 2 - 14)}px`;
+      input.style.width = '180px';
+      input.style.background = '#1e222d';
+      input.style.color = '#ffffff';
+      input.style.border = '1px solid #f2a339';
+      input.style.borderRadius = '4px';
+      input.style.padding = '4px 8px';
+      input.style.fontSize = '12px';
+      input.style.zIndex = '9999';
+      container.appendChild(input);
+      setTimeout(() => { input.focus(); input.select(); }, 50);
+ 
+      let done = false;
+      const finish = (save) => {
+        if (done) return;
+        done = true;
+        if (save) {
+          const v = input.value;
+          if (v.trim()) d.text = v; else delete d.text;
+        }
+        input.remove();
+        if (drawings[idx] === d) {
+          selectedDrawingIndex = idx;
+          showToolbar(idx);
+        }
+        redraw();
+        if (save) rememberStyle(d);
+      };
+ 
+      input.addEventListener('keydown', (ev) => {
+        ev.stopPropagation();
+        if (ev.key === 'Enter') finish(true);
+        if (ev.key === 'Escape') finish(false);
+      });
+      ['pointerdown', 'mousedown', 'click'].forEach((evt) => input.addEventListener(evt, (ev) => ev.stopPropagation()));
+      input.addEventListener('blur', () => finish(true));
+    }
+ 
     function showToolbar(idx) {
       hideToolbar();
       const d = drawings[idx];
@@ -1446,6 +1615,24 @@ function xToPointInfo(x) {
 
       toolbarEl.appendChild(makeToolbarSep());
 
+ 
+      // Bật / tắt nền (khi tắt chỉ còn đường bao quanh)
+      if (FILL_TOOLS.includes(d.type)) {
+        toolbarEl.appendChild(
+          makeToolbarBtn(ICON.fill, 'Bật / tắt nền', (btn) => {
+            d.fill = d.fill === false;
+            btn.classList.toggle('active', d.fill !== false);
+            redraw();
+            rememberStyle(d);
+          }, d.fill !== false)
+        );
+      }
+ 
+      // Viết chữ trong hình chữ nhật
+      if (d.type === 'rectangle') {
+        toolbarEl.appendChild(makeToolbarBtn(ICON.textT, 'Viết chữ trong hình', () => openBoxTextEditor(idx), !!d.text));
+      }
+ 
       // Cài đặt chi tiết (bánh răng)
       toolbarEl.appendChild(makeToolbarBtn(ICON.gear, 'Cài đặt chi tiết', () => openSettingsModal(idx)));
       toolbarEl.appendChild(makeToolbarBtn(ICON.copy, 'Nhân bản', () => cloneDrawing(idx)));
@@ -1616,6 +1803,39 @@ function xToPointInfo(x) {
           <div class="dtv-ctrls">${selectHTML('gDash', [['solid', 'Nét liền'], ['dashed', 'Nét đứt']], isDashed ? 'dashed' : 'solid')}</div>
         </div>`;
       }
+      if (FILL_TOOLS.includes(d.type)) {
+        html += `
+        <div class="dtv-modal-row">
+          <label class="dtv-check"><input type="checkbox" id="gFill" ${d.fill !== false ? 'checked' : ''}><span>Tô nền bên trong hình (tắt = chỉ còn đường bao)</span></label>
+        </div>`;
+      }
+ 
+      if (d.type === 'rectangle') {
+        html += `
+        <div class="dtv-modal-sep"></div>
+        <div class="dtv-modal-row"><span>Chữ trong hình</span></div>
+        <textarea id="gBoxText" class="dtv-input" placeholder="Nhập chữ...">${esc(d.text || '')}</textarea>
+        <div class="dtv-modal-row">
+          <span>Màu chữ</span>
+          <div class="dtv-ctrls"><input type="color" id="gBoxColor" class="dtv-color" value="${hex6(d.textColor || d.color, '#f2a339')}"></div>
+        </div>
+        <div class="dtv-modal-row">
+          <span>Cỡ chữ</span>
+          <div class="dtv-ctrls">
+            ${selectHTML('gBoxSize', [10, 11, 12, 14, 16, 18, 20, 24, 32].map((n) => [n, n]), d.fontSize || 12)}
+            <label class="dtv-check"><input type="checkbox" id="gBoxBold" ${d.bold ? 'checked' : ''}><span><b>B</b></span></label>
+            <label class="dtv-check"><input type="checkbox" id="gBoxItalic" ${d.italic ? 'checked' : ''}><span><i>I</i></span></label>
+          </div>
+        </div>
+        <div class="dtv-modal-row">
+          <span>Căn chữ</span>
+          <div class="dtv-ctrls">
+            ${selectHTML('gBoxH', [['left', 'Trái'], ['center', 'Giữa'], ['right', 'Phải']], d.textH || 'center')}
+            ${selectHTML('gBoxV', [['top', 'Trên'], ['middle', 'Giữa'], ['bottom', 'Dưới']], d.textV || 'middle')}
+          </div>
+        </div>`;
+      }
+ 
       return html;
     }
 
@@ -1810,6 +2030,20 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
           }
         }
 
+        // Nền + chữ trong hình chữ nhật
+        if (q('#gFill')) d.fill = q('#gFill').checked;
+        if (q('#gBoxText')) {
+          const txt = q('#gBoxText').value;
+          if (txt.trim()) d.text = txt; else delete d.text;
+          d.fontSize = parseInt(q('#gBoxSize').value, 10) || 12;
+          d.bold = q('#gBoxBold').checked;
+          d.italic = q('#gBoxItalic').checked;
+          d.textH = q('#gBoxH').value;
+          d.textV = q('#gBoxV').value;
+          const tc = q('#gBoxColor').value;
+          if (tc.toLowerCase() === hex6(d.color, '#f2a339').toLowerCase()) delete d.textColor; else d.textColor = tc;
+        }
+ 
         // Coordinates (chỉ ghi đè ô nào người dùng đã sửa)
         qa('.coord').forEach((input) => {
           if (input.value === input.defaultValue) return;

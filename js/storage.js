@@ -44,6 +44,7 @@ const Store = (function () {
       slTimeframe: null, // vd '1h' - chỉ dùng khi slMode === 'custom'
       breakoutVisible: false,
       signalAlertEnabled: false,
+      signalMode: 'breakout', // 'breakout' | 'ma' (MA Tự Co Giãn)
     };
   }
 
@@ -73,6 +74,7 @@ const Store = (function () {
           slTimeframe: saved.slTimeframe || null,
           breakoutVisible: saved.breakoutVisible !== undefined ? !!saved.breakoutVisible : false,
           signalAlertEnabled: !!saved.signalAlertEnabled,
+          signalMode: saved.signalMode === 'ma' ? 'ma' : 'breakout',
         };
       });
     }
@@ -90,6 +92,7 @@ const Store = (function () {
         slTimeframe: p.slTimeframe,
         breakoutVisible: p.breakoutVisible,
         signalAlertEnabled: p.signalAlertEnabled,
+        signalMode: p.signalMode,
       }))
     );
   }
@@ -329,6 +332,22 @@ const Store = (function () {
     emitBreakoutChanged(paneId, pane);
   }
 
+  /** Chọn chế độ tín hiệu BUY/SELL của 1 pane: 'breakout' (mặc định) hoặc 'ma' (MA Tự Co Giãn). */
+  function setPaneSignalMode(paneId, mode) {
+    const pane = getPane(paneId);
+    if (!pane) return;
+    const next = mode === 'ma' ? 'ma' : 'breakout';
+    if (pane.signalMode === next) return;
+    pane.signalMode = next;
+    savePanes();
+    emitBreakoutChanged(paneId, pane);
+  }
+ 
+  function getPaneSignalMode(paneId) {
+    const pane = getPane(paneId);
+    return pane && pane.signalMode === 'ma' ? 'ma' : 'breakout';
+  }
+ 
   function getEnabledSignalTimeframes() {
     return state.enabledSignalTimeframes;
   }
@@ -394,6 +413,8 @@ const Store = (function () {
     getPaneBreakoutConfig,
     setPaneSignalAlertEnabled,
     setPaneBreakoutVisible,
+    setPaneSignalMode,
+    getPaneSignalMode,
     getEnabledSignalTimeframes,
     setEnabledSignalTimeframes,
     getWatchlist,

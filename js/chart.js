@@ -653,17 +653,39 @@ const ChartModule = (function () {
 
     const breakout = BreakoutModule.create(paneId);
 
+    // ===== Chế độ tín hiệu BUY/SELL: 'breakout' (mặc định) | 'ma' (MA Tự Co Giãn) =====
+    const maSignal = MaSignalModule.create(paneId);
+    let signalMode = 'breakout';
+    let signalVisible = false;
+    let maTrailCandles = null; // nến khung trailing (chỉ cần khi khung trailing lớn hơn khung vào lệnh)
+    let breakoutTrailCandles = null;
+ 
+    maSignal.setOnNewSignal((direction, time) => {
+      if (signalMode === 'ma') EventBus.emit('pane:newSignal', { paneId: paneId, direction: direction, time: time });
+    });
+
     breakout.setOnNewSignal((direction, time) => {
-      EventBus.emit('pane:newSignal', { paneId, direction, time });
+      if (signalMode === 'breakout') EventBus.emit('pane:newSignal', { paneId, direction, time });
     });
 
     let drawing = null;
 
+    function runMaSignal() {
+      const p = Store.getPane(paneId);
+      maSignal.run({
+        entryCandles: currentCandles,
+        trailCandles: maTrailCandles,
+        timeframe: p ? p.timeframe : null,
+      });
+    }
+ 
     function runBreakout() {
+      runMaSignal();
       breakout.run({
         entryCandles: currentCandles,
-        higherTFCandles,
+        higherTFCandles, trailCandles: breakoutTrailCandles,
         slCandles: slCandles || undefined,
+        timeframe: (Store.getPane(paneId) || {}).timeframe,
       });
     }
 
@@ -789,6 +811,7 @@ const ChartModule = (function () {
       candleSeries.attachPrimitive(new ThickWickPrimitive(() => currentCandles));
 
       breakout.init(chart, candleSeries);
+      maSignal.init(chart, candleSeries);
 
       volumeSeries = chart.addSeries(LightweightCharts.HistogramSeries, {
         priceFormat: { type: 'volume' },
@@ -1389,6 +1412,8 @@ function setupPinchZoom(container) {
       prefs.emaLines = emaLines.map((l) => ({ ...l }));
       prefs.rsiExtras = JSON.parse(JSON.stringify(rsiExtras));
       prefs.ichimoku = JSON.parse(JSON.stringify(ichimoku));
+      prefs.breakout = breakout.getConfig();
+      prefs.maSignal = maSignal.getConfig();
       prefs.volumeVisible = volumeVisible;
       IndicatorPrefsModule.setPanePrefs(paneId, prefs);
     }
@@ -1419,6 +1444,11 @@ function setupPinchZoom(container) {
 
         if (saved.rsiExtras) rsiExtras = sanitizeRsiExtras(saved.rsiExtras);
         if (saved.ichimoku) ichimoku = sanitizeIchimoku(saved.ichimoku);
+        if (saved.breakout) {
+          const { slSource, lookbackCandles, ...breakoutExtra } = saved.breakout; // 2 mục này do Store quản lý
+          breakout.configure(breakoutExtra);
+        }
+        if (saved.maSignal) maSignal.configure(saved.maSignal);
 
         if (typeof saved.volumeVisible === 'boolean') {
           volumeVisible = saved.volumeVisible;
@@ -1708,6 +1738,21 @@ function setupPinchZoom(container) {
       scheduleRecompute(false);          // <- đổi
     }
 
+    function setBreakoutSettings(partial) {
+  breakout.configure(partial || {});
+  scheduleRecompute(false);
+  persistIndicatorPrefs();
+  EventBus.emit('pane:breakoutConfigChanged', { paneId });
+}
+    function setBreakoutTrailCandles(candles) {
+  breakoutTrailCandles = candles && candles.length ? candles.slice() : null;
+  scheduleRecompute(false);
+}
+
+    function getBreakoutSettings() {
+      return breakout.getConfig();
+    }
+
     function getBreakoutConfig() {
       return breakout.getConfig();
     }
@@ -1764,6 +1809,8 @@ function setupPinchZoom(container) {
     }
 
     function clearData() {
+      maTrailCandles = null;
+      breakoutTrailCandles = null;
       if (candleSeries) candleSeries.setData([]);
       if (volumeSeries) volumeSeries.setData([]);
       emaSeriesMap.forEach((s) => s.setData([]));
@@ -1789,6 +1836,36 @@ function setupPinchZoom(container) {
       runBreakout();
     }
 
+    /** Chọn chế độ tín hiệu + bật/tắt hiển thị (app.js gọi theo cấu hình pane). */
+    function setSignalState(mode, visible) {
+      signalMode = mode === 'ma' ? 'ma' : 'breakout';
+      signalVisible = !!visible;
+      breakout.setVisible(signalVisible && signalMode === 'breakout');
+      maSignal.setVisible(signalVisible && signalMode === 'ma');
+      scheduleRecompute(false);
+    }
+ 
+    function getSignalMode() {
+      return signalMode;
+    }
+ 
+    /** Đổi cài đặt chế độ MA Tự Co Giãn (gộp từng phần), lưu lại và vẽ lại. */
+    function setMaSignal(partial) {
+      maSignal.configure(partial || {});
+      scheduleRecompute(false);
+      persistIndicatorPrefs();
+      EventBus.emit('pane:breakoutConfigChanged', { paneId });
+    }
+ 
+    function getMaSignalConfig() {
+      return maSignal.getConfig();
+    }
+ 
+    function setMaTrailCandles(candles) {
+      maTrailCandles = candles && candles.length ? candles.slice() : null;
+      scheduleRecompute(false);
+    }
+ 
     function isLoadingOlder() {
       return loadingOlder;
     }
@@ -1854,6 +1931,7 @@ function setupPinchZoom(container) {
       EventBus.off('theme:changed', handleThemeChanged);
       EventBus.off('pane:symbolChanged', handleSymbolChangedForDrawing);
       if (drawing) drawing.flushSave(); // lưu nốt hình vẽ trước khi huỷ
+      maSignal.destroy();
       if (resizeObserver) resizeObserver.disconnect();
       if (recomputeRafId !== null) {
         clearTimeout(recomputeRafId);
@@ -1894,6 +1972,9 @@ function setupPinchZoom(container) {
       upsertSLCandle,
       configureBreakout,
       getBreakoutConfig,
+      setBreakoutSettings,
+      getBreakoutSettings,
+      setBreakoutTrailCandles,
       isLoadingOlder,
       setLoadingOlder,
       isNoMoreOlder,
@@ -1902,6 +1983,11 @@ function setupPinchZoom(container) {
       getCandles: () => currentCandles.slice(),
       getBreakout: () => breakout,
       getDrawing: () => drawing,
+      setSignalState,
+      getSignalMode,
+      setMaSignal,
+      getMaSignalConfig,
+      setMaTrailCandles,
       getSeries: () => candleSeries,   // MỚI
       getChart: () => chart,           // MỚI
     };

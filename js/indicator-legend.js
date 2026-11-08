@@ -196,7 +196,7 @@ const IndicatorLegend = (function () {
 
     const name = document.createElement('span');
     name.className = 'indicator-name';
-    name.textContent = 'BUY/SELL';
+    name.textContent = Store.getPaneSignalMode && Store.getPaneSignalMode(paneId) === 'ma' ? 'BUY/SELL · MA' : 'BUY/SELL';
 
     const gear = document.createElement('span');
     gear.className = 'indicator-gear';
@@ -213,7 +213,14 @@ const IndicatorLegend = (function () {
     name.addEventListener('click', toggle);
     gear.addEventListener('click', (e) => {
       e.stopPropagation();
-      openBreakoutSettingsPopover(chip, paneId, instance);
+      if (Store.getPaneSignalMode && Store.getPaneSignalMode(paneId) === 'ma' && typeof MaSignalUI !== 'undefined') {
+        closeAnyOpenPopover();
+        MaSignalUI.open(paneId);
+      } else {
+        closeAnyOpenPopover();
+        if (typeof BreakoutUI !== 'undefined') BreakoutUI.open(paneId);
+        else openBreakoutSettingsPopover(chip, paneId, instance);
+      }
     });
 
     chip.appendChild(dot);
@@ -335,6 +342,24 @@ const IndicatorLegend = (function () {
     popover.className = 'indicator-popover wide';
     popover.addEventListener('click', (e) => e.stopPropagation());
 
+    // ---- Chế độ tín hiệu ----
+    const modeLabel = document.createElement('label');
+    modeLabel.textContent = 'Chế độ tín hiệu';
+ 
+    const modeSelect = document.createElement('select');
+    const currentMode = Store.getPaneSignalMode ? Store.getPaneSignalMode(paneId) : 'breakout';
+    [['breakout', 'Breakout (mặc định)'], ['ma', 'MA Tự Co Giãn']].forEach(([value, text]) => {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = text;
+      if (value === currentMode) opt.selected = true;
+      modeSelect.appendChild(opt);
+    });
+ 
+    const modeHint = document.createElement('div');
+    modeHint.className = 'bo-hint';
+    modeHint.textContent = 'Chọn "MA Tự Co Giãn" rồi bấm Áp dụng; bấm ⚙ lần nữa để chỉnh MACD, MA, SL, TP, trailing.';
+ 
     // ---- Số nến breakout ----
     const lookbackLabel = document.createElement('label');
     lookbackLabel.textContent = 'Số nến breakout (khung trend)';
@@ -466,6 +491,8 @@ const IndicatorLegend = (function () {
       const slMode = slModeSelect.value;
       const slTimeframe = slMode === 'custom' ? slTimeframeSelect.value : null;
 
+      if (Store.setPaneSignalMode) Store.setPaneSignalMode(paneId, modeSelect.value);
+ 
       Store.setPaneBreakoutConfig(paneId, {
         lookbackCandles: lookback && lookback > 0 ? lookback : current.lookbackCandles,
         slMode,
@@ -507,6 +534,9 @@ const IndicatorLegend = (function () {
     actions.appendChild(cancelBtn);
     actions.appendChild(applyBtn);
 
+    popover.appendChild(modeLabel);
+    popover.appendChild(modeSelect);
+    popover.appendChild(modeHint);
     popover.appendChild(lookbackLabel);
     popover.appendChild(lookbackInput);
     popover.appendChild(slModeLabel);
