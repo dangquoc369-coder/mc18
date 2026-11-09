@@ -53,6 +53,8 @@ Object.assign(Icons, {
   vline: `<svg ${_S}><path d="M12 3v6M12 15v6"/><circle cx="12" cy="12" r="2"/></svg>`,
   long: `<svg ${_S}><rect x="5" y="4" width="14" height="8" rx="1" stroke="#26a69a"/><rect x="5" y="12" width="14" height="8" rx="1" stroke="#ef5350"/><path d="M12 10V6M10 8l2-2 2 2" stroke="#26a69a"/></svg>`,
   short: `<svg ${_S}><rect x="5" y="4" width="14" height="8" rx="1" stroke="#26a69a"/><rect x="5" y="12" width="14" height="8" rx="1" stroke="#ef5350"/><path d="M12 14v4M10 16l2 2 2-2" stroke="#ef5350"/></svg>`,
+  undo: `<svg ${_S}><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>`,
+  redo: `<svg ${_S}><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>`,
 });
 
 /** SVG thuần, gắn class icon-svg (cỡ do CSS quyết định) - dùng trong nút. */

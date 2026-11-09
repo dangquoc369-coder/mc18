@@ -107,6 +107,8 @@ const DrawingModule = (function () {
     check: '<svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>',
     fill: '<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 19l8-14M4 14l9-9M12 19l8-8"/></svg>',
     textT: '<svg viewBox="0 0 24 24"><path d="M5 6V4h14v2M12 4v16M9 20h6"/></svg>',
+    undo: '<svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>',
+    redo: '<svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>',
   };
 
 
@@ -162,6 +164,10 @@ textarea.dtv-input{width:100%;min-height:56px;resize:vertical;font-family:inheri
 .dtv-modal-btn.cancel:hover{background:rgba(255,255,255,.08);color:#fff}
 .dtv-modal-btn.primary{background:#2962ff;color:#fff}
 .dtv-modal-btn.primary:hover{background:#1e4bd8}
+.dtv-undo-toast{position:absolute;left:50%;bottom:36px;transform:translateX(-50%);z-index:101;display:flex;gap:6px;animation:dtv-toast-in .15s ease-out}
+.dtv-undo-toast button{display:flex;align-items:center;gap:6px;height:36px;padding:0 14px;border-radius:18px;border:1px solid rgba(255,255,255,.18);background:#1e222d;color:#fff;font-size:12px;font-weight:600;font-family:inherit;box-shadow:0 4px 16px rgba(0,0,0,.5);cursor:pointer;touch-action:manipulation}
+.dtv-undo-toast button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+@keyframes dtv-toast-in{from{opacity:0;transform:translateX(-50%) translateY(6px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
 `;
 
 function ensureStyles() {
@@ -235,6 +241,9 @@ function ensureStyles() {
     saveToolStyles();
   }
 
+  // Bản gốc để create() bọc lại: mỗi lần "nhớ style" cũng chốt 1 bước hoàn tác
+  const rememberStyleBase = rememberStyle;
+
   function setToolStyle(type, obj) {
     getToolStyles()[type] = obj;
     saveToolStyles();
@@ -301,6 +310,106 @@ function ensureStyles() {
     let currentSymbol = null;
     let saveTimer = null;
     let lastSavedStr = '[]';
+
+    // ===================== HOÀN TÁC / LÀM LẠI =====================
+    const UNDO_LIMIT = 5;
+    let undoStack = [];      // các bản chụp cũ (cũ nhất ở đầu)
+    let redoStack = [];
+    let lastCommitted = '[]'; // bản chụp của trạng thái hiện tại
+    let toastEl = null;
+    let toastTimer = null;
+ 
+    /** Chốt trạng thái hiện tại thành 1 bước (không làm gì nếu chưa có thay đổi). */
+    function commitHistory() {
+      const cur = JSON.stringify(drawings);
+      if (cur === lastCommitted) return false;
+      undoStack.push(lastCommitted);
+      if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+      redoStack = [];
+      lastCommitted = cur;
+      showUndoToast();
+      return true;
+    }
+ 
+    function applyHistoryState(str) {
+      drawings = JSON.parse(str);
+      lastCommitted = str;
+      resetInteractionState();
+      toolStartCount = drawings.length; // tránh returnToCursorAfterDraw hiểu nhầm số hình
+      redraw();                         // redraw -> scheduleSave nên tự lưu cục bộ
+    }
+ 
+    function undo() {
+      if (isDraggingShape || isDraggingHandle) return false;
+      // Đang dở tay 1 hình: chỉ huỷ bước đang dở
+      if (dragStart || pendingThirdPoint || touchAnchors.length) {
+        setTool(currentTool);
+        return true;
+      }
+      commitHistory(); // lưới an toàn: chốt thay đổi chưa kịp ghi (nếu có)
+      if (!undoStack.length) return false;
+      redoStack.push(lastCommitted);
+      applyHistoryState(undoStack.pop());
+      showUndoToast();
+      return true;
+    }
+ 
+    function redo() {
+      if (isDraggingShape || isDraggingHandle || dragStart || pendingThirdPoint) return false;
+      if (!redoStack.length) return false;
+      undoStack.push(lastCommitted);
+      if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+      applyHistoryState(redoStack.pop());
+      showUndoToast();
+      return true;
+    }
+ 
+    function getHistoryInfo() {
+      return { undo: undoStack.length, redo: redoStack.length };
+    }
+ 
+    function hideUndoToast() {
+      clearTimeout(toastTimer);
+      toastTimer = null;
+      if (toastEl) {
+        toastEl.remove();
+        toastEl = null;
+      }
+    }
+ 
+    /** Thanh nhỏ tự biến mất sau 4s - CHỈ trên máy cảm ứng, không chiếm chỗ cố định. */
+    function showUndoToast() {
+      hideUndoToast();
+      if (!isCoarsePointer()) return;
+      if (!undoStack.length && !redoStack.length) return;
+ 
+      toastEl = document.createElement('div');
+      toastEl.className = 'dtv-undo-toast';
+      ['pointerdown', 'mousedown', 'click', 'touchstart', 'touchmove'].forEach((ev) =>
+        toastEl.addEventListener(ev, (e) => e.stopPropagation())
+      );
+      const mk = (icon, label, fn) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.innerHTML = `${icon}<span>${label}</span>`;
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          fn();
+        });
+        toastEl.appendChild(b);
+      };
+      if (undoStack.length) mk(ICON.undo, 'Hoàn tác', undo);
+      if (redoStack.length) mk(ICON.redo, 'Làm lại', redo);
+      container.appendChild(toastEl);
+      toastTimer = setTimeout(hideUndoToast, 3000);
+    }
+ 
+    // Bọc rememberStyle: đổi màu / độ dày / nét / nền / Ok trong hộp cài đặt
+    // đều tự chốt 1 bước hoàn tác (không phải sửa từng chỗ gọi)
+    const rememberStyle = (d) => {
+      rememberStyleBase(d);
+      commitHistory();
+    };
 
     /** Tạo hình mới: mặc định chung -> mặc định riêng của loại -> style đã nhớ của công cụ. */
     function newDrawing(type, geom, base = {}) {
@@ -454,11 +563,20 @@ function xToPointInfo(x) {
 
     function loadForSymbol(symbol) {
       flushSave();
-      currentSymbol = symbol || null;
+      const next = symbol || null;
+      const symbolChanged = next !== currentSymbol;
+      currentSymbol = next;
       resetInteractionState();
       const saved = currentSymbol && hasLocalStore() ? LocalStore.read(drawingsKey(currentSymbol), []) : [];
       drawings = Array.isArray(saved) ? saved : [];
       lastSavedStr = JSON.stringify(drawings);
+      // Lịch sử hoàn tác thuộc về từng symbol: chỉ xoá khi symbol THỰC SỰ đổi
+      if (symbolChanged) {
+        undoStack = [];
+        redoStack = [];
+        hideUndoToast();
+      }
+      lastCommitted = lastSavedStr;
       redraw();
     }
 
@@ -515,6 +633,7 @@ function xToPointInfo(x) {
     }
 
     function returnToCursorAfterDraw() {
+      commitHistory();
       const created = drawings.length > toolStartCount;
       setTool('cursor');
       if (created) {
@@ -531,6 +650,7 @@ function xToPointInfo(x) {
       selectedDrawingIndex = null;
       hideToolbar();
       redraw();
+      commitHistory();
     }
 
     function getRect() {
@@ -1468,6 +1588,7 @@ function xToPointInfo(x) {
       selectedDrawingIndex = drawings.length - 1;
       showToolbar(selectedDrawingIndex);
       redraw();
+      commitHistory();
     }
 
     function openBoxTextEditor(idx) {
@@ -1639,6 +1760,7 @@ function xToPointInfo(x) {
       toolbarEl.appendChild(
         makeToolbarBtn(d.locked ? ICON.lock : ICON.unlock, d.locked ? 'Mở khoá' : 'Khoá vị trí', () => {
           d.locked = !d.locked;
+          commitHistory();
           showToolbar(idx);
         }, !!d.locked)
       );
@@ -1648,6 +1770,7 @@ function xToPointInfo(x) {
           selectedDrawingIndex = null;
           hideToolbar();
           redraw();
+          commitHistory();
         })
       );
 
@@ -2007,6 +2130,7 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
           } else if (action === 'reset') {
             resetToolStyles('fib');
             Object.assign(d, clone({ ...FIB_DEFAULTS, levels: DEFAULT_FIB_LEVELS }));
+            commitHistory();
             backdrop.remove();
             document.removeEventListener('keydown', onKey, true);
             redraw();
@@ -2323,6 +2447,7 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
         if (match !== null && !drawings[match.index].locked) {
           drawings.splice(match.index, 1);
           redraw();
+          commitHistory();
         }
         return;
       }
@@ -2550,8 +2675,9 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
           draggedDrawingOriginal = null;
           dragStartPixel = null;
           redraw();
+          commitHistory();
         }
-        if (e.pointerType === 'touch') canvas.style.pointerEvents = 'none';   // <-- THÊM
+        if (e.pointerType === 'touch') canvas.style.pointerEvents = 'none';
         return;
       }
 
@@ -2635,6 +2761,7 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
     canvas.addEventListener('pointermove', onPointerMove);
     canvas.addEventListener('pointerup', onPointerUp);
     canvas.addEventListener('pointercancel', () => {
+      commitHistory();
       touchGesture = null;
       dragStart = null;
       previewDrawing = null;
@@ -2865,6 +2992,9 @@ function createVlinePrimitive() {
   loadForSymbol,
   flushSave,
   createVlinePrimitive,   // <-- THÊM
+  undo,
+  redo,
+  getHistoryInfo,
 
   getOldestTime() {
     let m = Infinity;

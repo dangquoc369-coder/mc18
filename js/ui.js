@@ -110,6 +110,7 @@ const UI = (function () {
 .draw-magnet-opt svg{width:14px;height:14px}
 .draw-magnet-opt.active{background:var(--accent-blue,#2962ff);border-color:var(--accent-blue,#2962ff);color:#fff}
 @media (hover:hover){.draw-magnet-opt:not(.active):hover{background:var(--bg-hover,rgba(255,255,255,.08))}}
+.draw-magnet-opt:disabled{opacity:.4;cursor:default;pointer-events:none}
 .draw-tool-combo-caret.magnet-on{position:relative}
 .draw-tool-combo-caret.magnet-on::after{
   content:'';position:absolute;right:2px;top:1px;width:11px;height:11px;pointer-events:none;
@@ -174,6 +175,7 @@ const UI = (function () {
     bindLayoutChangedEvent();
     bindOrientationChangedEvent();
     bindDrawToolChanged();
+    bindUndoShortcuts();
     bindSectionTitleCollapses();
 
     LayoutModule.initOrientationWatcher();
@@ -422,6 +424,47 @@ const UI = (function () {
     flyoutAnchor = anchorBtn;
 
     let anyRemembered = false;
+
+    // Hoàn tác / Làm lại - nằm trong bảng nên không chiếm chỗ thanh công cụ
+    const histDrawing = () => {
+      const inst = getActiveDrawingInstance();
+      return inst ? inst.getDrawing() : null;
+    };
+    const histEl = document.createElement('div');
+    histEl.className = 'draw-flyout-category';
+    histEl.innerHTML = '<div class="draw-flyout-category-title">Hoàn tác (tối đa 5 bước)</div>';
+    const histSeg = document.createElement('div');
+    histSeg.className = 'draw-magnet-seg';
+    const undoBtn = document.createElement('button');
+    const redoBtn = document.createElement('button');
+    [undoBtn, redoBtn].forEach((b) => {
+      b.type = 'button';
+      b.className = 'draw-magnet-opt';
+      histSeg.appendChild(b);
+    });
+    const refreshHist = () => {
+      const d = histDrawing();
+      const h = d && typeof d.getHistoryInfo === 'function' ? d.getHistoryInfo() : { undo: 0, redo: 0 };
+      undoBtn.innerHTML = `${iconHTML('undo')}<span>Hoàn tác${h.undo ? ' (' + h.undo + ')' : ''}</span>`;
+      redoBtn.innerHTML = `${iconHTML('redo')}<span>Làm lại${h.redo ? ' (' + h.redo + ')' : ''}</span>`;
+      undoBtn.disabled = !h.undo;
+      redoBtn.disabled = !h.redo;
+    };
+    undoBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const d = histDrawing();
+      if (d) d.undo();
+      refreshHist();
+    });
+    redoBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const d = histDrawing();
+      if (d) d.redo();
+      refreshHist();
+    });
+    refreshHist();
+    histEl.appendChild(histSeg);
+    flyoutEl.appendChild(histEl);
 
     DRAW_TOOL_CATEGORIES.forEach((cat) => {
       const catEl = document.createElement('div');
@@ -788,5 +831,36 @@ const UI = (function () {
     window.addEventListener('drawing:magnetChanged', refreshMagnetDot);
   }
 
+  /* ===================== PHÍM TẮT HOÀN TÁC (máy tính / iPad có bàn phím) ===================== */
+ 
+  function bindUndoShortcuts() {
+    document.addEventListener('keydown', (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const k = (e.key || '').toLowerCase();
+      if (k !== 'z' && k !== 'y') return;
+ 
+      // Đang gõ chữ -> để trình duyệt tự xử lý undo của ô nhập
+      const t = e.target;
+      if (t) {
+        const textLike = ['text', 'search', 'number', 'email', 'password', 'url', 'tel', ''];
+        if (t.tagName === 'TEXTAREA' || t.isContentEditable) return;
+        if (t.tagName === 'INPUT' && textLike.includes(t.type || '')) return;
+      }
+      if (document.querySelector('.dtv-modal-backdrop')) return; // đang mở hộp cài đặt hình vẽ
+ 
+      // Chỉ khi đang ở tab Biểu đồ (không áp dụng ở Công việc / Định lượng)
+      const area = document.getElementById('chartArea');
+      if (!area || area.offsetParent === null) return;
+ 
+      const inst = getActiveDrawingInstance();
+      const drawing = inst && inst.getDrawing ? inst.getDrawing() : null;
+      if (!drawing) return;
+ 
+      e.preventDefault();
+      if (k === 'y' || (k === 'z' && e.shiftKey)) drawing.redo();
+      else drawing.undo();
+    });
+  }
+  
   return { init, renderSharedDrawGroup, renderSharedTimeframeGroup };
 })();
