@@ -6,8 +6,8 @@
  */
 const MaSignalUI = (function () {
   const CSS = `
-.mas-backdrop{position:fixed;inset:0;background:transparent;z-index:99999;display:flex;align-items:center;justify-content:center;overscroll-behavior:contain;touch-action:none}
-.mas-modal{width:520px;max-width:94vw;max-height:90vh;max-height:90dvh;display:flex;flex-direction:column;background:var(--bg-elevated,#1e222d);color:var(--text-primary,#d1d4dc);border:1px solid var(--border-color,rgba(128,128,128,.35));border-radius:14px;box-shadow:0 0 0 150vmax rgba(0,0,0,.55),0 16px 48px rgba(0,0,0,.5);overflow:hidden;touch-action:auto}
+.mas-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:center;justify-content:center;overscroll-behavior:contain}
+.mas-modal{width:520px;max-width:94vw;max-height:90vh;display:flex;flex-direction:column;background:var(--bg-elevated,#1e222d);color:var(--text-primary,#d1d4dc);border:1px solid var(--border-color,rgba(128,128,128,.35));border-radius:14px;box-shadow:0 16px 48px rgba(0,0,0,.5);overflow:hidden}
 .mas-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px 6px}
 .mas-title{font-size:20px;font-weight:700}
 .mas-x{background:transparent;border:none;color:inherit;font-size:26px;cursor:pointer;width:32px;height:32px;border-radius:6px}
@@ -16,7 +16,7 @@ const MaSignalUI = (function () {
 .mas-tab{background:transparent;border:none;color:var(--text-secondary,#9aa3b8);padding:10px 0;font-size:14px;font-weight:600;cursor:pointer;position:relative}
 .mas-tab.active{color:inherit}
 .mas-tab.active::after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:2px;background:currentColor}
-.mas-body{padding:10px 20px 14px;overflow-y:auto;flex:1;touch-action:pan-y;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.mas-body{padding:10px 20px 14px;overflow-y:auto;flex:1}
 .mas-pane{display:none;flex-direction:column;gap:10px}
 .mas-pane.active{display:flex}
 .mas-sec{font-size:11px;letter-spacing:.04em;color:var(--text-secondary,#9aa3b8);margin-top:8px;text-transform:uppercase}
@@ -34,7 +34,6 @@ const MaSignalUI = (function () {
 .mas-btn{padding:8px 18px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;border:1px solid var(--border-color,rgba(128,128,128,.5));background:transparent;color:inherit}
 .mas-btn.primary{background:var(--accent-blue,#2962ff);border-color:var(--accent-blue,#2962ff);color:var(--on-accent,#fff)}
 .mas-group{display:flex;gap:10px}
-@media (pointer:coarse){.mas-num,.mas-sel{font-size:16px}}
 `;
 
   function ensureCss() {
@@ -73,16 +72,13 @@ const MaSignalUI = (function () {
   }
 
   function refreshTopEdge() {
-  const tb = document.getElementById('topbar');
+  const b = document.body;
+  b.style.transform = 'translateZ(0)';
   requestAnimationFrame(() => {
-    window.scrollTo(0, 0);
-    if (tb) {
-      tb.style.transform = 'translateZ(0)';
-      requestAnimationFrame(() => {
-        tb.style.transform = '';
-        window.dispatchEvent(new Event('resize'));
-      });
-    }
+    requestAnimationFrame(() => {
+      b.style.transform = '';
+      window.scrollTo(0, 0);
+    });
   });
 }
 
@@ -200,7 +196,6 @@ const MaSignalUI = (function () {
 
     const close = () => {
   document.removeEventListener('keydown', onKey, true);
-  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
   backdrop.remove();
   refreshTopEdge();
 };
@@ -212,13 +207,6 @@ const MaSignalUI = (function () {
     };
     document.addEventListener('keydown', onKey, true);
     backdrop.addEventListener('mousedown', (e) => {
-      backdrop.addEventListener(
-  'touchmove',
-  (e) => {
-    if (!e.target.closest('.mas-body')) e.preventDefault();
-  },
-  { passive: false }
-);
       if (e.target === backdrop) close();
     });
     q('.mas-x').addEventListener('click', close);
