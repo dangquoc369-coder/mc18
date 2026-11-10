@@ -6,7 +6,7 @@
  */
 const MaSignalUI = (function () {
   const CSS = `
-.mas-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:center;justify-content:center}
+.mas-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:center;justify-content:center;overscroll-behavior:contain}
 .mas-modal{width:520px;max-width:94vw;max-height:90vh;display:flex;flex-direction:column;background:var(--bg-elevated,#1e222d);color:var(--text-primary,#d1d4dc);border:1px solid var(--border-color,rgba(128,128,128,.35));border-radius:14px;box-shadow:0 16px 48px rgba(0,0,0,.5);overflow:hidden}
 .mas-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px 6px}
 .mas-title{font-size:20px;font-weight:700}
@@ -70,6 +70,17 @@ const MaSignalUI = (function () {
     if (current && !list.some((t) => t[0] === current)) list.push([current, current]);
     return list;
   }
+
+  function refreshTopEdge() {
+  const b = document.body;
+  b.style.transform = 'translateZ(0)';
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      b.style.transform = '';
+      window.scrollTo(0, 0);
+    });
+  });
+}
 
   function open(paneId) {
     const pid = paneId || (typeof Store !== 'undefined' ? Store.getState().activePaneId : null);
@@ -184,9 +195,10 @@ const MaSignalUI = (function () {
     );
 
     const close = () => {
-      document.removeEventListener('keydown', onKey, true);
-      backdrop.remove();
-    };
+  document.removeEventListener('keydown', onKey, true);
+  backdrop.remove();
+  refreshTopEdge();
+};
     const onKey = (e) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
