@@ -373,6 +373,7 @@ const UI = (function () {
     });
 
     groupEl.appendChild(select);
+    if (typeof SelectFix !== 'undefined') SelectFix.enhance(select);
 
     if (typeof TimeframeFit !== 'undefined') {
       groupEl.appendChild(TimeframeFit.makeSettingsButton());
@@ -714,6 +715,8 @@ const UI = (function () {
     });
     select.addEventListener('change', (e) => Store.setLayout(parseInt(e.target.value, 10)));
     groupEl.appendChild(select);
+
+    if (typeof SelectFix !== 'undefined') SelectFix.enhance(select);
   }
 
     function highlightActiveLayoutButton(layout) {

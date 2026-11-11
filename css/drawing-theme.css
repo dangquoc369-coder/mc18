@@ -1,0 +1,47 @@
+/* =====================================================================
+ * css/drawing-theme.css
+ * Làm toolbar + hộp cài đặt công cụ vẽ (drawing.js) ĐỔI NỀN SÁNG/TỐI theo app
+ * bằng biến theme, thay cho các màu cứng của DTV_CSS trong drawing.js.
+ *
+ * Nạp SAU draw-flyout.css. Selector có tiền tố "html" để thắng <style> do
+ * drawing.js chèn lúc chạy.
+ * ===================================================================== */
+
+/* ---------- Toolbar nổi khi chọn hình ---------- */
+html .dtv-tb{background:var(--bg-elevated);border-color:var(--border-color);color:var(--text-primary);box-shadow:var(--shadow-md)}
+html .dtv-tb-grip{color:var(--text-secondary)}
+html .dtv-tb-sep{background:var(--border-color)}
+html .dtv-tb-btn{color:var(--text-secondary)}
+html .dtv-tb-btn:hover,html .dtv-tb-color:hover{background:var(--bg-hover);color:var(--text-primary)}
+html .dtv-tb-btn.active{color:var(--accent-blue);background:var(--accent-blue-soft)}
+html .dtv-tb-color input{border-color:var(--text-primary)}
+html .dtv-tb-select{color:var(--text-primary)}
+
+/* ---------- Hộp cài đặt ---------- */
+html .dtv-modal-backdrop{position:absolute;inset:0;width:auto;height:auto;background:rgba(0,0,0,.55);-webkit-backdrop-filter:none;backdrop-filter:none;overscroll-behavior:contain}
+html .dtv-modal{background:var(--bg-elevated);border-color:var(--border-color);color:var(--text-primary);box-shadow:0 16px 48px rgba(0,0,0,.5)}
+html .dtv-modal-header,html .dtv-modal-tabs,html .dtv-modal-footer{border-color:var(--border-color)}
+html .dtv-modal-title{color:var(--text-primary)}
+html .dtv-modal-close{color:var(--text-secondary)}
+html .dtv-modal-close:hover{background:var(--bg-hover);color:var(--text-primary)}
+html .dtv-modal-tab{color:var(--text-secondary)}
+html .dtv-modal-tab.active{color:var(--text-primary)}
+html .dtv-modal-tab.active::after{background:var(--accent-blue)}
+html .dtv-modal-sep{background:var(--border-color)}
+html .dtv-mini{color:var(--text-secondary)}
+html .dtv-modal-footer{background:var(--bg-panel)}
+
+html .dtv-select,html .dtv-input,html .dtv-fib-item input[type=number]{background:var(--bg-main);border-color:var(--border-color);color:var(--text-primary)}
+html .dtv-select:focus,html .dtv-input:focus,html .dtv-fib-item input[type=number]:focus{border-color:var(--accent-blue)}
+html .dtv-check input[type=checkbox],html .dtv-fib-item input[type=checkbox],html .dtv-range{accent-color:var(--accent-blue)}
+
+html .dtv-modal-btn.cancel{color:var(--text-secondary);border-color:var(--border-color)}
+html .dtv-modal-btn.cancel:hover{background:var(--bg-hover);color:var(--text-primary)}
+html .dtv-modal-btn.primary{background:var(--accent-blue);color:var(--on-accent)}
+html .dtv-modal-btn.primary:hover{background:var(--accent-blue);opacity:.9}
+
+/* ---------- Nút Hoàn tác / Làm lại (chạm) ---------- */
+html .dtv-undo-toast button{background:var(--bg-elevated);color:var(--text-primary);border-color:var(--border-color);box-shadow:var(--shadow-md)}
+
+/* ---------- Bảng công cụ vẽ (ui.js): chữ trên nền nhấn dùng màu tương phản ---------- */
+html .draw-magnet-opt.active{color:var(--on-accent)}

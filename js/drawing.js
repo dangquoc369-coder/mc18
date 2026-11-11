@@ -1607,9 +1607,9 @@ function xToPointInfo(x) {
       input.style.left = `${Math.max(4, (x1 + x2) / 2 - 90)}px`;
       input.style.top = `${Math.max(4, (y1 + y2) / 2 - 14)}px`;
       input.style.width = '180px';
-      input.style.background = '#1e222d';
-      input.style.color = '#ffffff';
-      input.style.border = '1px solid #f2a339';
+      input.style.background = 'var(--bg-elevated)';
+      input.style.color = 'var(--text-primary)';
+      input.style.border = '1px solid var(--accent-blue)';
       input.style.borderRadius = '4px';
       input.style.padding = '4px 8px';
       input.style.fontSize = '12px';
@@ -1719,6 +1719,7 @@ function xToPointInfo(x) {
           rememberStyle(d);
         });
         toolbarEl.appendChild(sel);
+        if (typeof SelectFix !== 'undefined') SelectFix.enhance(sel);
       }
 
       // Nét liền / nét đứt
@@ -2047,6 +2048,7 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
           </div>
         </div>`;
       document.body.appendChild(backdrop);
+      if (typeof SelectFix !== 'undefined') SelectFix.attach(backdrop); 
 
       const q = (sel) => backdrop.querySelector(sel);
       const qa = (sel) => Array.from(backdrop.querySelectorAll(sel));
@@ -2216,9 +2218,9 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
       input.style.position = 'absolute';
       input.style.left = `${screenXY.x}px`;
       input.style.top = `${screenXY.y}px`;
-      input.style.background = '#1e222d';
-      input.style.color = '#ffffff';
-      input.style.border = '1px solid #f2a339';
+      input.style.background = 'var(--bg-elevated)';
+      input.style.color = 'var(--text-primary)';
+      input.style.border = '1px solid var(--accent-blue)';
       input.style.borderRadius = '4px';
       input.style.padding = '4px 8px';
       input.style.fontSize = '12px';

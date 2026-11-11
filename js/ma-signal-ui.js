@@ -116,6 +116,7 @@ const MaSignalUI = (function () {
         </div>
       </div>`;
     document.body.appendChild(backdrop);
+    if (typeof SelectFix !== 'undefined') SelectFix.attach(backdrop);
 
     const q = (s) => backdrop.querySelector(s);
     const qa = (s) => Array.from(backdrop.querySelectorAll(s));
