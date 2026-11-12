@@ -38,6 +38,7 @@ const MaSignalModule = (function () {
     onlyProfit: true, // chỉ dịch SL khi SL mới nằm trên giá vào (khoá lời)
     closeOnFlip: false, // đóng lệnh khi MACD đổi phe ngược
     reentry: true, // bị quét SL mà MACD chưa đổi phe -> vào lại cùng hướng
+    backtest: false, // hiện bảng backtest: tổng R của mọi lệnh trên phần chart đã tải
     style: {
       buyColor: '#26a69a',
       sellColor: '#ef5350',
@@ -117,6 +118,7 @@ const MaSignalModule = (function () {
       onlyProfit: bool(s.onlyProfit, d.onlyProfit),
       closeOnFlip: bool(s.closeOnFlip, d.closeOnFlip),
       reentry: bool(s.reentry, d.reentry),
+      backtest: bool(s.backtest, d.backtest),
       style: {
         buyColor: col('buyColor'),
         sellColor: col('sellColor'),
@@ -580,6 +582,11 @@ const MaSignalModule = (function () {
         });
 
         ctx.restore();
+ 
+        // ---- 3) Bảng BACKTEST (tổng R của mọi lệnh đã đóng trên phần chart đã tải) ----
+        if (cfg.backtest && typeof BacktestModule !== 'undefined') {
+          BacktestModule.drawPanel(scope, BacktestModule.computeStats(trades, candles));
+        }
       });
     }
   }
@@ -706,7 +713,12 @@ const MaSignalModule = (function () {
       return state.trades.slice();
     }
 
-    return { init, run, configure, getConfig, setVisible, isVisible, setOnNewSignal, getTrades, destroy };
+    /** Thống kê backtest (tổng R, số lệnh, winrate, PF, max DD, khoảng thời gian). */
+    function getStats() {
+      return BacktestModule.computeStats(state.trades, state.candles);
+    }
+
+    return { init, run, configure, getConfig, setVisible, isVisible, setOnNewSignal, getTrades, getStats, destroy };
   }
 
   return {

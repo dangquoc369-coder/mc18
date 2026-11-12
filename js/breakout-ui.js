@@ -137,7 +137,8 @@ const BreakoutUI = (function () {
       q('[data-p="inputs"]').innerHTML =
         secTitle('Chế độ') +
         row('Chế độ tín hiệu BUY/SELL', sel([['breakout', 'Breakout (mặc định)'], ['ma', 'MA Tự Co Giãn']], mode, 'id="bkoMode"')) +
-        hint('Chọn "MA Tự Co Giãn" rồi bấm Ok; bấm ⚙ lần nữa để chỉnh các thông số của chế độ đó.') +
+        hint('Chọn "MA Tự Co Giãn" rồi bấm Ok; bấm ⚙ lần nữa để chỉnh các thông số của chế độ đó.') + crow(chk(c.backtest, 'id="inBacktest"'), 'Backtest: cộng tổng R các lệnh trên phần chart đã tải') +
+        hint('Hiện bảng ở góc chart: tổng R, số lệnh, tỉ lệ thắng, Profit Factor, Max DD và khoảng thời gian. Kéo chart tải thêm nến cũ thì số liệu tự cập nhật.') +
         secTitle('Vùng breakout') +
         row('Số nến khung trend', num(pane.lookbackCandles, 110, 'id="inLookback" min="1" max="20"')) +
         hint('BUY/SELL khi nến khung vào lệnh ĐÓNG cửa vượt đỉnh / thủng đáy của N nến khung trend gần nhất. Khung trend tự suy ra từ khung chart (vd H1 → D1).') +
@@ -260,6 +261,7 @@ const BreakoutUI = (function () {
         trailTf: q('#inTrailTf').value,
         onlyProfit: q('#inOnlyProfit').checked,
         closeOnFlip: q('#inFlip').checked,
+        backtest: q('#inBacktest').checked,
         macdFast: int('#inMFast', 44),
         macdSlow: int('#inMSlow', 88),
         macdSig: int('#inMSig', 62),

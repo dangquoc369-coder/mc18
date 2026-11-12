@@ -136,7 +136,8 @@ const MaSignalUI = (function () {
       q('[data-p="inputs"]').innerHTML =
         secTitle('Chế độ') +
         row('Chế độ tín hiệu BUY/SELL', sel([['breakout', 'Breakout (mặc định)'], ['ma', 'MA Tự Co Giãn']], mode, 'id="masMode"')) +
-        hint('Tín hiệu vẽ cho mọi lịch sử: mỗi lệnh được mô phỏng từ lúc vào tới lúc thoát rồi mới tìm tín hiệu kế tiếp.') +
+        hint('Tín hiệu vẽ cho mọi lịch sử: mỗi lệnh được mô phỏng từ lúc vào tới lúc thoát rồi mới tìm tín hiệu kế tiếp.') + crow(chk(c.backtest, 'id="inBacktest"'), 'Backtest: cộng tổng R các lệnh trên phần chart đã tải') +
+        hint('Hiện bảng ở góc chart: tổng R, số lệnh, tỉ lệ thắng, Profit Factor, Max DD và khoảng thời gian. Kéo chart tải thêm nến cũ thì số liệu tự cập nhật.') +
         secTitle('MACD (xác định phe)') +
         row('Fast EMA', num(c.fastLen, 110, 'id="inFast" min="1"')) +
         row('Slow EMA', num(c.slowLen, 110, 'id="inSlow" min="1"')) +
@@ -249,6 +250,7 @@ const MaSignalUI = (function () {
         onlyProfit: q('#inOnlyProfit').checked,
         closeOnFlip: q('#inFlip').checked,
         reentry: q('#inReentry').checked,
+        backtest: q('#inBacktest').checked,
         style: {
           buyColor: q('#sBuy').value,
           sellColor: q('#sSell').value,

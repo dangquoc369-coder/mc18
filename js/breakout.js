@@ -34,6 +34,7 @@ const BreakoutModule = (function () {
     trailTf: '1h', // khung nến dùng để dời SL
     onlyProfit: true, // chỉ dịch SL khi SL mới nằm trên giá vào (khoá lời)
     closeOnFlip: false, // đóng lệnh ảo khi MACD đổi phe ngược chiều lệnh
+    backtest: false, // hiện bảng backtest: tổng R của mọi lệnh trên phần chart đã tải
     macdFast: 44,
     macdSlow: 88,
     macdSig: 62,
@@ -106,6 +107,7 @@ const BreakoutModule = (function () {
       trailTf: typeof s.trailTf === 'string' && tfSeconds(s.trailTf) > 0 ? s.trailTf : d.trailTf,
       onlyProfit: bool(s.onlyProfit, d.onlyProfit),
       closeOnFlip: bool(s.closeOnFlip, d.closeOnFlip),
+      backtest: bool(s.backtest, d.backtest),
       macdFast: int(s.macdFast, d.macdFast, 1, 500),
       macdSlow: int(s.macdSlow, d.macdSlow, 1, 500),
       macdSig: int(s.macdSig, d.macdSig, 1, 500),
@@ -274,7 +276,7 @@ const BreakoutModule = (function () {
       const series = this._series;
       if (!chart || !series) return;
       const s = this._getState();
-      if (!s.visible || !s.candles || !s.trades.length) return;
+      if (!s.visible || !s.candles) return;
       const ts = chart.timeScale();
       const range = ts.getVisibleLogicalRange();
       if (!range) return;
@@ -436,6 +438,11 @@ const BreakoutModule = (function () {
         });
 
         ctx.restore();
+ 
+        // Bảng BACKTEST (tổng R của mọi lệnh đã đóng trên phần chart đã tải)
+        if (cfg.backtest && typeof BacktestModule !== 'undefined') {
+          BacktestModule.drawPanel(scope, BacktestModule.computeStats(s.trades, candles));
+        }
       });
     }
   }
@@ -755,6 +762,10 @@ const BreakoutModule = (function () {
       return trades.map((t) => ({ ...t, slPath: t.slPath.map((s) => ({ ...s })) }));
     }
 
+    function getStats() {
+      return BacktestModule.computeStats(trades, lastCandles);
+    }
+
     function getMarketStatus(params) {
       const entryCandles = Array.isArray(params) ? params : (params && params.entryCandles) || [];
       const higherTFCandlesRaw = Array.isArray(params) ? [] : (params && params.higherTFCandles) || [];
@@ -815,6 +826,7 @@ const BreakoutModule = (function () {
       isVisible,
       setOnNewSignal,
       getTrades,
+      getStats,
     };
   }
 
