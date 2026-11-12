@@ -72,15 +72,15 @@ const MaSignalUI = (function () {
   }
 
   function refreshTopEdge() {
-  const b = document.body;
-  b.style.transform = 'translateZ(0)';
-  requestAnimationFrame(() => {
+    const b = document.body;
+    b.style.transform = 'translateZ(0)';
     requestAnimationFrame(() => {
-      b.style.transform = '';
-      window.scrollTo(0, 0);
+      requestAnimationFrame(() => {
+        b.style.transform = '';
+        window.scrollTo(0, 0);
+      });
     });
-  });
-}
+  }
 
   function open(paneId) {
     const pid = paneId || (typeof Store !== 'undefined' ? Store.getState().activePaneId : null);
@@ -156,7 +156,9 @@ const MaSignalUI = (function () {
         row('Khung nến trailing', sel(tfList, c.trailTf, 'id="inTrailTf"'), 'exit:trail') +
         crow(chk(c.onlyProfit, 'id="inOnlyProfit"'), 'Chỉ dịch SL khi SL mới nằm trên giá vào (khóa lời)', '', 'exit:trail') +
         hint('Trailing: mỗi khi 1 nến của khung đã chọn đóng, SL dời tới đáy (lệnh Buy) hoặc đỉnh (lệnh Sell) của nến đó, chỉ dời theo hướng có lợi.') +
-        crow(chk(c.closeOnFlip, 'id="inFlip"'), 'Đóng lệnh khi MACD đổi phe ngược');
+        crow(chk(c.closeOnFlip, 'id="inFlip"'), 'Đóng lệnh khi MACD đổi phe ngược (và vào lệnh ngược)') +
+        crow(chk(c.reentry, 'id="inReentry"'), 'Vào lại khi bị quét SL mà MACD chưa đổi phe') +
+        hint('Vào lại: sau khi chạm SL (kể cả trailing), nếu MACD vẫn cùng phe thì vào lại cùng hướng ở nến kế tiếp, lặp lại cho tới khi MACD đổi phe.');
 
       // ---------- STYLE ----------
       q('[data-p="style"]').innerHTML =
@@ -196,10 +198,10 @@ const MaSignalUI = (function () {
     );
 
     const close = () => {
-  document.removeEventListener('keydown', onKey, true);
-  backdrop.remove();
-  refreshTopEdge();
-};
+      document.removeEventListener('keydown', onKey, true);
+      backdrop.remove();
+      refreshTopEdge();
+    };
     const onKey = (e) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
@@ -246,6 +248,7 @@ const MaSignalUI = (function () {
         trailTf: q('#inTrailTf').value,
         onlyProfit: q('#inOnlyProfit').checked,
         closeOnFlip: q('#inFlip').checked,
+        reentry: q('#inReentry').checked,
         style: {
           buyColor: q('#sBuy').value,
           sellColor: q('#sSell').value,

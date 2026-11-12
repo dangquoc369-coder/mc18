@@ -7,6 +7,8 @@
  *  2. Bộ đếm nhịp: mỗi nến cùng phe +1, đổi phe về 1
  *  3. MA tự co giãn: độ dài = min(base + đếm - 1, max), SMA của giá đóng cửa
  *  4. Vào lệnh khi MACD vừa đổi phe (tại giá mở cửa nến kế tiếp), CHỈ khi không còn lệnh cũ
+ *     - Đóng lệnh do đổi phe ngược -> vào luôn lệnh ngược tại cùng giá
+ *     - Bị quét SL mà MACD vẫn cùng phe -> vào lại cùng hướng (tuỳ chọn reentry)
  *  5. SL ban đầu: đáy/đỉnh N nến, hoặc ATR x hệ số
  *  6. Thoát lệnh: (a) TP cố định theo R, hoặc (b) Trailing SL theo đáy/đỉnh nến đóng
  *     của khung chọn được; tuỳ chọn đóng lệnh khi MACD đổi phe ngược
@@ -35,6 +37,7 @@ const MaSignalModule = (function () {
     trailTf: '1h',
     onlyProfit: true, // chỉ dịch SL khi SL mới nằm trên giá vào (khoá lời)
     closeOnFlip: false, // đóng lệnh khi MACD đổi phe ngược
+    reentry: true, // bị quét SL mà MACD chưa đổi phe -> vào lại cùng hướng
     style: {
       buyColor: '#26a69a',
       sellColor: '#ef5350',
@@ -113,6 +116,7 @@ const MaSignalModule = (function () {
       trailTf: typeof s.trailTf === 'string' && tfSeconds(s.trailTf) > 0 ? s.trailTf : d.trailTf,
       onlyProfit: bool(s.onlyProfit, d.onlyProfit),
       closeOnFlip: bool(s.closeOnFlip, d.closeOnFlip),
+      reentry: bool(s.reentry, d.reentry),
       style: {
         buyColor: col('buyColor'),
         sellColor: col('sellColor'),
@@ -213,6 +217,10 @@ const MaSignalModule = (function () {
    * Mô phỏng lần lượt từng lệnh như EA:
    *  - hành động (vào lệnh / dời SL / đóng khi đổi phe) diễn ra ở ĐẦU nến b+1, dựa trên nến b đã đóng
    *  - còn lệnh thì bỏ qua tín hiệu mới; hết lệnh mới tìm tín hiệu kế tiếp
+   *  - đóng do đổi phe ngược -> vào luôn lệnh ngược tại cùng giá next.open
+   *  - bị quét SL (kể cả trailing) mà MACD vẫn cùng phe với lệnh vừa đóng
+   *    -> vào lại cùng hướng ở nến kế tiếp (và các nến sau nếu lần đầu chưa vào được),
+   *       cho tới khi MACD đổi phe
    */
   function simulate(candles, cfg, comp, atr, trailSeries) {
     const n = candles.length;
@@ -220,6 +228,7 @@ const MaSignalModule = (function () {
     const bull = comp.bull;
     const lookup = trailSeries && trailSeries.length ? makeLookup(trailSeries) : null;
     let pos = null;
+    let reDir = 0; // hướng cần vào lại sau khi bị quét SL (0 = không có)
 
     const finish = (p, idx, price, reason) => {
       p.exitIdx = idx;
@@ -237,6 +246,7 @@ const MaSignalModule = (function () {
         const hit = checkExit(pos, bar);
         if (hit) {
           finish(pos, b, hit.price, hit.reason);
+          if (hit.reason === 'sl' && cfg.reentry) reDir = pos.dir; // bị quét SL -> xét vào lại
           pos = null;
         }
       }
@@ -252,9 +262,8 @@ const MaSignalModule = (function () {
         if (cfg.closeOnFlip && ((pos.dir === 1 && flipSell) || (pos.dir === -1 && flipBuy))) {
           finish(pos, b + 1, next.open, 'flip');
           pos = null;
-          continue;
-        }
-        if (cfg.exitMode === 'trail' && lookup && b > pos.entryIdx) {
+          reDir = 0; // rơi xuống bước 4: tín hiệu đổi phe sẽ vào lệnh ngược
+        } else if (cfg.exitMode === 'trail' && lookup && b > pos.entryIdx) {
           const cur = lookup(bar.time);
           const prev = b > 0 ? lookup(candles[b - 1].time) : -1;
           if (cur >= 1 && prev >= 0 && cur !== prev) {
@@ -268,20 +277,26 @@ const MaSignalModule = (function () {
               // giá mở nến kế đã vượt qua SL mới -> coi như bị quét ngay
               if ((pos.dir === 1 && next.open <= cand) || (pos.dir === -1 && next.open >= cand)) {
                 finish(pos, b + 1, next.open, 'trail');
-                pos = null;
-                continue;
+                if (cfg.reentry) reDir = pos.dir;
+                pos = null; // rơi xuống bước 4 (đổi phe -> lệnh ngược; còn cùng phe -> vào lại)
+              } else {
+                pos.sl = cand;
+                pos.slPath.push({ idx: b + 1, sl: cand });
               }
-              pos.sl = cand;
-              pos.slPath.push({ idx: b + 1, sl: cand });
             }
           }
         }
-        continue;
       }
+      if (pos) continue;
 
-      // 4) Hết lệnh: tìm tín hiệu đổi phe để vào lệnh tại giá mở cửa nến kế tiếp
-      if (!flipBuy && !flipSell) continue;
-      const dir = flipBuy ? 1 : -1;
+      // 4) Hết lệnh: tìm tín hiệu để vào lệnh tại giá mở cửa nến kế tiếp
+      //    - đổi phe (flipBuy/flipSell), hoặc
+      //    - vào lại: MACD vẫn cùng phe với lệnh vừa bị quét SL
+      if (reDir !== 0 && !flipBuy && !flipSell && (bull[b] ? 1 : -1) !== reDir) reDir = 0;
+      const dir = flipBuy ? 1 : flipSell ? -1 : reDir;
+      if (dir === 0) continue;
+      const isReentry = !flipBuy && !flipSell;
+
       const entry = next.open;
       let sl;
       if (cfg.slMode === 'atr') {
@@ -298,10 +313,12 @@ const MaSignalModule = (function () {
         sl = dir === 1 ? lo : hi;
       }
       const risk = dir === 1 ? entry - sl : sl - entry;
-      if (!(risk > 0)) continue;
+      if (!(risk > 0)) continue; // chưa vào được: reDir được giữ để thử lại ở nến sau
 
+      reDir = 0;
       pos = {
         dir,
+        reentry: isReentry,
         signalIdx: b,
         signalTime: bar.time,
         entryIdx: b + 1,
