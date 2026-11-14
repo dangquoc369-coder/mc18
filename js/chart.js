@@ -708,7 +708,16 @@ const ChartModule = (function () {
 
     function handleKlineUpdate({ paneId: sourcePaneId, candle }) {
       if (sourcePaneId !== paneId) return;
-      Store.upsertPaneCandle(paneId, candle);
+            Store.upsertPaneCandle(paneId, candle);
+
+      // Lightweight Charts chỉ cho update nến CUỐI hoặc thêm nến mới.
+      // Nến cũ hơn: chỉ sửa mảng local, không gọi series.update() (tránh lỗi "Cannot update oldest data").
+      const lastLocal = currentCandles[currentCandles.length - 1];
+      if (lastLocal && candle.time < lastLocal.time) {
+        const idx = currentCandles.findIndex((c) => c.time === candle.time);
+        if (idx >= 0) currentCandles[idx] = candle;
+        return;
+      }
 
       candleSeries.update({
         time: candle.time,

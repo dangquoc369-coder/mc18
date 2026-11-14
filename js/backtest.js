@@ -4,10 +4,13 @@
  *
  * - Cộng PnL (theo R) của MỌI lệnh đã đóng trong phần chart đang tải.
  *   Kéo chart tải thêm nến cũ -> run() chạy lại -> số lệnh, tổng R và khoảng thời gian tự cập nhật.
- * - Vẽ bảng thống kê ở góc trên bên phải của pane:
+ * - Vẽ bảng thống kê GỌN ở góc trên bên phải pane, KHÔNG có nền:
  *     BACKTEST  +12.34R
  *     45 lệnh · Thắng 38% · PF 1.8 · Max DD -6.2R
- *     01/03/2026 → 12/11/2026 (256 ngày · 18000 nến)
+ *     01/03/26 → 12/11/26 · 256 ngày
+ *   Chữ có viền mờ cùng màu nền chart nên đọc rõ trên cả theme sáng lẫn tối.
+ * - Tự co theo bề rộng pane: pane hẹp (điện thoại / lưới 4 ô) dùng chữ nhỏ và câu ngắn hơn,
+ *   dòng nào không vừa bề rộng thì tự bỏ.
  *
  * API: BacktestModule.computeStats(trades, candles) -> stats
  *      BacktestModule.drawPanel(scope, stats)  (scope = useBitmapCoordinateSpace scope)
@@ -15,6 +18,32 @@
  * Load file này TRƯỚC ma-signal.js và breakout.js.
  */
 const BacktestModule = (function () {
+  // Màu chữ theo theme (khớp CHART_THEME trong chart.js). Lãi/lỗ dùng màu nến, đọc được trên cả 2 nền.
+  const PALETTE = {
+    dark: {
+      text: '#d1d4dc',
+      dim: '#9aa3b8',
+      halo: 'rgba(12,13,20,0.78)',
+      win: '#26b59f',
+      loss: '#f5535f',
+    },
+    light: {
+      text: '#131722',
+      dim: '#5d6578',
+      halo: 'rgba(255,255,255,0.85)',
+      win: '#08806c',
+      loss: '#d92c3a',
+    },
+  };
+
+  function isLight() {
+    try {
+      return document.documentElement.getAttribute('data-theme') === 'light';
+    } catch (err) {
+      return false;
+    }
+  }
+
   function toMs(t) {
     if (typeof t === 'number') return t * 1000; // lightweight-charts: giây UTC
     if (typeof t === 'string') return Date.parse(t);
@@ -24,11 +53,12 @@ const BacktestModule = (function () {
 
   const p2 = (n) => String(n).padStart(2, '0');
 
+  /** Ngày ngắn dd/MM/yy; khoảng ngắn (< 30 ngày) thì dd/MM HH:mm. */
   function fmtDate(ms, withTime) {
     if (!Number.isFinite(ms)) return '--';
     const d = new Date(ms);
-    const base = `${p2(d.getDate())}/${p2(d.getMonth() + 1)}/${d.getFullYear()}`;
-    return withTime ? `${base} ${p2(d.getHours())}:${p2(d.getMinutes())}` : base;
+    if (withTime) return `${p2(d.getDate())}/${p2(d.getMonth() + 1)} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+    return `${p2(d.getDate())}/${p2(d.getMonth() + 1)}/${String(d.getFullYear()).slice(2)}`;
   }
 
   const fmtR = (r) => `${r >= 0 ? '+' : ''}${r.toFixed(2)}R`;
@@ -94,84 +124,72 @@ const BacktestModule = (function () {
     };
   }
 
-  function roundRect(ctx, x, y, w, h, r) {
-    const rr = Math.min(r, w / 2, h / 2);
-    ctx.beginPath();
-    ctx.moveTo(x + rr, y);
-    ctx.arcTo(x + w, y, x + w, y + h, rr);
-    ctx.arcTo(x + w, y + h, x, y + h, rr);
-    ctx.arcTo(x, y + h, x, y, rr);
-    ctx.arcTo(x, y, x + w, y, rr);
-    ctx.closePath();
-  }
-
-  /** Vẽ bảng thống kê ở góc trên bên phải pane. */
+  /** Vẽ bảng thống kê gọn, không nền, ở góc trên bên phải pane. */
   function drawPanel(scope, s) {
     if (!scope || !s) return;
     const ctx = scope.context;
     const hr = scope.horizontalPixelRatio;
     const vr = scope.verticalPixelRatio;
     const W = scope.bitmapSize.width;
+    const wMedia = W / hr;
+    const narrow = wMedia < 520;
+    const pal = isLight() ? PALETTE.light : PALETTE.dark;
 
-    const font = (px, w) => `${w} ${Math.round(px * vr)}px Inter, -apple-system, "Segoe UI", sans-serif`;
-    const green = '#26a69a';
-    const red = '#ef5350';
-    const dim = '#9aa3b8';
+    const fsSmall = narrow ? 10 : 11;
+    const fsBig = narrow ? 14 : 15;
+    const fontOf = (px, weight) => `${weight} ${Math.round(px * vr)}px Inter, -apple-system, "Segoe UI", sans-serif`;
 
     const pf = s.profitFactor === Infinity ? '∞' : s.profitFactor.toFixed(2);
     const withTime = s.days < 30;
-    const rangeTxt = `${fmtDate(s.fromMs, withTime)} → ${fmtDate(s.toMs, withTime)}`;
-    const subTxt = `${s.days} ngày · ${s.candleCount} nến`;
-    const statTxt = `${s.count} lệnh · Thắng ${s.winRate.toFixed(0)}% · PF ${pf} · Max DD -${s.maxDD.toFixed(2)}R`;
-    const avgTxt = `TB ${fmtR(s.avgR)}/lệnh`;
-    const floatTxt = s.floatingR !== null ? `Đang mở: ${fmtR(s.floatingR)} (chưa tính vào tổng)` : '';
+    const range = `${fmtDate(s.fromMs, withTime)} → ${fmtDate(s.toMs, withTime)}`;
+
+    const stat = narrow
+      ? `${s.count} lệnh · ${s.winRate.toFixed(0)}% · PF ${pf} · DD ${s.maxDD.toFixed(1)}R`
+      : `${s.count} lệnh · Thắng ${s.winRate.toFixed(0)}% · PF ${pf} · Max DD -${s.maxDD.toFixed(2)}R`;
+    let when = `${range} · ${s.days} ngày`;
+    if (!narrow) {
+      when += ` · TB ${fmtR(s.avgR)}/lệnh`;
+      if (s.floatingR !== null) when += ` · Mở ${fmtR(s.floatingR)}`;
+    }
+
+    const rightX = W - 8 * hr;
+    const maxTextW = W - 16 * hr;
+    let y = 6 * vr;
 
     ctx.save();
     ctx.textBaseline = 'middle';
+    ctx.textAlign = 'right';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 3 * hr;
+    ctx.strokeStyle = pal.halo;
 
-    const head = 'BACKTEST';
+    const drawText = (str, x, cy, color, align) => {
+      ctx.textAlign = align || 'right';
+      ctx.strokeText(str, x, cy);
+      ctx.fillStyle = color;
+      ctx.fillText(str, x, cy);
+    };
+
+    // Dòng 1: BACKTEST + tổng R (số to, xanh/đỏ)
+    const bigH = (fsBig + 4) * vr;
     const big = fmtR(s.totalR);
-    ctx.font = font(10, 700);
-    const wHead = ctx.measureText(head).width;
-    ctx.font = font(18, 700);
-    const wBig = ctx.measureText(big).width;
-    ctx.font = font(11, 500);
-    const lines = [statTxt, avgTxt + '   ' + rangeTxt, subTxt];
-    if (floatTxt) lines.push(floatTxt);
-    let maxW = Math.max(wHead + 12 * hr + wBig, ...lines.map((t) => ctx.measureText(t).width));
+    ctx.font = fontOf(fsBig, 700);
+    const bigW = ctx.measureText(big).width;
+    drawText(big, rightX, y + bigH / 2, s.totalR >= 0 ? pal.win : pal.loss);
+    ctx.font = fontOf(fsSmall - 1, 700);
+    drawText('BACKTEST', rightX - bigW - 6 * hr, y + bigH / 2, pal.dim);
+    y += bigH;
 
-    const padX = 10 * hr;
-    const padY = 8 * vr;
-    const boxW = maxW + padX * 2;
-    const lineH = 15 * vr;
-    const headH = 24 * vr;
-    const boxH = padY * 2 + headH + lines.length * lineH;
-    const x = W - boxW - 12 * hr;
-    const y = 12 * vr;
-
-    ctx.fillStyle = 'rgba(19,23,34,0.85)';
-    roundRect(ctx, x, y, boxW, boxH, 8 * hr);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(128,128,128,0.35)';
-    ctx.lineWidth = Math.max(1, hr);
-    ctx.stroke();
-
-    // dòng tiêu đề: BACKTEST + tổng R
-    const cy = y + padY + headH / 2;
-    ctx.textAlign = 'left';
-    ctx.font = font(10, 700);
-    ctx.fillStyle = dim;
-    ctx.fillText(head, x + padX, cy);
-    ctx.font = font(18, 700);
-    ctx.fillStyle = s.totalR >= 0 ? green : red;
-    ctx.fillText(big, x + padX + wHead + 12 * hr, cy);
-
-    // các dòng thống kê
-    ctx.font = font(11, 500);
-    lines.forEach((t, i) => {
-      const ly = y + padY + headH + lineH * i + lineH / 2;
-      ctx.fillStyle = i === 0 ? '#d1d4dc' : dim;
-      ctx.fillText(t, x + padX, ly);
+    // Các dòng phụ: dòng nào không vừa bề rộng pane thì bỏ
+    const smallH = (fsSmall + 4) * vr;
+    ctx.font = fontOf(fsSmall, 500);
+    [
+      [stat, pal.text],
+      [when, pal.dim],
+    ].forEach(([str, color]) => {
+      if (ctx.measureText(str).width > maxTextW) return;
+      drawText(str, rightX, y + smallH / 2, color);
+      y += smallH;
     });
 
     ctx.restore();
