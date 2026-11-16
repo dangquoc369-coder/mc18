@@ -136,8 +136,8 @@ const ChartContextMenu = (function () {
   };
 
   const FONT_UI = 'Inter, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
-  const LONG_PRESS_MS = 550;
-  const LONG_PRESS_MOVE_PX = 10;
+  const LONG_PRESS_MS = 860; // nhấn giữ 0,86s mới hiện menu (tránh chạm nhầm khi cuộn)
+  const LONG_PRESS_MOVE_PX = 6; // nhấn giữ mà di chuyển quá 6px thì hủy menu
 
   const svg = (p) => '<svg viewBox="0 0 24 24" aria-hidden="true">' + p + '</svg>';
   const ICONS = {
@@ -995,11 +995,12 @@ const ChartContextMenu = (function () {
         x: e.clientX,
         y: e.clientY,
         timer: setTimeout(() => {
-          const { x, y } = lp || { x: e.clientX, y: e.clientY };
-          cancelLongPress();
-          if (navigator.vibrate) navigator.vibrate(8);
-          openMenu(h, x, y);
-        }, LONG_PRESS_MS),
+  const { x, y } = lp || { x: e.clientX, y: e.clientY };
+  cancelLongPress();
+  try { h.chart.clearCrosshairPosition(); } catch (_) {}
+  if (navigator.vibrate) navigator.vibrate(8);
+  openMenu(h, x, y);
+}, LONG_PRESS_MS),
       };
       window.addEventListener('pointermove', onLpMove, true);
       window.addEventListener('pointerup', cancelLongPress, true);
