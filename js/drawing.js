@@ -258,7 +258,7 @@ function ensureStyles() {
   
     // ===================== NAM CHÂM (MAGNET) - DÙNG CHUNG 4 PANE =====================
   const MAGNET_KEY = 'drawing_magnet_mode';       // 'off' | 'weak' | 'strong'
-  const MAGNET_WEAK_PX = 24;                      // yếu: chỉ hít khi cách O/H/L/C <= 24px
+  const MAGNET_WEAK_PX = 36;                      // yếu: chỉ hít khi cách O/H/L/C <= 36px
   let magnetMode = null;
 
   function getMagnetMode() {
@@ -282,10 +282,32 @@ function ensureStyles() {
     const { onAlertRequested, onToolChanged, timeframes, getTimeframe, getCandles } = options;
     ensureStyles();
 
+    // ===== Làm nét: snap toạ độ về pixel thật như TradingView =====
+let curDpr = window.devicePixelRatio || 1;
+let snapOn = false;
+let snapW = 1;
+const crispW = (w) => Math.max(1, Math.round((w || 1) * curDpr)) / curDpr;
+
+// Nét lẻ pixel thật -> đặt vào giữa pixel; chẵn -> đặt trên ranh giới pixel
+function snapAt(v, wCss) {
+  const k = curDpr;
+  const odd = Math.max(1, Math.round((wCss || 1) * k)) % 2 === 1;
+  return odd ? (Math.floor(v * k) + 0.5) / k : Math.round(v * k) / k;
+}
+function snap(v) {
+  if (!snapOn || v === null || v === undefined) return v;
+  return snapAt(v, snapW);
+}
+
+// Chữ: làm tròn về pixel thật (không cộng 0.5) để không bị nhoè
+const px = (v) => Math.round(v * curDpr) / curDpr;
+function fillTextC(t, x, y) { ctx.fillText(t, px(x), px(y)); }
+function strokeTextC(t, x, y) { ctx.strokeText(t, px(x), px(y)); }
+
     let currentTool = 'cursor';
     let drawings = [];
 
-    let defaultStyle = (hasLocalStore() && LocalStore.read('drawing_default_style', null)) || { color: null, width: 1.5 };
+    let defaultStyle = (hasLocalStore() && LocalStore.read('drawing_default_style', null)) || { color: null, width: 1 };
 
     let allDrawingsHidden = false;
     let dragStart = null;
@@ -439,6 +461,7 @@ function ensureStyles() {
     function resizeCanvas() {
       const rect = container.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
+      curDpr = dpr;
       canvas.style.width = rect.width + 'px';
       canvas.style.height = rect.height + 'px';
       canvas.width = Math.max(1, Math.round(rect.width * dpr));
@@ -509,7 +532,7 @@ function pointToX(p) {
   }
   if (t === undefined || t === null) return null;
   const l = timeToLogical(t);
-  return l === null ? null : chart.timeScale().logicalToCoordinate(l);
+  return l === null ? null : snap(chart.timeScale().logicalToCoordinate(l));
 }
 
 function xToPointInfo(x) {
@@ -518,8 +541,8 @@ function xToPointInfo(x) {
 }
 
     function priceToY(price) {
-      return candleSeries.priceToCoordinate(price);
-    }
+  return snap(candleSeries.priceToCoordinate(price));
+}
 
 
     function yToPrice(y) {
@@ -732,7 +755,7 @@ function xToPointInfo(x) {
  
       ctx.textAlign = align;
       ctx.fillStyle = d.textColor || baseColor;
-      lines.forEach((ln, i) => ctx.fillText(ln, tx, top + i * lh + fs));
+      lines.forEach((ln, i) => fillTextC(ln, tx, top + i * lh + fs));
       ctx.restore();
     }
  
@@ -820,7 +843,7 @@ function xToPointInfo(x) {
       // Đường xu hướng nối 2 điểm
       if (cfg.showTrendline) {
         ctx.strokeStyle = hex6(cfg.trendColor, '#787b86');
-        ctx.lineWidth = 1;
+        ctx.lineWidth = crispW(Number(cfg.levelsWidth) || 1);
         ctx.setLineDash(dashFor(cfg.trendStyle));
         ctx.beginPath();
         ctx.moveTo(x1, y1);
@@ -829,7 +852,7 @@ function xToPointInfo(x) {
       }
 
       // Đường các mức
-      ctx.lineWidth = Number(cfg.levelsWidth) || 1;
+      ctx.lineWidth = crispW(Number(cfg.levelsWidth) || 1); // đường các mức
       ctx.setLineDash(dashFor(cfg.levelsStyle));
       rows.forEach((r) => {
         ctx.strokeStyle = r.color;
@@ -865,7 +888,7 @@ function xToPointInfo(x) {
 
         ctx.textAlign = align;
         ctx.fillStyle = r.color;
-        ctx.fillText(label, lx, ly);
+        fillTextC(label, lx, ly);
       });
 
       // Chữ ghi chú trên hình
@@ -879,7 +902,7 @@ function xToPointInfo(x) {
         const ty = cfg.textV === 'top' ? minY + fs + 4 : cfg.textV === 'bottom' ? maxY - 6 : (minY + maxY) / 2 + fs * 0.35;
         ctx.textAlign = align;
         ctx.fillStyle = getThemeTextColor();
-        ctx.fillText(cfg.text, tx, ty);
+        fillTextC(cfg.text, tx, ty);
       }
       ctx.textAlign = 'start';
     }
@@ -887,23 +910,19 @@ function xToPointInfo(x) {
     // ===================== VẼ HÌNH =====================
     const NOOP_DRAW = function () {};
  
-    /** Vẽ 1 hình. Hình có nền mà đã tắt nền thì chỉ còn đường bao quanh (bỏ qua mọi lệnh tô màu). */
+
     function drawShape(d, isPreview, idx) {
-      const noFill = d.fill === false && FILL_TOOLS.includes(d.type);
-      const c = ctx;
-      if (noFill) {
-        c.fill = NOOP_DRAW;
-        c.fillRect = NOOP_DRAW;
-      }
-      try {
-        drawShapeInner(d, isPreview, idx);
-      } finally {
-        if (noFill) {
-          delete c.fill;
-          delete c.fillRect;
-        }
-      }
-    }
+  const noFill = d.fill === false && FILL_TOOLS.includes(d.type);
+  const c = ctx;
+  if (noFill) { c.fill = NOOP_DRAW; c.fillRect = NOOP_DRAW; }
+  snapOn = true;
+  try {
+    drawShapeInner(d, isPreview, idx);
+  } finally {
+    snapOn = false;
+    if (noFill) { delete c.fill; delete c.fillRect; }
+  }
+}
  
     function drawShapeInner(d, isPreview, idx) {
       const isHovered = idx !== undefined && idx === hoveredDrawingIndex;
@@ -917,7 +936,8 @@ function xToPointInfo(x) {
       const baseWidth = d.width || 1.5;
       ctx.strokeStyle = isPreview ? (baseColor === '#f2a339' ? 'rgba(242, 163, 57, 0.55)' : baseColor + '88') : baseColor;
 
-      ctx.lineWidth = baseWidth; // không còn phát sáng / đậm lên khi chạm hoặc rê chuột
+      snapW = d.type === 'fib' ? (Number(d.levelsWidth) || 1) : baseWidth;
+ctx.lineWidth = crispW(baseWidth);
 
       if (d.type === 'hline') {
         const y = priceToY(d.price);
@@ -930,7 +950,7 @@ function xToPointInfo(x) {
         ctx.setLineDash([]);
         ctx.fillStyle = baseColor;
         ctx.font = '10px sans-serif';
-        ctx.fillText(formatPrice(d.price), 4, y - 4);
+        fillTextC(formatPrice(d.price), 4, y - 4);
         if (showHandles) drawHandle(getRect().width / 2, y);
 
       } else if (d.type === 'vline') {
@@ -958,7 +978,7 @@ function xToPointInfo(x) {
         ctx.setLineDash([]);
         ctx.fillStyle = baseColor;
         ctx.font = '10px sans-serif';
-        ctx.fillText(formatPrice(d.p.price), x + 4, y - 4);
+        fillTextC(formatPrice(d.p.price), x + 4, y - 4);
         if (showHandles) drawHandle(x, y);
 
       } else if (d.type === 'trendline' || d.type === 'ray' || d.type === 'extendedline') {
@@ -1112,7 +1132,7 @@ function xToPointInfo(x) {
           ctx.stroke();
           ctx.fillStyle = isPreview ? 'rgba(242, 163, 57, 0.6)' : '#7c8496';
           ctx.font = '10px sans-serif';
-          ctx.fillText(`${lvl.toFixed(3)} (${formatPrice(price)})`, spanEnd + 4, y + 3);
+          fillTextC(`${lvl.toFixed(3)} (${formatPrice(price)})`, spanEnd + 4, y + 3);
         });
         if (showHandles) { drawHandle(x1, y1); drawHandle(x2, y2); drawHandle(x3, y3); }
 
@@ -1152,12 +1172,12 @@ function xToPointInfo(x) {
 
         ctx.font = '10px sans-serif';
         ctx.fillStyle = baseColor;
-        ctx.fillText(`${d.type === 'long' ? 'LONG' : 'SHORT'} · Vào ${formatPrice(entryPrice)}`, rx + 4, yEntry - 4);
+        fillTextC(`${d.type === 'long' ? 'LONG' : 'SHORT'} · Vào ${formatPrice(entryPrice)}`, rx + 4, yEntry - 4);
         ctx.fillStyle = '#ff5a67';
-        ctx.fillText(`SL ${formatPrice(stopPrice)}`, rx + 4, yStop + 12);
+        fillTextC(`SL ${formatPrice(stopPrice)}`, rx + 4, yStop + 12);
         if (yTarget !== null && yTarget !== undefined) {
           ctx.fillStyle = '#22c9a0';
-          ctx.fillText(`TP ${formatPrice(targetPrice)} (R:R 1:${rr})`, rx + 4, yTarget - 4);
+          fillTextC(`TP ${formatPrice(targetPrice)} (R:R 1:${rr})`, rx + 4, yTarget - 4);
         }
         const showHandles = isSelected || (isHovered && !isCoarsePointer() && !drawings[idx].locked);
         if (showHandles) { drawHandle(x1, y1); drawHandle(x2, y2); }
@@ -1178,10 +1198,10 @@ function xToPointInfo(x) {
         ctx.miterLimit = 2;
         ctx.strokeStyle = haloColor;
         ctx.lineWidth = 3;
-        ctx.strokeText(d.text, x, y);
+        strokeTextC(d.text, x, y);
 
         ctx.fillStyle = fillColor;
-        ctx.fillText(d.text, x, y);
+        fillTextC(d.text, x, y);
 
         if (isSelected) {
           const textWidth = ctx.measureText(d.text).width;
@@ -1200,11 +1220,13 @@ function xToPointInfo(x) {
     function drawCrosshair() {
       if (!hoverPoint || currentTool === 'cursor') return;
       const { width, height } = getRect();
-      const { x, y, price } = hoverPoint;
+      const { price } = hoverPoint;
+      const x = snapAt(hoverPoint.x, 1);
+      const y = snapAt(hoverPoint.y, 1);
 
       ctx.save();
       ctx.strokeStyle = 'rgba(120, 123, 134, 0.65)';
-      ctx.lineWidth = 1;
+      ctx.lineWidth = crispW(1);
       ctx.setLineDash([3, 3]);
       
             if (hoverPoint.snapped) {
@@ -1261,7 +1283,7 @@ function xToPointInfo(x) {
         ctx.font = '11px sans-serif';
         ctx.fillStyle = '#f2a339';
         ctx.textAlign = 'center';
-        ctx.fillText(hint, width / 2, 16);
+        fillTextC(hint, width / 2, 16);
         ctx.textAlign = 'start';
       }
       
@@ -1276,13 +1298,13 @@ function xToPointInfo(x) {
         ctx.fillStyle = '#f2a339';
         ctx.fillRect(width - boxW, boxY, boxW, boxH);
         ctx.fillStyle = '#0a0e14';
-        ctx.fillText(label, width - boxW + 4, boxY + 11);
+        fillTextC(label, width - boxW + 4, boxY + 11);
       }
 
       if (pendingThirdPoint) {
         ctx.font = '10px sans-serif';
         ctx.fillStyle = '#f2a339';
-        ctx.fillText('Chạm/bấm để chốt điểm neo thứ 3', Math.min(x + 10, width - 160), Math.max(y - 12, 12));
+        fillTextC('Chạm/bấm để chốt điểm neo thứ 3', Math.min(x + 10, width - 160), Math.max(y - 12, 12));
       }
 
       ctx.restore();
@@ -1403,10 +1425,29 @@ function xToPointInfo(x) {
       return false;
     }
  
+        // Hình nào có nút trúng (để onPointerDown biết kéo nút của hình nào)
+    let handleHitIndex = null;
+
     function findHandleAt(pt) {
-      if (allDrawingsHidden || selectedDrawingIndex === null) return null;
-      const d = drawings[selectedDrawingIndex];
-      if (!d || d.locked) return null;
+      handleHitIndex = null;
+      if (allDrawingsHidden) return null;
+      // Ưu tiên hình đang chọn, sau đó tới hình đang rê chuột (đang hiện nút)
+      const order = [];
+      if (selectedDrawingIndex !== null) order.push(selectedDrawingIndex);
+      if (hoveredDrawingIndex !== null && hoveredDrawingIndex !== selectedDrawingIndex) order.push(hoveredDrawingIndex);
+      for (const i of order) {
+        const name = handleNameFor(i, pt);
+        if (name) {
+          handleHitIndex = i;
+          return name;
+        }
+      }
+      return null;
+    }
+
+    function handleNameFor(index, pt) {
+      const d = drawings[index];
+      if (!d || d.locked || !isVisibleNow(d)) return null;
 
       const clickX = pointToX(pt);
       const clickY = priceToY(pt.price);
@@ -1700,7 +1741,7 @@ function xToPointInfo(x) {
       if (d.type !== 'text') {
         const isFibT = d.type === 'fib';
         const cur = isFibT ? d.levelsWidth || 1 : d.width || 1.5;
-        const widths = [1, 1.5, 2, 3, 4];
+        const widths = [0.5, 1, 1.5, 2, 3, 4];
         if (!widths.includes(cur)) widths.push(cur);
         const sel = document.createElement('select');
         sel.className = 'dtv-tb-select';
@@ -1829,7 +1870,7 @@ function xToPointInfo(x) {
         <div class="dtv-modal-row">
           <span>Levels line</span>
           <div class="dtv-ctrls">
-            ${selectHTML('fLevelsWidth', [[1, '1px'], [1.5, '1.5px'], [2, '2px'], [3, '3px']], cfg.levelsWidth)}
+            ${selectHTML('fLevelsWidth', [[0.5, '0.5px'], [1, '1px'], [1.5, '1.5px'], [2, '2px'], [3, '3px']], cfg.levelsWidth)}
             ${selectHTML('fLevelsStyle', LINE_STYLES, cfg.levelsStyle)}
           </div>
         </div>
@@ -1915,7 +1956,7 @@ function xToPointInfo(x) {
         html += `
         <div class="dtv-modal-row">
           <span>Độ dày</span>
-          <div class="dtv-ctrls">${selectHTML('gWidth', [[1, '1px'], [1.5, '1.5px'], [2.5, '2.5px'], [4, '4px']], d.width || 1.5)}</div>
+          <div class="dtv-ctrls">${selectHTML('gWidth', [[0.5, '0.5px'], [1, '1px'], [1.5, '1.5px'], [2.5, '2.5px'], [4, '4px']], d.width || 1.5)}</div>
         </div>`;
       }
 
@@ -2411,11 +2452,16 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
 
       if (currentTool === 'cursor') {
         const handleName = findHandleAt(pt);
-        if (handleName) {
+          if (handleName) {
+          const hi = handleHitIndex;
+          if (selectedDrawingIndex !== hi) {
+          selectedDrawingIndex = hi;
+          showToolbar(hi);
+          }
           isDraggingHandle = true;
           draggedHandleName = handleName;
-          draggedDrawingIndex = selectedDrawingIndex;
-          draggedDrawingOriginal = clone(drawings[selectedDrawingIndex]);
+          draggedDrawingIndex = hi;
+          draggedDrawingOriginal = clone(drawings[hi]);
           dragStartPixel = { x: e.clientX, y: e.clientY };
           canvas.setPointerCapture(e.pointerId);
           e.stopPropagation();
@@ -2896,18 +2942,21 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
         draw(target) {
           if (allDrawingsHidden) return;
           target.useMediaCoordinateSpace((scope) => {
-            ctx = scope.context;          // tạm thời vẽ lên context của chart
-            inPrimitive = true;
-            primSize = scope.mediaSize;   // {width, height} của vùng chart (không gồm trục giá)
-            try {
-              drawings.forEach((d, idx) => {
-                if (isVisibleNow(d)) drawShape(d, false, idx);
-              });
-            } finally {
-              ctx = canvasCtx;            // trả về canvas riêng cho preview/crosshair
-              inPrimitive = false;
-            }
-          });
+  const prevDpr = curDpr;
+  curDpr = scope.horizontalPixelRatio || prevDpr;
+  ctx = scope.context;
+  inPrimitive = true;
+  primSize = scope.mediaSize;
+  try {
+    drawings.forEach((d, idx) => {
+      if (isVisibleNow(d)) drawShape(d, false, idx);
+    });
+  } finally {
+    ctx = canvasCtx;
+    inPrimitive = false;
+    curDpr = prevDpr;
+  }
+});
         },
       }),
     };
@@ -2921,25 +2970,31 @@ const vlineExtraView = {
     draw(target) {
       if (allDrawingsHidden) return;
       target.useMediaCoordinateSpace((scope) => {
-        const c = scope.context;
-        const { height } = scope.mediaSize;
-        drawings.forEach((d, idx) => {
-          if (d.type !== 'vline' || !isVisibleNow(d)) return;
-          const x = pointToX(d);
-          if (x === null || x === undefined) return;
-          const selected = idx === selectedDrawingIndex;
-          c.save();
-          c.globalAlpha = d.opacity === undefined ? 1 : d.opacity;
-          c.strokeStyle = d.color || '#f2a339';
-          c.lineWidth = (d.width || 1.5) + (selected ? 1 : 0);
-          if (d.dashed !== false) c.setLineDash([4, 3]);
-          c.beginPath();
-          c.moveTo(x, 0);
-          c.lineTo(x, height);
-          c.stroke();
-          c.restore();
-        });
-      });
+  const c = scope.context;
+  const { height } = scope.mediaSize;
+  const prevDpr = curDpr;
+  curDpr = scope.horizontalPixelRatio || prevDpr;
+  drawings.forEach((d, idx) => {
+    if (d.type !== 'vline' || !isVisibleNow(d)) return;
+    snapW = d.width || 1.5;
+    snapOn = true;
+    const x = pointToX(d);
+    snapOn = false;
+    if (x === null || x === undefined) return;
+    const selected = idx === selectedDrawingIndex;
+    c.save();
+    c.globalAlpha = d.opacity === undefined ? 1 : d.opacity;
+    c.strokeStyle = d.color || '#f2a339';
+    c.lineWidth = crispW((d.width || 1.5) + (selected ? 1 : 0));
+    if (d.dashed !== false) c.setLineDash([4, 3]);
+    c.beginPath();
+    c.moveTo(x, 0);
+    c.lineTo(x, height);
+    c.stroke();
+    c.restore();
+  });
+  curDpr = prevDpr;
+});
     },
   }),
 };

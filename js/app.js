@@ -12,7 +12,6 @@
  *   - Giữ chart cũ hiển thị trong lúc tải; chỉ xoá khi dữ liệu mới về.
  *   - Trend tham khảo (7 khung) dời ra SAU 1.5s lúc khởi động, debounce 0.8s khi
  *     đổi symbol -> không tranh băng thông với chart chính.
- *   - ĐÃ BỎ Yahoo.
  *
  * Các phần cũ giữ nguyên: tải thêm lịch sử khi kéo trái, cảnh báo giá
  * ('price:update' -> Store -> 'pane:priceChanged' -> AlertsModule), thông báo
