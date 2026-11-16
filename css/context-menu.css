@@ -1,0 +1,318 @@
+/* css/context-menu.css - menu chuột phải chart, toast, hộp cài đặt chart.
+   Chỉ dùng biến theme của style.css nên tự đổi theo sáng / tối. Nạp SAU style.css. */
+
+/* Chặn menu "Copy / Look up" của iOS khi nhấn giữ lên chart */
+.pane-chart-container {
+  -webkit-touch-callout: none;
+}
+
+/* ===================== MENU ===================== */
+.cm-list {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg, 8px);
+  box-shadow: var(--shadow-md);
+  padding: 6px;
+  min-width: 232px;
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--text-primary);
+  user-select: none;
+  -webkit-user-select: none;
+  outline: none;
+}
+
+.cm-menu {
+  position: fixed;
+  z-index: 10050;
+  max-width: min(92vw, 320px);
+  animation: cm-in 0.1s ease-out;
+}
+
+@keyframes cm-in {
+  from { opacity: 0; transform: translateY(-3px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+
+.cm-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md, 6px);
+  cursor: pointer;
+  outline: none;
+}
+.cm-item:hover,
+.cm-item:focus,
+.cm-item.open { background: var(--bg-hover); }
+.cm-item.disabled { opacity: 0.4; pointer-events: none; }
+
+.cm-ic {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+.cm-ic svg,
+.cm-chev svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.cm-item.is-checked .cm-ic { color: var(--accent-blue); }
+
+.cm-label { flex: 1; white-space: nowrap; }
+
+.cm-kbd {
+  margin-left: 22px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  opacity: 0.85;
+  white-space: nowrap;
+}
+
+.cm-chev {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--text-secondary);
+}
+.cm-chev svg { width: 14px; height: 14px; }
+
+.cm-sep {
+  height: 1px;
+  background: var(--border-color);
+  margin: 6px 4px;
+}
+
+/* Menu con */
+.cm-sub {
+  display: none;
+  position: absolute;
+  top: -7px;
+  left: calc(100% - 2px);
+  z-index: 1;
+  min-width: 200px;
+}
+.cm-item.open > .cm-sub { display: block; }
+.cm-sub.cm-flip { left: auto; right: calc(100% - 2px); }
+
+/* Công tắc */
+.cm-sw {
+  flex: 0 0 30px;
+  position: relative;
+  width: 30px;
+  height: 17px;
+  border-radius: 9px;
+  background: var(--border-color);
+  transition: background 0.15s ease;
+}
+.cm-sw::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--text-primary);
+  transition: transform 0.15s ease;
+}
+.cm-sw.on { background: var(--accent-blue); }
+.cm-sw.on::after { transform: translateX(13px); background: var(--on-accent, #fff); }
+
+@media (pointer: coarse) {
+  .cm-item { padding: 11px 12px; font-size: 14px; }
+  .cm-kbd { display: none; }
+  .cm-list { min-width: 220px; }
+}
+
+/* ===================== TOAST ===================== */
+.cm-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  z-index: 10100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 92vw;
+  padding: 9px 16px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-md);
+  font-family: var(--font);
+  font-size: 12.5px;
+  animation: cm-in 0.14s ease-out;
+}
+.cm-toast.error { border-color: var(--red); }
+.cm-toast-ic { display: inline-flex; color: var(--green); }
+.cm-toast-ic svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ===================== HỘP CÀI ĐẶT CHART ===================== */
+.cm-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.cm-dialog {
+  width: 420px;
+  max-width: 100%;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg, 8px);
+  box-shadow: var(--shadow-md);
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 13px;
+  overflow: hidden;
+}
+
+.cm-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-color);
+}
+.cm-dialog-title { font-size: 15px; font-weight: 600; }
+.cm-x {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.cm-x:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+.cm-dialog-body {
+  padding: 6px 18px 12px;
+  overflow-y: auto;
+}
+
+.cm-group { padding: 10px 0 6px; }
+.cm-group + .cm-group { border-top: 1px solid var(--border-color); }
+.cm-group-title {
+  margin-bottom: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.cm-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+}
+.cm-ctrls { display: flex; align-items: center; gap: 10px; }
+.cm-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); cursor: pointer; }
+.cm-inline input { accent-color: var(--accent-blue); }
+
+.cm-swwrap { position: relative; display: inline-flex; cursor: pointer; }
+.cm-swwrap input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.cm-swwrap input:checked + .cm-sw { background: var(--accent-blue); }
+.cm-swwrap input:checked + .cm-sw::after { transform: translateX(13px); background: var(--on-accent, #fff); }
+.cm-swwrap input:focus-visible + .cm-sw { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+
+.cm-color {
+  width: 36px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  cursor: pointer;
+}
+.cm-color:disabled { opacity: 0.4; cursor: default; }
+
+.cm-range { width: 140px; accent-color: var(--accent-blue); cursor: pointer; }
+.cm-val { width: 38px; text-align: right; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); }
+
+.cm-presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }
+.cm-preset {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 9px 5px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-main);
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.cm-preset:hover { border-color: var(--accent-blue); }
+.cm-preset.active { border-color: var(--accent-blue); background: var(--accent-blue-soft); color: var(--accent-blue); }
+.cm-pc { width: 10px; height: 14px; border-radius: 2px; flex-shrink: 0; }
+.cm-pl { margin-left: 4px; white-space: nowrap; }
+
+.cm-dialog-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-main);
+}
+.cm-spacer { flex: 1; }
+.cm-btn {
+  padding: 7px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md, 6px);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.cm-btn:hover { background: var(--bg-hover); }
+.cm-btn.ghost { border-color: transparent; color: var(--text-secondary); padding-left: 0; }
+.cm-btn.ghost:hover { background: transparent; color: var(--text-primary); }
+.cm-btn.primary { background: var(--accent-blue); border-color: var(--accent-blue); color: var(--on-accent); }
+.cm-btn.primary:hover { opacity: 0.9; }
+
+@media (max-width: 480px) {
+  .cm-range { width: 100px; }
+  .cm-preset { font-size: 11px; }
+}

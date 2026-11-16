@@ -485,10 +485,21 @@ const ChartModule = (function () {
   }
 
   // ===== MÀU NẾN + RÂU DÀY (giống TradingView) =====
-  const CANDLE_UP = '#089981';
-  const CANDLE_DOWN = '#F23645';
-  const VOLUME_UP = 'rgba(8,153,129,0.5)';
-  const VOLUME_DOWN = 'rgba(242,54,69,0.5)';
+  let CANDLE_UP = '#089981';
+  let CANDLE_DOWN = '#F23645';
+  let VOLUME_UP = 'rgba(8,153,129,0.5)';
+  let VOLUME_DOWN = 'rgba(242,54,69,0.5)';
+
+  /** Đọc màu nến người dùng chọn (menu chuột phải -> Cài đặt chart) vào 4 biến trên. */
+  function refreshAppearanceColors() {
+    if (typeof ChartAppearance === 'undefined') return;
+    const a = ChartAppearance.get();
+    CANDLE_UP = a.upColor;
+    CANDLE_DOWN = a.downColor;
+    VOLUME_UP = hexToRgba(a.upColor, a.volumeAlpha);
+    VOLUME_DOWN = hexToRgba(a.downColor, a.volumeAlpha);
+  }
+  refreshAppearanceColors();
     const WICK_RATIO = 0.024; // độ dày râu = 2.4% khoảng cách giữa 2 nến (đo từ ảnh TradingView)
 
   /** Vẽ râu nến tỉ lệ theo mức zoom giống TradingView (thư viện chỉ vẽ cố định 1px). */
@@ -669,6 +680,7 @@ const ChartModule = (function () {
     });
 
     let drawing = null;
+    let ctxMenuHandle = null;
 
     function runMaSignal() {
       const p = Store.getPane(paneId);
@@ -759,6 +771,56 @@ const ChartModule = (function () {
         rightPriceScale: { borderColor: c.border },
         timeScale: { borderColor: c.border },
       });
+      applyGridOptions();
+    }
+
+    /** Lưới theo cài đặt người dùng (bật/tắt dọc, ngang, màu); mặc định theo theme. */
+    function applyGridOptions() {
+      if (!chart || typeof ChartAppearance === 'undefined') return;
+      const a = ChartAppearance.get();
+      const th = (typeof ThemeModule !== 'undefined' && ThemeModule.getTheme()) || 'dark';
+      const base = (CHART_THEME[th] || CHART_THEME.dark).grid;
+      const col = a.gridColor || base;
+      chart.applyOptions({
+        grid: {
+          vertLines: { color: col, visible: !!a.gridVert },
+          horzLines: { color: col, visible: !!a.gridHorz },
+        },
+      });
+    }
+
+    /** Màu nến / khối lượng / lưới vừa đổi -> áp lại lên chart. */
+    function handleAppearanceChanged() {
+      if (!chart || !candleSeries) return;
+      refreshAppearanceColors();
+      candleSeries.applyOptions({ upColor: CANDLE_UP, downColor: CANDLE_DOWN });
+      if (volumeSeries && currentCandles.length) {
+        volumeSeries.setData(currentCandles.map((c) => ({
+          time: c.time,
+          value: c.volume,
+          color: c.close >= c.open ? VOLUME_UP : VOLUME_DOWN,
+        })));
+      }
+      applyGridOptions();
+    }
+
+    /** Danh sách chỉ báo đang hiện, dùng để vẽ chú thích vào ảnh chụp chart. */
+    function getLegendEntries() {
+      const out = [];
+      emaLines.filter((l) => l.enabled).forEach((l) => out.push({ color: l.color, text: 'EMA ' + l.period }));
+      const ic = indicatorConfig;
+      if (ic.sma50.enabled) out.push({ color: ic.sma50.color, text: 'SMA ' + ic.sma50.period });
+      if (ic.bbMiddle.enabled || ic.bbUpper.enabled || ic.bbLower.enabled) {
+        out.push({ color: ic.bbMiddle.color, text: 'BB ' + ic.bbMiddle.period });
+      }
+      if (rsiSeries) out.push({ color: ic.rsi.color, text: 'RSI ' + ic.rsi.period });
+      if (macdLineSeries) {
+        out.push({ color: ic.macdLine.color, text: 'MACD ' + ic.macdLine.period + ', ' + ic.macdHist.period + ', ' + ic.macdSignal.period });
+      }
+      if (ichimokuActive()) out.push({ color: '#2962ff', text: 'Ichimoku' });
+      if (volumeVisible) out.push({ color: CANDLE_UP, text: 'Volume' });
+      if (signalVisible) out.push({ color: '#f5c518', text: signalMode === 'ma' ? 'BUY/SELL · MA' : 'BUY/SELL' });
+      return out;
     }
 
     function handleThemeChanged({ theme }) {
@@ -818,6 +880,7 @@ const ChartModule = (function () {
         wickVisible: false,
       });
       candleSeries.attachPrimitive(new ThickWickPrimitive(() => currentCandles));
+      applyGridOptions();
 
       breakout.init(chart, candleSeries);
       maSignal.init(chart, candleSeries);
@@ -844,6 +907,7 @@ const ChartModule = (function () {
       EventBus.on('kline:update', handleKlineUpdate);
       EventBus.on('alerts:changed', renderAlertLines);
       EventBus.on('theme:changed', handleThemeChanged);
+      EventBus.on('chart:appearanceChanged', handleAppearanceChanged);
 
   drawing = DrawingModule.create(paneId, chart, candleSeries, container, {
   getCandles: () => currentCandles,
@@ -863,6 +927,18 @@ const ChartModule = (function () {
       const initPane = Store.getPane(paneId);
       if (initPane) drawing.loadForSymbol(initPane.symbol);
       EventBus.on('pane:symbolChanged', handleSymbolChangedForDrawing);
+
+      // Menu chuột phải kiểu TradingView (Reset chart view, lưu/sao chép ảnh, lưới, màu nến)
+      if (typeof ChartContextMenu !== 'undefined') {
+        ctxMenuHandle = ChartContextMenu.attach({
+          paneId,
+          container,
+          chart,
+          resetView,
+          getDrawingTool: () => (drawing && drawing.getTool ? drawing.getTool() : 'cursor'),
+          getLegendEntries,
+        });
+      }
 
       return chart;
     }
@@ -1939,6 +2015,8 @@ function setupPinchZoom(container) {
       EventBus.off('alerts:changed', renderAlertLines);
       EventBus.off('theme:changed', handleThemeChanged);
       EventBus.off('pane:symbolChanged', handleSymbolChangedForDrawing);
+      EventBus.off('chart:appearanceChanged', handleAppearanceChanged);
+      if (ctxMenuHandle) { ctxMenuHandle.destroy(); ctxMenuHandle = null; }
       if (drawing) drawing.flushSave(); // lưu nốt hình vẽ trước khi huỷ
       maSignal.destroy();
       if (resizeObserver) resizeObserver.disconnect();
@@ -1964,6 +2042,7 @@ function setupPinchZoom(container) {
       clearData,
       destroy,
       resize,
+      resetView,
       setIndicatorVisible,
       setIndicatorPeriod,
       setIndicatorStyle,
