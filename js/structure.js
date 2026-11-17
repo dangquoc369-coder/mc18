@@ -35,7 +35,9 @@ const StructureModule = (function () {
       bandWidth: 3,
       lineWidth: 1,
       lineStyle: 'solid', // 'solid' | 'dashed' | 'dotted'
-      labelSize: 10,
+      pivSize: 9,       // cỡ chữ HH / HL / LH / LL
+      brkSize: 8,       // cỡ chữ BOS / CHoCH
+      textHalo: true,   // viền nền quanh chữ cho nét
       bgAlpha: 0.15,
     },
     tfs: null, // null = hiện ở mọi khung; hoặc ['15m','1h',...]
@@ -89,7 +91,10 @@ const StructureModule = (function () {
         bandWidth: flt(ss.bandWidth, ds.bandWidth, 0.5, 6),
         lineWidth: flt(ss.lineWidth, ds.lineWidth, 0.5, 4),
         lineStyle: ['solid', 'dashed', 'dotted'].includes(ss.lineStyle) ? ss.lineStyle : ds.lineStyle,
-        labelSize: int(ss.labelSize, ds.labelSize, 7, 20),
+        // ss.labelSize: tương thích cấu hình đã lưu từ bản cũ
+        pivSize: int(ss.pivSize !== undefined ? ss.pivSize : ss.labelSize, ds.pivSize, 6, 20),
+        brkSize: int(ss.brkSize !== undefined ? ss.brkSize : ss.labelSize, ds.brkSize, 6, 20),
+        textHalo: bool(ss.textHalo, ds.textHalo),
         bgAlpha: flt(ss.bgAlpha, ds.bgAlpha, 0, 0.6),
       },
       tfs: Array.isArray(s.tfs) && s.tfs.length ? s.tfs.map(String) : null,
@@ -350,6 +355,30 @@ const StructureModule = (function () {
         };
         const rx = (v) => Math.round(v);   // chữ: làm tròn về pixel thật
 
+                const theme = (typeof ThemeModule !== 'undefined' && ThemeModule.getTheme && ThemeModule.getTheme()) || 'dark';
+        const haloColor = theme === 'light' ? '#ffffff' : '#0c0d14';
+        const fontPiv = `700 ${Math.round(st.pivSize * vr)}px ${FONT}`;
+        const fontBrk = `700 ${Math.round(st.brkSize * vr)}px ${FONT}`;
+        try { ctx.fontKerning = 'normal'; ctx.textRendering = 'optimizeLegibility'; } catch (e) { /* bỏ qua */ }
+
+        // Vẽ chữ: viền nền (halo) rồi mới tô chữ, làm tròn về pixel thật
+        const drawLabel = (text, x, y, color, font, baseline) => {
+          ctx.save();
+          ctx.setLineDash([]);
+          ctx.font = font;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = baseline;
+          if (st.textHalo) {
+            ctx.lineJoin = 'round';
+            ctx.lineWidth = Math.max(2, Math.round(2.5 * hr));
+            ctx.strokeStyle = haloColor;
+            ctx.strokeText(text, rx(x), rx(y));
+          }
+          ctx.fillStyle = color;
+          ctx.fillText(text, rx(x), rx(y));
+          ctx.restore();
+        };
+
         ctx.save();
         ctx.lineJoin = 'round';
         ctx.lineCap = 'butt';
@@ -405,7 +434,6 @@ const StructureModule = (function () {
           ctx.stroke();
         }
 
-        const font = `600 ${Math.round(st.labelSize * vr)}px ${FONT}`;
 
         // ---- 3) Đường phá vỡ + nhãn BOS / CHoCH ----
         if (cfg.showBrk) {
@@ -413,8 +441,7 @@ const StructureModule = (function () {
           const lw = curW;
           const dash = st.lineStyle === 'dashed' ? [5 * hr, 4 * hr] : st.lineStyle === 'dotted' ? [lw, 3 * hr] : [];
           ctx.setLineDash(dash);
-          ctx.font = font;
-          ctx.textAlign = 'center';
+          
           data.breaks.forEach((b) => {
             if (b.x1 < r.from || b.x0 > r.to) return;
             const x0 = X(b.x0);
@@ -430,25 +457,20 @@ const StructureModule = (function () {
 
             const xm = X(Math.floor((b.x0 + b.x1) / 2));
             if (xm === null) return;
-            ctx.fillStyle = color;
-            ctx.textBaseline = b.up ? 'bottom' : 'top';
-            ctx.fillText(b.text, rx(xm), rx(y + (b.up ? -3 : 3) * vr));
+            drawLabel(b.text, xm, y + (b.up ? -3 : 3) * vr, color, fontBrk, b.up ? 'bottom' : 'top');
           });
           ctx.setLineDash([]);
         }
 
         // ---- 4) Nhãn HH / HL / LH / LL ----
         if (cfg.showPiv) {
-          ctx.font = font;
-          ctx.textAlign = 'center';
+          
           data.pivots.forEach((p) => {
             if (p.idx < r.from || p.idx > r.to) return;
             const x = X(p.idx);
             const y = Y(p.price);
             if (x === null || y === null) return;
-            ctx.fillStyle = p.good ? st.upColor : st.downColor;
-            ctx.textBaseline = p.high ? 'bottom' : 'top';
-            ctx.fillText(p.text, rx(x), rx(y + (p.high ? -4 : 4) * vr));
+            drawLabel(p.text, x, y + (p.high ? -4 : 4) * vr, p.good ? st.upColor : st.downColor, fontPiv, p.high ? 'bottom' : 'top');
           });
         }
 

@@ -60,6 +60,7 @@ const ChartModule = (function () {
   const PINCH_ZOOM_GAIN = 2.0;
   const MAX_BAR_SPACING = 60;
   const MIN_BAR_SPACING = 0.5;
+  const DEFAULT_BAR_SPACING = 6; // độ rộng nến mặc định khi Reset chart view (giống TradingView ~6-9)
   const EMA_SOURCES = ['close', 'open', 'high', 'low'];
 
   
@@ -944,7 +945,7 @@ const ChartModule = (function () {
           paneId,
           container,
           chart,
-          resetView,
+          resetView: () => resetView(true),
           getDrawingTool: () => (drawing && drawing.getTool ? drawing.getTool() : 'cursor'),
           getLegendEntries,
         });
@@ -1052,25 +1053,83 @@ function setupPinchZoom(container) {
       applyResize();
     }
     
-        // ===== NHẢY TỚI VÙNG CÓ NẾN KHI ĐỔI SYMBOL / KHUNG =====
-    function resetView() {
+        // ===== RESET CHART VIEW (CHUẨN TRADINGVIEW: CĂN LẠI CẢ NGANG LẪN DỌC) =====
+    function resetView(hard = true) {
       if (!chart || currentCandles.length === 0) return;
       const ts = chart.timeScale();
       const w = ts.width();
-      if (!w) {            // ô chưa có kích thước (đang ẩn) -> làm lại khi resize
+      if (!w) {
         pendingViewReset = true;
         return;
       }
       pendingViewReset = false;
+
+      // 1. Căn lại trục dọc (Price Scale) cho nến, volume và các pane chỉ báo (RSI, MACD)
+      const autoFitPrice = () => {
+        // Trục giá chính (Nến)
+        try {
+          if (candleSeries) candleSeries.priceScale().applyOptions({ autoScale: true });
+        } catch (err) {}
+        try {
+          chart.priceScale('right').applyOptions({ autoScale: true });
+        } catch (err) {}
+
+        // Trục Volume
+        try {
+          if (volumeSeries) volumeSeries.priceScale().applyOptions({ autoScale: true });
+        } catch (err) {}
+        try {
+          chart.priceScale('volume').applyOptions({ autoScale: true });
+        } catch (err) {}
+
+        // Trục Pane 1 (RSI)
+        const rsiHost = rsiSeries || emaRsiSeries || wmaRsiSeries;
+        try {
+          if (rsiHost) rsiHost.priceScale().applyOptions({ autoScale: true });
+        } catch (err) {}
+
+        // Trục Pane 2 (MACD)
+        const macdHost = macdLineSeries || macdSignalSeries || macdHistSeries;
+        try {
+          if (macdHost) macdHost.priceScale().applyOptions({ autoScale: true });
+        } catch (err) {}
+
+        // Hỗ trợ multi-panes (Lightweight Charts v5)
+        try {
+          if (typeof chart.panes === 'function') {
+            chart.panes().forEach((pane) => {
+              try { pane.priceScale('right')?.applyOptions({ autoScale: true }); } catch (e) {}
+              try { pane.priceScale('left')?.applyOptions({ autoScale: true }); } catch (e) {}
+            });
+          }
+        } catch (err) {}
+      };
+
       try {
-        // Người dùng từng kéo trục giá thì autoScale bị tắt -> bật lại, tránh "lạc" khỏi vùng giá mới
-        chart.priceScale('right').applyOptions({ autoScale: true });
-        const n = currentCandles.length;
-        const bars = Math.max(20, w / Math.max(MIN_BAR_SPACING, ts.options().barSpacing));
-        const to = n - 1 + VIEW_RIGHT_PAD;
-        ts.setVisibleLogicalRange({ from: to - bars, to });
+        try { chart.clearCrosshairPosition(); } catch (err) {}
+
+        // Bật lại autoScale dọc trước
+        autoFitPrice();
+
+        // 2. Reset trục ngang (Time Scale) về độ zoom mặc định và cuộn về nến mới nhất
+        ts.resetTimeScale();
+        ts.applyOptions({
+          barSpacing: DEFAULT_BAR_SPACING,
+          rightOffset: VIEW_RIGHT_PAD,
+          fixLeftEdge: false,
+          fixRightEdge: false,
+        });
+
+        // Nhảy thẳng tới nến mới nhất với khoảng đệm lề phải VIEW_RIGHT_PAD
+        ts.scrollToPosition(VIEW_RIGHT_PAD, false);
+
+        // Kích hoạt tính lại vùng giá khớp với số nến hiển thị mới
+        requestAnimationFrame(() => {
+          if (!chart) return;
+          autoFitPrice();
+        });
       } catch (err) {
-        // bỏ qua
+        console.warn(`[${paneId}] Lỗi khi resetView:`, err);
       }
     }
 

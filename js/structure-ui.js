@@ -147,7 +147,9 @@ const StructureUI = (function () {
         row('Độ dày dải', sel([0.5, 1, 1.5, 2, 3, 4, 5, 6].map((w) => [w, w + 'px']), st.bandWidth, 'id="sBandW"')) +
         row('Độ dày đường BOS / CHoCH', sel([0.5, 1, 1.5, 2, 3, 4].map((w) => [w, w + 'px']), st.lineWidth, 'id="sLineW"')) +
         row('Kiểu đường BOS / CHoCH', sel([['solid', 'Liền'], ['dashed', 'Đứt'], ['dotted', 'Chấm']], st.lineStyle, 'id="sLineS"')) +
-        row('Cỡ chữ nhãn', sel([8, 9, 10, 11, 12, 14, 16].map((w) => [w, w + 'px']), st.labelSize, 'id="sLabelS"')) +
+        row('Cỡ chữ HH / HL / LH / LL', sel([6, 7, 8, 9, 10, 11, 12, 14, 16].map((w) => [w, w + 'px']), st.pivSize, 'id="sPivS"')) +
+        row('Cỡ chữ BOS / CHoCH', sel([6, 7, 8, 9, 10, 11, 12, 14, 16].map((w) => [w, w + 'px']), st.brkSize, 'id="sBrkS"')) +
+        crow(chk(st.textHalo, 'id="sHalo"'), 'Viền nền quanh chữ (chữ nét hơn)') +
         row('Độ đậm nền CHoCH', rng(st.bgAlpha, 'id="sBgA"'));
 
       // ---------- VISIBILITY ----------
@@ -220,7 +222,9 @@ const StructureUI = (function () {
           bandWidth: flt('#sBandW', 3),
           lineWidth: flt('#sLineW', 1),
           lineStyle: q('#sLineS').value,
-          labelSize: int('#sLabelS', 10),
+          pivSize: int('#sPivS', 9),
+          brkSize: int('#sBrkS', 8),
+          textHalo: q('#sHalo').checked,
           bgAlpha: int('#sBgA', 15) / 100,
         },
         tfs: picked.length === 0 || picked.length === tfBoxes.length ? null : picked,
