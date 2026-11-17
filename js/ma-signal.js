@@ -124,11 +124,11 @@ const MaSignalModule = (function () {
         sellColor: col('sellColor'),
         maBullColor: col('maBullColor'),
         maBearColor: col('maBearColor'),
-        maWidth: int(ss.maWidth, ds.maWidth, 1, 4),
+        maWidth: flt(ss.maWidth, ds.maWidth, 0.5, 4),
         slColor: col('slColor'),
         tpColor: col('tpColor'),
         entryColor: col('entryColor'),
-        lineWidth: int(ss.lineWidth, ds.lineWidth, 1, 4),
+        lineWidth: flt(ss.lineWidth, ds.lineWidth, 0.5, 4),
         showEntry: bool(ss.showEntry, ds.showEntry),
         showSl: bool(ss.showSl, ds.showSl),
         showTp: bool(ss.showTp, ds.showTp),
@@ -402,23 +402,29 @@ const MaSignalModule = (function () {
         const ctx = scope.context;
         const hr = scope.horizontalPixelRatio;
         const vr = scope.verticalPixelRatio;
+        // Làm nét kiểu TradingView: 0.5px -> 1 pixel máy; nét lẻ đặt giữa pixel, nét chẵn đặt trên ranh giới
+        const crispPx = (w) => Math.max(1, Math.round(w * hr));
+        const snapV = (v, wPx) => (wPx % 2 === 1 ? Math.floor(v) + 0.5 : Math.round(v));
+        const lw = crispPx(st.lineWidth);
+        let curW = lw;
         const X = (i) => {
           const x = ts.logicalToCoordinate(i);
-          return x === null ? null : x * hr;
+          return x === null ? null : snapV(x * hr, curW);
         };
         const Y = (p) => {
           const y = series.priceToCoordinate(p);
-          return y === null ? null : y * vr;
+          return y === null ? null : snapV(y * vr, curW);
         };
-        const lw = Math.max(1, Math.round(st.lineWidth * hr));
         const dash = [4 * hr, 4 * hr];
 
         ctx.save();
         ctx.lineJoin = 'round';
+        ctx.lineCap = 'butt';
 
         // ---- 1) Đường MA tự co giãn ----
         if (cfg.showMa) {
-          ctx.lineWidth = Math.max(1, Math.round(st.maWidth * hr));
+          curW = crispPx(st.maWidth);
+          ctx.lineWidth = curW;
           for (let i = Math.max(from, 1); i <= to; i++) {
             if (comp.ma[i] === null || comp.ma[i - 1] === null) continue;
             const x0 = X(i - 1);
@@ -433,6 +439,8 @@ const MaSignalModule = (function () {
             ctx.stroke();
           }
         }
+
+        curW = lw;
 
         // ---- 2) Từng lệnh: vùng nền, Entry / SL / TP, nhãn BUY/SELL, điểm thoát ----
         trades.forEach((t) => {
@@ -535,7 +543,7 @@ const MaSignalModule = (function () {
                 ctx.textAlign = 'left';
                 ctx.textBaseline = 'middle';
                 ctx.fillStyle = win ? st.tpColor : st.slColor;
-                ctx.fillText(txt, x1 + 7 * hr, yX + (win ? -7 : 7) * vr);
+                ctx.fillText(txt, Math.round(x1 + 7 * hr), Math.round(yX + (win ? -7 : 7) * vr));
               }
             }
           }
@@ -547,9 +555,12 @@ const MaSignalModule = (function () {
             const yEdge = Y(buy ? bar.low : bar.high);
             if (yEdge !== null) {
               const color = buy ? st.buyColor : st.sellColor;
-              const gap = 6 * vr;
-              const ah = 7 * vr;
-              const aw = 6 * hr;
+              // Co giãn theo zoom: khoảng cách giữa các nến càng nhỏ thì nhãn càng nhỏ
+              const bs = ts.options().barSpacing || 9;
+              const k = Math.min(1, Math.max(0.7, bs / 9));
+              const gap = 6 * k * vr;
+              const ah = 7 * k * vr;
+              const aw = 6 * k * hr;
               ctx.fillStyle = color;
               ctx.beginPath();
               if (buy) {
@@ -565,18 +576,18 @@ const MaSignalModule = (function () {
               ctx.fill();
 
               const text = buy ? 'BUY' : 'SELL';
-              ctx.font = `700 ${Math.round(10 * vr)}px Inter, -apple-system, "Segoe UI", sans-serif`;
+              ctx.font = `700 ${Math.round(10 * k * vr)}px Inter, -apple-system, "Segoe UI", sans-serif`;
               const tw = ctx.measureText(text).width;
-              const w = tw + 8 * hr;
-              const h = 14 * vr;
-              const cy = buy ? yEdge + gap + ah + h / 2 + 2 * vr : yEdge - gap - ah - h / 2 - 2 * vr;
+              const w = tw + 8 * k * hr;
+              const h = 14 * k * vr;
+              const cy = buy ? yEdge + gap + ah + h / 2 + 2 * k * vr : yEdge - gap - ah - h / 2 - 2 * k * vr;
               ctx.fillStyle = color;
-              roundRectPath(ctx, x0 - w / 2, cy - h / 2, w, h, 3 * hr);
+              roundRectPath(ctx, x0 - w / 2, cy - h / 2, w, h, 3 * k * hr);
               ctx.fill();
               ctx.fillStyle = '#ffffff';
               ctx.textAlign = 'center';
               ctx.textBaseline = 'middle';
-              ctx.fillText(text, x0, cy + 0.5 * vr);
+              ctx.fillText(text, Math.round(x0), Math.round(cy + 0.5 * vr));
             }
           }
         });

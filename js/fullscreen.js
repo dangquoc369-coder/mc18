@@ -76,7 +76,9 @@ const FullscreenModule = (function () {
     // requestFullscreen() bất đồng bộ + có animation thật - đợi xong rồi đo lại
     if (isNativeFullscreenSupported()) {
       try {
-        const target = document.getElementById('app') || document.documentElement;
+        // PHẢI là documentElement: trình duyệt chỉ hiển thị phần tử con của phần tử fullscreen,
+        // nếu dùng #app thì menu chuột phải, hộp cài đặt, thông báo (gắn vào <body>) sẽ bị ẩn
+        const target = document.documentElement;
         await target.requestFullscreen();
         await waitAFewFrames();
       } catch (err) {

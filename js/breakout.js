@@ -403,9 +403,12 @@ const BreakoutModule = (function () {
             const yEdge = Y(buy ? bar.low : bar.high);
             if (yEdge !== null) {
               const color = buy ? st.buyColor : st.sellColor;
-              const gap = 6 * vr;
-              const ah = 7 * vr;
-              const aw = 6 * hr;
+              // Co giãn theo zoom: khoảng cách giữa các nến càng nhỏ thì nhãn càng nhỏ
+              const bs = ts.options().barSpacing || 9;
+              const k = Math.min(1, Math.max(0.7, bs / 9));
+              const gap = 6 * k * vr;
+              const ah = 7 * k * vr;
+              const aw = 6 * k * hr;
               ctx.fillStyle = color;
               ctx.beginPath();
               if (buy) {
@@ -421,13 +424,13 @@ const BreakoutModule = (function () {
               ctx.fill();
 
               const text = buy ? 'BUY' : 'SELL';
-              ctx.font = `700 ${Math.round(10 * vr)}px Inter, -apple-system, "Segoe UI", sans-serif`;
+              ctx.font = `700 ${Math.round(10 * k * vr)}px Inter, -apple-system, "Segoe UI", sans-serif`;
               const tw = ctx.measureText(text).width;
-              const w = tw + 8 * hr;
-              const h = 14 * vr;
-              const cy = buy ? yEdge + gap + ah + h / 2 + 2 * vr : yEdge - gap - ah - h / 2 - 2 * vr;
+              const w = tw + 8 * k * hr;
+              const h = 14 * k * vr;
+              const cy = buy ? yEdge + gap + ah + h / 2 + 2 * k * vr : yEdge - gap - ah - h / 2 - 2 * k * vr;
               ctx.fillStyle = color;
-              roundRectPath(ctx, x0 - w / 2, cy - h / 2, w, h, 3 * hr);
+              roundRectPath(ctx, x0 - w / 2, cy - h / 2, w, h, 3 * k * hr);
               ctx.fill();
               ctx.fillStyle = '#ffffff';
               ctx.textAlign = 'center';

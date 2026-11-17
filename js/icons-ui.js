@@ -51,6 +51,8 @@ Object.assign(Icons, {
   hline: `<svg ${_S}><path d="M3 12h6M15 12h6"/><circle cx="12" cy="12" r="2"/></svg>`,
   hray: `<svg ${_S}><circle cx="5" cy="12" r="2"/><path d="M7 12h14M17 8l4 4-4 4"/></svg>`,
   vline: `<svg ${_S}><path d="M12 3v6M12 15v6"/><circle cx="12" cy="12" r="2"/></svg>`,
+  path: `<svg ${_S}><circle cx="4.5" cy="17.5" r="2"/><circle cx="10.5" cy="11" r="2"/><path d="M6 16l3-3.2M12 9.6l2.5 2.4L20 5.5M15.5 5h4.5v4.5"/></svg>`,
+  measure: `<svg ${_S}><rect x="3" y="8" width="18" height="8" rx="1.5"/><path d="M7 8v3M11 8v4M15 8v3M19 8v4"/></svg>`,
   long: `<svg ${_S}><rect x="5" y="4" width="14" height="8" rx="1" stroke="#26a69a"/><rect x="5" y="12" width="14" height="8" rx="1" stroke="#ef5350"/><path d="M12 10V6M10 8l2-2 2 2" stroke="#26a69a"/></svg>`,
   short: `<svg ${_S}><rect x="5" y="4" width="14" height="8" rx="1" stroke="#26a69a"/><rect x="5" y="12" width="14" height="8" rx="1" stroke="#ef5350"/><path d="M12 14v4M10 16l2 2 2-2" stroke="#ef5350"/></svg>`,
   undo: `<svg ${_S}><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>`,

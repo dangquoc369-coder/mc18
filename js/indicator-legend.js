@@ -99,6 +99,7 @@ const IndicatorLegend = (function () {
     container.appendChild(buildRSIGroupChip(paneId, instance, RSI_NDQ));
     container.appendChild(buildMACDGroupChip(paneId, instance));
     container.appendChild(buildIchimokuChip(paneId, instance));
+    container.appendChild(buildStructureChip(paneId, instance));
 
     container.appendChild(buildSimpleToggleChip('#787b86', 'Volume', instance.getVolumeVisible(), (next) => {
       instance.setVolumeVisible(next);
@@ -1532,6 +1533,47 @@ const IndicatorLegend = (function () {
       e.stopPropagation();
       closeAnyOpenPopover();
       if (typeof IchimokuUI !== 'undefined') IchimokuUI.open(paneId);
+    });
+
+    chip.appendChild(dot);
+    chip.appendChild(name);
+    chip.appendChild(gear);
+    return chip;
+  }
+
+  // --- CẤU TRÚC CHIP ---
+  // Bấm chấm/tên = bật/tắt. Bấm ⚙ = mở hộp thoại cài đặt 3 tab (structure-ui.js).
+  function buildStructureChip(paneId, instance) {
+    const cfg = instance.getStructureConfig();
+
+    const chip = document.createElement('div');
+    chip.className = 'indicator-chip' + (cfg.enabled ? '' : ' disabled');
+
+    const dot = document.createElement('span');
+    dot.className = 'indicator-dot';
+    dot.style.background = cfg.style.upColor;
+
+    const name = document.createElement('span');
+    name.className = 'indicator-name';
+    name.textContent = `Cấu Trúc ${cfg.pivLen}`;
+
+    const gear = document.createElement('span');
+    gear.className = 'indicator-gear';
+    gear.title = 'Cài đặt Cấu Trúc (HH/HL/LH/LL, BOS/CHoCH, dải hỗ trợ/kháng cự)';
+    gear.innerHTML = iconHTML('settings');
+
+    function toggle(e) {
+      e.stopPropagation();
+      instance.setStructure({ enabled: !cfg.enabled });
+      render(paneId, instance);
+    }
+
+    dot.addEventListener('click', toggle);
+    name.addEventListener('click', toggle);
+    gear.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeAnyOpenPopover();
+      if (typeof StructureUI !== 'undefined') StructureUI.open(paneId);
     });
 
     chip.appendChild(dot);

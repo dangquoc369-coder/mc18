@@ -61,14 +61,22 @@ const UI = (function () {
         { id: 'short', icon: 'short', title: 'Lệnh Short (tự tính TP theo R:R)' },
       ],
     },
-    {
+        {
       id: 'annotate', label: 'Ghi chú',
       tools: [
         { id: 'text', icon: 'text', title: 'Chữ / Ghi chú' },
         { id: 'arrow', icon: 'arrow', title: 'Mũi tên' },
       ],
     },
+    {
+      id: 'pathmeasure', label: 'Đường đi & Đo lường',
+      tools: [
+        { id: 'path', icon: 'path', title: 'Đường Path (nhiều điểm, có mũi tên)' },
+        { id: 'measure', icon: 'measure', title: 'Thước đo (giá / % / số nến / thời gian)' },
+      ],
+    },
   ];
+  
 
   
 

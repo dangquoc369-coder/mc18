@@ -171,12 +171,12 @@ const MaSignalUI = (function () {
         secTitle('Đường MA') +
         row('Màu khi phe tăng', col(st.maBullColor, 'id="sMaBull"')) +
         row('Màu khi phe giảm', col(st.maBearColor, 'id="sMaBear"')) +
-        row('Độ dày', sel([1, 2, 3, 4].map((w) => [w, w + 'px']), st.maWidth, 'id="sMaW"')) +
+        row('Độ dày', sel([0.5, 1, 1.5, 2, 3, 4].map((w) => [w, w + 'px']), st.maWidth, 'id="sMaW"')) +
         secTitle('Entry / SL / TP') +
         crow(chk(st.showEntry, 'id="sShowEntry"'), 'Đường giá vào', col(st.entryColor, 'id="sEntry"')) +
         crow(chk(st.showSl, 'id="sShowSl"'), 'Đường SL', col(st.slColor, 'id="sSl"')) +
         crow(chk(st.showTp, 'id="sShowTp"'), 'Đường TP', col(st.tpColor, 'id="sTp"')) +
-        row('Độ dày đường', sel([1, 2, 3, 4].map((w) => [w, w + 'px']), st.lineWidth, 'id="sLw"')) +
+        row('Độ dày đường', sel([0.5, 1, 1.5, 2, 3, 4].map((w) => [w, w + 'px']), st.lineWidth, 'id="sLw"')) +
         crow(chk(st.showZones, 'id="sZones"'), 'Tô nền vùng rủi ro / lợi nhuận', rng(st.zoneAlpha, 'id="sZoneA"'));
 
       // ---------- VISIBILITY ----------
@@ -256,11 +256,11 @@ const MaSignalUI = (function () {
           sellColor: q('#sSell').value,
           maBullColor: q('#sMaBull').value,
           maBearColor: q('#sMaBear').value,
-          maWidth: int('#sMaW', 2),
+          maWidth: flt('#sMaW', 2),
           slColor: q('#sSl').value,
           tpColor: q('#sTp').value,
           entryColor: q('#sEntry').value,
-          lineWidth: int('#sLw', 1),
+          lineWidth: flt('#sLw', 1),
           showEntry: q('#sShowEntry').checked,
           showSl: q('#sShowSl').checked,
           showTp: q('#sShowTp').checked,

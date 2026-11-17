@@ -25,9 +25,9 @@ const DrawingModule = (function () {
   const HANDLE_RADIUS = 5;
 
   const SINGLE_ANCHOR_TOOLS = ['hline', 'vline', 'hray'];
-  const TWO_ANCHOR_TOOLS = ['trendline', 'ray', 'extendedline', 'rectangle', 'circle', 'arrow', 'fib', 'long', 'short'];
+  const TWO_ANCHOR_TOOLS = ['trendline', 'ray', 'extendedline', 'rectangle', 'circle', 'arrow', 'fib', 'long', 'short', 'measure'];
   const THREE_ANCHOR_TOOLS = ['triangle', 'channel', 'fibextension'];
-  const DASHED_STYLE_TOOLS = ['hline', 'vline', 'hray', 'trendline', 'ray', 'extendedline', 'rectangle', 'circle', 'triangle', 'arrow', 'channel'];
+  const DASHED_STYLE_TOOLS = ['hline', 'vline', 'hray', 'trendline', 'ray', 'extendedline', 'rectangle', 'circle', 'triangle', 'arrow', 'channel', 'path'];
   // Hình có vùng tô nền bên trong: có thể tắt nền, khi tắt chỉ còn đường bao quanh
   const FILL_TOOLS = ['rectangle', 'circle', 'triangle', 'channel', 'long', 'short'];
   // (Không công cụ nào còn bị phát sáng / đậm lên khi chạm hoặc rê chuột - chỉ hiện điểm tròn di chuyển)
@@ -39,6 +39,7 @@ const DrawingModule = (function () {
     rectangle: 'Hình chữ nhật', circle: 'Hình tròn / Ellipse', triangle: 'Tam giác',
     channel: 'Kênh giá song song', fib: 'Fib retracement', fibextension: 'Fib extension',
     long: 'Lệnh Long', short: 'Lệnh Short', arrow: 'Mũi tên', text: 'Ghi chú',
+    path: 'Đường Path', measure: 'Thước đo',
   };
 
   // Danh sách mức Fib giống TradingView (xếp 2 cột, đọc từ trái sang phải)
@@ -109,6 +110,7 @@ const DrawingModule = (function () {
     textT: '<svg viewBox="0 0 24 24"><path d="M5 6V4h14v2M12 4v16M9 20h6"/></svg>',
     undo: '<svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>',
     redo: '<svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>',
+    arrowEnd: '<svg viewBox="0 0 24 24"><path d="M4 18L20 6M13 6h7v7"/></svg>',
   };
 
 
@@ -193,7 +195,7 @@ function ensureStyles() {
   // ===================== KHO STYLE NHỚ THEO CÔNG CỤ (DÙNG CHUNG CẢ 4 PANE) =====================
   // Dạng: { trendline: {color,width,dashed,opacity}, fib: {...cấu hình Fib...}, long: {..., rr}, ... }
   const TOOL_STYLES_KEY = 'drawing_tool_styles';
-  const STYLE_KEYS = ['color', 'width', 'dashed', 'opacity', 'rr', 'fill', 'textColor', 'fontSize', 'textH', 'textV', 'bold', 'italic'];
+  const STYLE_KEYS = ['color', 'width', 'dashed', 'opacity', 'rr', 'fill', 'textColor', 'fontSize', 'textH', 'textV', 'bold', 'italic', 'arrowEnd'];
   // Chữ ghi chú của Fib là riêng từng hình nên không nhớ
   const FIB_KEYS = Object.keys(FIB_DEFAULTS).filter((k) => k !== 'text');
   let toolStyles = null;
@@ -317,6 +319,93 @@ function strokeTextC(t, x, y) { ctx.strokeText(t, px(x), px(y)); }
     let pendingTouchPlacement = null;
     let pendingThirdPoint = null;
 
+    let pathPts = [];          // các điểm Path đang vẽ dở
+    let measureShape = null;   // thước đo (không lưu vào drawings)
+    let pathBarEl = null;
+ 
+    function fmtDuration(sec) {
+      sec = Math.abs(Math.round(sec));
+      const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
+      const parts = [];
+      if (d) parts.push(d + 'd');
+      if (h) parts.push(h + 'h');
+      if (m || !parts.length) parts.push(m + 'm');
+      return parts.join(' ');
+    }
+ 
+    // Lấy điểm neo theo khoá: 'self' | 'p1' | 'pts.3' ...
+    function anchorTarget(d, key) {
+      if (key === 'self') return d;
+      if (key.startsWith('pts.')) return d.pts && d.pts[+key.slice(4)];
+      return d[key];
+    }
+ 
+    // Path: màu mặc định xanh lá, có mũi tên ở cuối (style đã nhớ sẽ ghi đè)
+    function makePath(pts) {
+      return newDrawing('path', { pts }, { dashed: false, arrowEnd: true, color: '#4caf50' });
+    }
+ 
+    function updatePathBar() {
+      const need = currentTool === 'path' && pathPts.length >= 2;
+      if (!need) {
+        if (pathBarEl) { pathBarEl.remove(); pathBarEl = null; }
+        return;
+      }
+      if (pathBarEl) return;
+      pathBarEl = document.createElement('div');
+      pathBarEl.className = 'dtv-undo-toast';
+      ['pointerdown', 'mousedown', 'click', 'touchstart', 'touchmove'].forEach((ev) =>
+        pathBarEl.addEventListener(ev, (e) => e.stopPropagation()));
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.innerHTML = `${ICON.check}<span>Hoàn tất</span>`;
+      b.addEventListener('click', (e) => { e.stopPropagation(); finishPath(); });
+      pathBarEl.appendChild(b);
+      container.appendChild(pathBarEl);
+    }
+ 
+    function finishPath() {
+      if (pathPts.length >= 2) {
+        drawings.push(makePath(pathPts.slice()));
+      }
+      pathPts = [];
+      previewDrawing = null;
+      updatePathBar();
+      redraw();
+      returnToCursorAfterDraw();
+    }
+ 
+    function addPathPoint(pt) {
+      if (!pt || pt.price === null || pt.price === undefined || Number.isNaN(pt.price)) return;
+      const last = pathPts[pathPts.length - 1];
+      if (last) {
+        const ax = pointToX(pt), ay = priceToY(pt.price), bx = pointToX(last), by = priceToY(last.price);
+        // Bấm/chạm lại đúng điểm cuối (double-click) = kết thúc
+        if ([ax, ay, bx, by].every((v) => v !== null && v !== undefined) && Math.hypot(ax - bx, ay - by) < 8) {
+          finishPath();
+          return;
+        }
+      }
+      pathPts.push({ time: pt.time, price: pt.price });
+      updatePathBar();
+      redraw();
+    }
+ 
+    window.addEventListener('keydown', (e) => {
+      const t = e.target;
+      if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+      if (currentTool === 'path' && pathPts.length) {
+        if (e.key === 'Enter') { e.preventDefault(); finishPath(); }
+        else if (e.key === 'Escape') {
+          if (pathPts.length >= 2) finishPath();
+          else { setTool('cursor'); if (typeof onToolChanged === 'function') onToolChanged(); }
+        }
+      } else if (e.key === 'Escape' && measureShape) {
+        measureShape = null;
+        redraw();
+      }
+    });
+
     let isDraggingShape = false;
     let isDraggingHandle = false;
     let draggedHandleName = null;
@@ -364,7 +453,7 @@ function strokeTextC(t, x, y) { ctx.strokeText(t, px(x), px(y)); }
     function undo() {
       if (isDraggingShape || isDraggingHandle) return false;
       // Đang dở tay 1 hình: chỉ huỷ bước đang dở
-      if (dragStart || pendingThirdPoint || touchAnchors.length) {
+      if (dragStart || pendingThirdPoint || touchAnchors.length || pathPts.length) {
         setTool(currentTool);
         return true;
       }
@@ -570,6 +659,9 @@ function xToPointInfo(x) {
     }
 
     function resetInteractionState() {
+      pathPts = [];
+      measureShape = null;
+      updatePathBar();
       selectedDrawingIndex = null;
       hoveredDrawingIndex = null;
       hideToolbar();
@@ -630,6 +722,9 @@ function xToPointInfo(x) {
 
     function setTool(tool) {
       currentTool = tool;
+      pathPts = [];
+      if (tool !== 'cursor' && tool !== 'measure') measureShape = null;
+      updatePathBar();
       const isInteractive = tool !== 'cursor';
       canvas.style.pointerEvents = isInteractive ? 'auto' : 'none';
       canvas.style.cursor = isInteractive ? 'crosshair' : 'default';
@@ -1182,6 +1277,86 @@ ctx.lineWidth = crispW(baseWidth);
         const showHandles = isSelected || (isHovered && !isCoarsePointer() && !drawings[idx].locked);
         if (showHandles) { drawHandle(x1, y1); drawHandle(x2, y2); }
 
+      } else if (d.type === 'path') {
+        const P = (d.pts || []).map((p) => ({ x: pointToX(p), y: priceToY(p.price) }));
+        if (P.length < 2 || P.some((p) => p.x === null || p.x === undefined || p.y === null || p.y === undefined)) { ctx.restore(); return; }
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        if (d.dashed) ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(P[0].x, P[0].y);
+        for (let i = 1; i < P.length; i++) ctx.lineTo(P[i].x, P[i].y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+ 
+        if (d.arrowEnd !== false) {
+          // Mũi tên hở kiểu TradingView; tìm điểm trước đó đủ xa để có hướng
+          const tip = P[P.length - 1];
+          let from = null;
+          for (let i = P.length - 2; i >= 0; i--) {
+            if (Math.hypot(tip.x - P[i].x, tip.y - P[i].y) > 2) { from = P[i]; break; }
+          }
+          if (from) {
+            const ang = Math.atan2(tip.y - from.y, tip.x - from.x);
+            const len = 9 + baseWidth * 1.5;
+            ctx.beginPath();
+            ctx.moveTo(tip.x - len * Math.cos(ang - Math.PI / 6), tip.y - len * Math.sin(ang - Math.PI / 6));
+            ctx.lineTo(tip.x, tip.y);
+            ctx.lineTo(tip.x - len * Math.cos(ang + Math.PI / 6), tip.y - len * Math.sin(ang + Math.PI / 6));
+            ctx.stroke();
+          }
+        }
+        if (showHandles) P.forEach((p) => drawHandle(p.x, p.y));
+ 
+      } else if (d.type === 'measure') {
+        const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
+        const x2 = pointToX(d.p2), y2 = priceToY(d.p2.price);
+        if ([x1, y1, x2, y2].some((v) => v === null || v === undefined)) { ctx.restore(); return; }
+        const { width: W, height: H } = getRect();
+        const diff = d.p2.price - d.p1.price;
+        const up = diff >= 0;
+        const col = up ? '#2962ff' : '#f23645';
+        const rx = Math.min(x1, x2), ry = Math.min(y1, y2), rw = Math.abs(x2 - x1), rh = Math.abs(y2 - y1);
+ 
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = toRGBA(col, 0.15);
+        ctx.fillRect(rx, ry, rw, rh);
+        ctx.strokeStyle = col;
+        ctx.lineWidth = crispW(1);
+        const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+        if (rh > 6) {
+          ctx.beginPath(); ctx.moveTo(cx, y1); ctx.lineTo(cx, y2); ctx.stroke();
+          drawArrowHead(cx, y2, cx, y1, col);
+        }
+        if (rw > 6) {
+          ctx.beginPath(); ctx.moveTo(x1, cy); ctx.lineTo(x2, cy); ctx.stroke();
+          drawArrowHead(x2, cy, x1, cy, col);
+        }
+ 
+        const l1 = timeToLogical(d.p1.time), l2 = timeToLogical(d.p2.time);
+        const bars = l1 !== null && l2 !== null ? l2 - l1 : 0;
+        const pct = d.p1.price ? (diff / d.p1.price) * 100 : 0;
+        const sg = up ? '+' : '-';
+        const lines = [
+          `${sg}${formatPrice(Math.abs(diff))} (${sg}${Math.abs(pct).toFixed(2)}%)`,
+          `${bars} nến, ${fmtDuration((d.p2.time || 0) - (d.p1.time || 0))}`,
+        ];
+        ctx.font = '12px sans-serif';
+        const lh = 16;
+        const bw = Math.max(...lines.map((s) => ctx.measureText(s).width)) + 16;
+        const bh = lh * lines.length + 8;
+        const bx = Math.max(2, Math.min(cx - bw / 2, W - bw - 2));
+        let by = up ? ry - bh - 6 : ry + rh + 6;
+        by = Math.max(2, Math.min(by, H - bh - 2));
+        ctx.fillStyle = col;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 4); else ctx.rect(bx, by, bw, bh);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        lines.forEach((s, i) => fillTextC(s, bx + bw / 2, by + 4 + lh * i + 12));
+
       } else if (d.type === 'text') {
         const x = pointToX(d.p);
         const y = priceToY(d.p.price);
@@ -1277,7 +1452,8 @@ ctx.lineWidth = crispW(baseWidth);
         ctx.fillStyle = '#f2a339';
         ctx.fill();
 
-        const hint = pendingThirdPoint ? 'Chạm để chốt điểm thứ 3'
+        const hint = pathPts.length ? 'Chạm để thêm điểm · chạm lại điểm cuối để kết thúc'
+          : pendingThirdPoint ? 'Chạm để chốt điểm thứ 3'
           : touchAnchors.length === 1 ? 'Chạm để chốt điểm cuối'
           : 'Kéo để di chuyển · Chạm để đặt điểm';
         ctx.font = '11px sans-serif';
@@ -1469,6 +1645,8 @@ ctx.lineWidth = crispW(baseWidth);
         if (hx !== null && Math.hypot(clickX - hx, clickY - getRect().height / 2) <= handleHitR()) return 'time';
       } else if (d.type === 'hray' || d.type === 'text') {
         if (checkHandle(d.p)) return 'p';
+      } else if (d.pts) {
+        for (let k = 0; k < d.pts.length; k++) if (checkHandle(d.pts[k])) return 'v' + k;
       } else if (d.p3) {
         if (checkHandle(d.p1)) return 'p1';
         if (checkHandle(d.p2)) return 'p2';
@@ -1551,6 +1729,15 @@ ctx.lineWidth = crispW(baseWidth);
             if (boundsHit(x, y, pts.map((p) => p.x), pts.map((p) => p.y), 8)) return { index: i };
           }
 
+
+        } else if (d.type === 'path') {
+          const P = (d.pts || []).map((p) => ({ x: pointToX(p), y: priceToY(p.price) }));
+          if (P.every((p) => p.x !== null && p.y !== null)) {
+            for (let k = 0; k < P.length - 1; k++) {
+              if (distToSegment(x, y, P[k].x, P[k].y, P[k + 1].x, P[k + 1].y) < hitTol()) return { index: i };
+            }
+          }
+
         } else if (d.type === 'text') {
           const tx = pointToX(d.p), ty = priceToY(d.p.price);
           if (tx !== null && ty !== null) {
@@ -1620,6 +1807,8 @@ ctx.lineWidth = crispW(baseWidth);
       } else if (c.type === 'vline') {
         const x = pointToX(c);
         if (x !== null && x !== undefined) { const i = xToPointInfo(x + 20); c.logicalIndex = i.logicalIndex; c.time = i.time; }
+      } else if (c.pts) {
+        c.pts = c.pts.map(shift);
       } else if (c.p) {
         c.p = shift(c.p);
       } else {
@@ -1776,6 +1965,15 @@ ctx.lineWidth = crispW(baseWidth);
         );
       }
 
+      if (d.type === 'path') {
+        toolbarEl.appendChild(makeToolbarBtn(ICON.arrowEnd, 'Mũi tên ở điểm cuối', (btn) => {
+          d.arrowEnd = d.arrowEnd === false;
+          btn.classList.toggle('active', d.arrowEnd !== false);
+          redraw();
+          rememberStyle(d);
+        }, d.arrowEnd !== false));
+      }
+
       toolbarEl.appendChild(makeToolbarSep());
 
  
@@ -1822,6 +2020,7 @@ ctx.lineWidth = crispW(baseWidth);
 
     // ===================== MODAL CÀI ĐẶT (Style / Coordinates / Visibility) =====================
     function getAnchorDefs(d) {
+      if (d.type === 'path') return (d.pts || []).map((_, i) => ({ key: 'pts.' + i, label: 'Điểm ' + (i + 1), price: true, bar: true }));
       if (d.type === 'hline') return [{ key: 'self', label: 'Giá', price: true }];
       if (d.type === 'vline') return [{ key: 'self', label: 'Thanh nến', bar: true }];
       if (d.type === 'hray' || d.type === 'text') return [{ key: 'p', label: 'Điểm', price: true, bar: true }];
@@ -1975,6 +2174,9 @@ ctx.lineWidth = crispW(baseWidth);
         </div>`;
       }
  
+      if (d.type === 'path') {
+        html += `<div class="dtv-modal-row"><label class="dtv-check"><input type="checkbox" id="gArrow" ${d.arrowEnd !== false ? 'checked' : ''}><span>Mũi tên ở điểm cuối</span></label></div>`;
+      }
       if (d.type === 'rectangle') {
         html += `
         <div class="dtv-modal-sep"></div>
@@ -2008,7 +2210,7 @@ ctx.lineWidth = crispW(baseWidth);
       const defs = getAnchorDefs(d);
       let html = defs
         .map((a) => {
-          const target = a.key === 'self' ? d : d[a.key];
+          const target = anchorTarget(d, a.key);
           if (!target) return '';
           const lg = target.time !== undefined && target.time !== null ? timeToLogical(target.time) : null;
 const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
@@ -2199,6 +2401,7 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
 
         // Nền + chữ trong hình chữ nhật
         if (q('#gFill')) d.fill = q('#gFill').checked;
+        if (q('#gArrow')) d.arrowEnd = q('#gArrow').checked;
         if (q('#gBoxText')) {
           const txt = q('#gBoxText').value;
           if (txt.trim()) d.text = txt; else delete d.text;
@@ -2216,7 +2419,7 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
           if (input.value === input.defaultValue) return;
           const v = parseFloat(input.value);
           if (!Number.isFinite(v)) return;
-          const target = input.dataset.key === 'self' ? d : d[input.dataset.key];
+          const target = anchorTarget(d, input.dataset.key);
           if (target) {
   if (input.dataset.field === 'logicalIndex') {
     target.time = logicalToTime(v);
@@ -2341,6 +2544,8 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
       if (pt.price === null || pt.price === undefined || Number.isNaN(pt.price)) return;
       if (pendingThirdPoint) {
         previewDrawing = { ...pendingThirdPoint, p3: pt };
+      } else if (currentTool === 'path' && pathPts.length) {
+        previewDrawing = makePath([...pathPts, { time: pt.time, price: pt.price }]);
       } else if (touchAnchors.length === 1 &&
                  (TWO_ANCHOR_TOOLS.includes(currentTool) || THREE_ANCHOR_TOOLS.includes(currentTool))) {
         previewDrawing = newDrawing(currentTool, { p1: touchAnchors[0], p2: pt });
@@ -2364,6 +2569,7 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
         openTextInputAt({ x: touchCursor.x, y: touchCursor.y }, pt);
         return;
       }
+      if (tool === 'path') { addPathPoint(pt); return; }
       if (SINGLE_ANCHOR_TOOLS.includes(tool)) {
         drawings.push(makeSingleAnchor(tool, pt));
         previewDrawing = null;
@@ -2387,6 +2593,14 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
       }
       const p1 = touchAnchors[0];
       if (TWO_ANCHOR_TOOLS.includes(tool)) {
+        if (tool === 'measure') {
+          measureShape = { type: 'measure', p1, p2: pt };
+          touchAnchors = [];
+          previewDrawing = null;
+          redraw();
+          returnToCursorAfterDraw();
+          return;
+        }
         const extra = {};
         if (tool === 'long' || tool === 'short') extra.rr = 2;
         if (tool === 'fib') Object.assign(extra, clone({ ...FIB_DEFAULTS, levels: DEFAULT_FIB_LEVELS }));
@@ -2506,6 +2720,8 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
         return;
       }
 
+      if (currentTool === 'path') { addPathPoint(pt); return; }
+      if (currentTool === 'measure') measureShape = null;
       if (currentTool === 'alert') {
         if (pt.price === null || pt.price === undefined || Number.isNaN(pt.price)) return;
         if (onAlertRequested) onAlertRequested(pt.price);
@@ -2573,6 +2789,12 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
         touchRawPoint = null;
       }
 
+      if (currentTool === 'path' && pathPts.length) {
+        previewDrawing = makePath([...pathPts, { time: pt.time, price: pt.price }]);
+        redraw();
+        return;
+      }
+
       if (pendingThirdPoint) {
         previewDrawing = { ...pendingThirdPoint, p3: pt };
         redraw();
@@ -2600,6 +2822,7 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
             else if (draggedHandleName === 'p2') d.p2 = pt;
             else if (draggedHandleName === 'p3') d.p3 = pt;
             else if (draggedHandleName === 'p') d.p = pt;
+            else if (/^v\d+$/.test(draggedHandleName)) d.pts[+draggedHandleName.slice(1)] = { time: pt.time, price: pt.price };
             else if (draggedHandleName === 'price') d.price = pt.price;
             else if (draggedHandleName === 'time') { d.time = pt.time; d.logicalIndex = pt.logicalIndex; }
             repositionToolbarOnly(draggedDrawingIndex);
@@ -2635,6 +2858,8 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
               }
             } else if (d.type === 'hray' || d.type === 'text') {
               d.p = shiftPoint(orig.p);
+            } else if (d.pts) {
+              d.pts = orig.pts.map(shiftPoint);
             } else if (d.p3) {
               d.p1 = shiftPoint(orig.p1);
               d.p2 = shiftPoint(orig.p2);
@@ -2738,6 +2963,14 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
       let shapeCreated = false;
 
       if (TWO_ANCHOR_TOOLS.includes(currentTool)) {
+        if (currentTool === 'measure') {
+          measureShape = { type: 'measure', p1: dragStart, p2: pt };
+          dragStart = null;
+          previewDrawing = null;
+          redraw();
+          returnToCursorAfterDraw();
+          return;
+        }
         const extra = {};
         if (currentTool === 'long' || currentTool === 'short') extra.rr = 2;
         // Fib: "đóng băng" cấu hình đầy đủ vào hình vừa vẽ (style đã nhớ sẽ ghi đè lên mặc định)
@@ -2924,6 +3157,7 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
 
     container.addEventListener('pointermove', onContainerPointerMove);
     container.addEventListener('pointerdown', (e) => {
+      if (measureShape && currentTool === 'cursor' && e.target !== canvas) { measureShape = null; redraw(); }
       if (e.pointerType === 'touch') return;      // <-- THÊM: cảm ứng bỏ chọn bằng cú chạm (ở trên)
       if (currentTool !== 'cursor') return;
       if (e.target === canvas) return;
@@ -2950,7 +3184,9 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
   try {
     drawings.forEach((d, idx) => {
       if (isVisibleNow(d)) drawShape(d, false, idx);
+      
     });
+    if (measureShape) drawShape(measureShape, false);
   } finally {
     ctx = canvasCtx;
     inPrimitive = false;

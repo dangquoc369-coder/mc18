@@ -225,7 +225,8 @@ const ChartModule = (function () {
           const yL = toY(config.bandLow.value);
           if (yH !== null && yL !== null) {
             ctx.fillStyle = hexToRgba(config.bg.color, config.bg.alpha);
-            ctx.fillRect(0, Math.min(yH, yL), width, Math.abs(yL - yH));
+            const t0 = Math.round(Math.min(yH, yL));
+            ctx.fillRect(0, t0, width, Math.round(Math.max(yH, yL)) - t0);
           }
         }
 
@@ -316,12 +317,12 @@ const ChartModule = (function () {
           ctx.textBaseline = 'middle';
           // Nhãn căn phải tại bar_index + 15; nếu nằm ngoài khung nhìn thì ghim sát mép phải pane
           const maxX = widthMedia - 6;
-          const x = Math.min(xEnd === null ? maxX : xEnd, maxX) * hr;
+          const x = Math.round(Math.min(xEnd === null ? maxX : xEnd, maxX) * hr);
           data.labels.forEach((l) => {
             const y = toY(l.rsi);
             if (y === null) return;
             ctx.fillStyle = l.kind === 'wma' ? config.ladderWmaColor : config.ladderColor;
-            ctx.fillText(l.text, x, y);
+            ctx.fillText(l.text, x, Math.round(y));
           });
           ctx.restore();
         }
@@ -666,6 +667,7 @@ const ChartModule = (function () {
 
     // ===== Chế độ tín hiệu BUY/SELL: 'breakout' (mặc định) | 'ma' (MA Tự Co Giãn) =====
     const maSignal = MaSignalModule.create(paneId);
+    const structure = StructureModule.create(paneId); // chỉ báo "Cấu Trúc" (độc lập, không BUY/SELL)
     let signalMode = 'breakout';
     let signalVisible = false;
     let maTrailCandles = null; // nến khung trailing (chỉ cần khi khung trailing lớn hơn khung vào lệnh)
@@ -691,8 +693,14 @@ const ChartModule = (function () {
       });
     }
  
+    function runStructure() {
+      const p = Store.getPane(paneId);
+      structure.run({ entryCandles: currentCandles, timeframe: p ? p.timeframe : null });
+    }
+
     function runBreakout() {
       runMaSignal();
+      runStructure();
       breakout.run({
         entryCandles: currentCandles,
         higherTFCandles, trailCandles: breakoutTrailCandles,
@@ -819,6 +827,7 @@ const ChartModule = (function () {
       }
       if (ichimokuActive()) out.push({ color: '#2962ff', text: 'Ichimoku' });
       if (volumeVisible) out.push({ color: CANDLE_UP, text: 'Volume' });
+      if (structure.isEnabled()) out.push({ color: structure.getConfig().style.upColor, text: 'Cấu Trúc' });
       if (signalVisible) out.push({ color: '#f5c518', text: signalMode === 'ma' ? 'BUY/SELL · MA' : 'BUY/SELL' });
       return out;
     }
@@ -884,6 +893,7 @@ const ChartModule = (function () {
 
       breakout.init(chart, candleSeries);
       maSignal.init(chart, candleSeries);
+      structure.init(chart, candleSeries);
 
       volumeSeries = chart.addSeries(LightweightCharts.HistogramSeries, {
         priceFormat: { type: 'volume' },
@@ -1499,6 +1509,7 @@ function setupPinchZoom(container) {
       prefs.ichimoku = JSON.parse(JSON.stringify(ichimoku));
       prefs.breakout = breakout.getConfig();
       prefs.maSignal = maSignal.getConfig();
+      prefs.structure = structure.getConfig();
       prefs.volumeVisible = volumeVisible;
       IndicatorPrefsModule.setPanePrefs(paneId, prefs);
     }
@@ -1534,6 +1545,7 @@ function setupPinchZoom(container) {
           breakout.configure(breakoutExtra);
         }
         if (saved.maSignal) maSignal.configure(saved.maSignal);
+        if (saved.structure) structure.configure(saved.structure);
 
         if (typeof saved.volumeVisible === 'boolean') {
           volumeVisible = saved.volumeVisible;
@@ -1945,6 +1957,17 @@ function setupPinchZoom(container) {
     function getMaSignalConfig() {
       return maSignal.getConfig();
     }
+
+    /** Đổi cài đặt chỉ báo "Cấu Trúc" (gộp từng phần), lưu lại và vẽ lại. */
+    function setStructure(partial) {
+      structure.configure(partial || {});
+      scheduleRecompute(false);
+      persistIndicatorPrefs();
+    }
+
+    function getStructureConfig() {
+      return structure.getConfig();
+    }
  
     function setMaTrailCandles(candles) {
       maTrailCandles = candles && candles.length ? candles.slice() : null;
@@ -2019,6 +2042,7 @@ function setupPinchZoom(container) {
       if (ctxMenuHandle) { ctxMenuHandle.destroy(); ctxMenuHandle = null; }
       if (drawing) drawing.flushSave(); // lưu nốt hình vẽ trước khi huỷ
       maSignal.destroy();
+      structure.destroy();
       if (resizeObserver) resizeObserver.disconnect();
       if (recomputeRafId !== null) {
         clearTimeout(recomputeRafId);
@@ -2075,6 +2099,8 @@ function setupPinchZoom(container) {
       getSignalMode,
       setMaSignal,
       getMaSignalConfig,
+      setStructure,
+      getStructureConfig,
       setMaTrailCandles,
       getSeries: () => candleSeries,   // MỚI
       getChart: () => chart,           // MỚI
