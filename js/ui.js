@@ -77,9 +77,6 @@ const UI = (function () {
     },
   ];
   
-
-  
-
     function getMagnetMode() {
     return typeof DrawingModule !== 'undefined' && DrawingModule.getMagnetMode ? DrawingModule.getMagnetMode() : 'off';
   }
@@ -872,6 +869,7 @@ const UI = (function () {
       else drawing.undo();
     });
   }
+  
   
   return { init, renderSharedDrawGroup, renderSharedTimeframeGroup };
 })();
