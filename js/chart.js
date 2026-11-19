@@ -1661,11 +1661,11 @@ function setupPinchZoom(container) {
           f1 = 0.2;
           f2 = 0.2;
         } else if (pane1Active) {
-          f0 = 0.75;
-          f1 = 0.25;
+          f0 = 0.7;
+          f1 = 0.3;
         } else if (pane2Active) {
-          f0 = 0.75;
-          f2 = 0.25;
+          f0 = 0.7;
+          f2 = 0.3;
         }
 
         if (panes[0] && typeof panes[0].setStretchFactor === 'function') panes[0].setStretchFactor(f0);
