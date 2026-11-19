@@ -392,6 +392,23 @@ const Store = (function () {
     else addToWatchlist(symbol);
   }
 
+  /** Sắp xếp lại watchlist theo thứ tự `order` (mảng symbol). Symbol lạ bị bỏ,
+   *  symbol thiếu được nối vào cuối nên không bao giờ làm mất mã nào. */
+  function reorderWatchlist(order) {
+    if (!Array.isArray(order)) return;
+    const cur = state.watchlist;
+    const next = [];
+    order.forEach((s) => {
+      if (cur.includes(s) && !next.includes(s)) next.push(s);
+    });
+    cur.forEach((s) => {
+      if (!next.includes(s)) next.push(s);
+    });
+    if (next.length === cur.length && next.every((s, i) => s === cur[i])) return;
+    state.watchlist = next;
+    persistWatchlist();
+  }
+
   return {
     getState,
     getPane,
@@ -422,5 +439,6 @@ const Store = (function () {
     addToWatchlist,
     removeFromWatchlist,
     toggleWatchlist,
+    reorderWatchlist,
   };
 })();
