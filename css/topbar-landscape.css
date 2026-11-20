@@ -46,6 +46,7 @@ html.tb-merged #mobileSidebarToggle {
 
 /* Tiêu đề "Đa khung thời gian" dư thừa khi đã có thanh công cụ */
 html.tb-merged .topbar-left { display: none; }
+html.tb-merged .sidebar-header { height: 48px; }
 
 /* .topbar-right "biến mất" khỏi layout để từng nút con trở thành phần tử
    của hàng flex #topbar -> sắp thứ tự bằng `order` bên dưới. */
@@ -94,10 +95,10 @@ html.tb-merged #topbar .topbar-right > * {
   flex: 0 0 auto;
   margin-left: 0;
 }
-html.tb-merged #topbar #themeToggleBtn      { order: 3; }
-html.tb-merged #topbar #marketStatusBtn     { order: 4; }
-html.tb-merged #topbar #alertsListBtn       { order: 5; }
-html.tb-merged #topbar #profileBadgeBtn     { order: 6; }
+html.tb-merged #topbar #marketStatusBtn     { order: 3; }
+html.tb-merged #topbar #alertsListBtn       { order: 4; }
+html.tb-merged #topbar #profileBadgeBtn     { order: 5; }
+html.tb-merged #topbar #themeToggleBtn      { order: 6; }
 html.tb-merged #topbar #fullscreenToggleBtn { order: 7; }
 
 html.tb-merged #topbar .topbar-btn {
@@ -265,7 +266,8 @@ html.tb-merged #backupPanel {
 @media (min-width: 901px) {
   #sidebarToggleBtn {
     position: fixed;                 /* thoát khỏi overflow:hidden của #sidebar */
-    top: calc(var(--safe-top) + 28px);   /* ngang tầm logo */
+    top: calc(var(--safe-top) + 26px);   /* ngang tầm logo */
+    html.tb-merged #sidebarToggleBtn { top: calc(var(--safe-top) + 24px); }
     left: var(--sidebar-width);      /* bám theo mép sidebar (kể cả lúc kéo / thu gọn) */
     transform: translate(-50%, -50%);
     width: 15px;
@@ -309,7 +311,7 @@ html.tb-merged #backupPanel {
 
   /* Nút không còn nằm trong header -> logo canh giữa khi thu gọn */
   #sidebar.collapsed .sidebar-header {
-    padding: 14px 0;
+    padding: 0;
     justify-content: center;
   }
 }

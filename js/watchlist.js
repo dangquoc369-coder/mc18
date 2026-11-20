@@ -143,7 +143,7 @@ const WatchlistModule = (function () {
           background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: var(--radius-lg);
           box-shadow: var(--shadow-md); padding: 10px;
         }
-        #sidebar.collapsed.wl-search-open .symbol-search .symbol-search-results { top: 52px; left: 10px; right: 10px; }
+        #sidebar.collapsed.wl-search-open .symbol-search .symbol-search-results { top: 46px; left: 10px; right: 10px; }
       }
       @media (max-width: 900px) { #wlMini { display: none !important; } }
     `;

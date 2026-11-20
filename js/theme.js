@@ -38,15 +38,16 @@ const ThemeModule = (function () {
   }
 
   function updateButtonLabel() {
-    if (!btnRef) return;
-    if (currentTheme === 'dark') {
-      btnRef.innerHTML = `<span class="btn-icon">${iconHTML('sun')}</span><span class="btn-text"> Nền sáng</span>`;
-      btnRef.title = 'Chuyển sang nền sáng';
-    } else {
-      btnRef.innerHTML = `<span class="btn-icon">${iconHTML('moon')}</span><span class="btn-text"> Nền tối</span>`;
-      btnRef.title = 'Chuyển sang nền tối';
-    }
+  if (!btnRef) return;
+  if (currentTheme === 'dark') {
+    btnRef.innerHTML = iconHTML('sun');
+    btnRef.title = 'Chuyển sang nền sáng';
+  } else {
+    btnRef.innerHTML = iconHTML('moon');
+    btnRef.title = 'Chuyển sang nền tối';
   }
+  btnRef.setAttribute('aria-label', btnRef.title);
+}
 
   /** Áp dụng 1 theme: đổi attribute trên <html>, lưu lại, báo cho chart.js. */
   function apply(theme) {
@@ -68,7 +69,7 @@ const ThemeModule = (function () {
   function buildButton() {
     const btn = document.createElement('button');
     btn.id = 'themeToggleBtn';
-    btn.className = 'topbar-btn';
+    btn.className = 'topbar-btn topbar-btn-icon-only';
     btn.type = 'button';
     btn.addEventListener('click', toggle);
     btnRef = btn;
@@ -80,7 +81,7 @@ const ThemeModule = (function () {
     const btn = buildButton();
     const target = document.querySelector('.topbar-right') || document.getElementById('topbar');
     if (target) {
-      target.insertBefore(btn, target.firstChild ? target.firstChild.nextSibling : null);
+    target.appendChild(btn);
     } else {
       btn.style.position = 'fixed';
       btn.style.top = '10px';

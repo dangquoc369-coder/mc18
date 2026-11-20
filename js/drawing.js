@@ -547,16 +547,48 @@ function strokeTextC(t, x, y) { ctx.strokeText(t, px(x), px(y)); }
     let primSize = { width: 0, height: 0 };
     let primitiveUpdate = null;
 
-    function resizeCanvas() {
+        // Vùng vẽ thật = chart TRỪ thanh giá (phải) và thanh thời gian (dưới)
+    let lastPlotW = 0;
+    let lastPlotH = 0;
+
+    function plotSize() {
       const rect = container.getBoundingClientRect();
+      let w = rect.width;
+      let h = rect.height;
+      try {
+        const ts = chart.timeScale();
+        const tw = ts.width();
+        if (tw > 0 && tw < w) w = tw;
+        const th = typeof ts.height === 'function' ? ts.height() : 0;
+        if (th > 0 && th < h) h = h - th;
+      } catch (e) { /* chart chưa sẵn sàng */ }
+      return { width: w, height: h };
+    }
+
+    function resizeCanvas() {
+      const { width, height } = plotSize();
       const dpr = window.devicePixelRatio || 1;
       curDpr = dpr;
-      canvas.style.width = rect.width + 'px';
-      canvas.style.height = rect.height + 'px';
-      canvas.width = Math.max(1, Math.round(rect.width * dpr));
-      canvas.height = Math.max(1, Math.round(rect.height * dpr));
+      lastPlotW = width;
+      lastPlotH = height;
+      canvas.style.width = width + 'px';
+      canvas.style.height = height + 'px';
+      canvas.width = Math.max(1, Math.round(width * dpr));
+      canvas.height = Math.max(1, Math.round(height * dpr));
       canvasCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
       redraw();
+    }
+
+    // Thanh giá đổi độ rộng (số chữ số đổi) -> canvas co theo
+    function syncCanvasSize() {
+      const p = plotSize();
+      if (Math.abs(p.width - lastPlotW) > 0.5 || Math.abs(p.height - lastPlotH) > 0.5) resizeCanvas();
+    }
+
+    function isInPlot(e) {
+      syncCanvasSize();
+      const r = canvas.getBoundingClientRect();
+      return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
     }
 
     function candleList() {
@@ -712,12 +744,12 @@ function xToPointInfo(x) {
 
     function getScreenXY(e) {
       const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
+      let x = e.clientX - rect.left;
       let y = e.clientY - rect.top;
       if (e.pointerType === 'touch' && currentTool !== 'cursor') {
         y = Math.max(0, y - TOUCH_CROSSHAIR_OFFSET);
       }
-      return { x, y };
+      return { x: Math.max(0, Math.min(rect.width, x)), y: Math.max(0, Math.min(rect.height, y)) };
     }
 
     function setTool(tool) {
@@ -774,7 +806,7 @@ function xToPointInfo(x) {
     function getRect() {
       if (inPrimitive) return primSize;
       const rect = container.getBoundingClientRect();
-      return { width: rect.width, height: rect.height };
+      return { width: lastPlotW || rect.width, height: lastPlotH || rect.height };
     }
 
     function isVisibleNow(d) {
@@ -872,7 +904,8 @@ function xToPointInfo(x) {
       ctx.restore();
     }
 
-    function redraw() {
+  function redraw() {
+  syncCanvasSize();
   const { width, height } = getRect();
   canvasCtx.clearRect(0, 0, width, height);
   if (previewDrawing) drawShape(previewDrawing, true);
@@ -1392,8 +1425,22 @@ ctx.lineWidth = crispW(baseWidth);
       ctx.restore();
     }
 
+
+        let priceTagEl = null;
+    function showPriceTag(label, y, plotH) {
+      if (!priceTagEl) {
+        priceTagEl = document.createElement('div');
+        priceTagEl.style.cssText = 'position:absolute;right:0;z-index:5;height:16px;line-height:16px;padding:0 4px;font:10px sans-serif;background:#f2a339;color:#0a0e14;pointer-events:none;white-space:nowrap';
+        container.appendChild(priceTagEl);
+      }
+      priceTagEl.textContent = label;
+      priceTagEl.style.top = Math.min(Math.max(y - 8, 0), plotH - 16) + 'px';
+      priceTagEl.style.display = 'block';
+    }
+    function hidePriceTag() { if (priceTagEl) priceTagEl.style.display = 'none'; }
+
     function drawCrosshair() {
-      if (!hoverPoint || currentTool === 'cursor') return;
+      if (!hoverPoint || currentTool === 'cursor') { hidePriceTag(); return; }
       const { width, height } = getRect();
       const { price } = hoverPoint;
       const x = snapAt(hoverPoint.x, 1);
@@ -1464,17 +1511,9 @@ ctx.lineWidth = crispW(baseWidth);
       }
       
       if (price !== null && price !== undefined && !Number.isNaN(price)) {
-        const label = formatPrice(price);
-        ctx.font = '10px sans-serif';
-        const textWidth = ctx.measureText(label).width;
-        const boxW = textWidth + 8;
-        const boxH = 16;
-        const boxY = Math.min(Math.max(y - boxH / 2, 0), height - boxH);
-
-        ctx.fillStyle = '#f2a339';
-        ctx.fillRect(width - boxW, boxY, boxW, boxH);
-        ctx.fillStyle = '#0a0e14';
-        fillTextC(label, width - boxW + 4, boxY + 11);
+        showPriceTag(formatPrice(price), y, height);
+      } else {
+        hidePriceTag();
       }
 
       if (pendingThirdPoint) {
@@ -2989,6 +3028,12 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
 
     function onContainerPointerMove(e) {
       if (currentTool !== 'cursor' || isDraggingShape || isDraggingHandle) return;
+      if (!isInPlot(e)) {
+        canvas.style.pointerEvents = 'none';
+        canvas.style.cursor = 'default';
+        if (hoveredDrawingIndex !== null) { hoveredDrawingIndex = null; redraw(); }
+        return;
+      }
 
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
@@ -3113,6 +3158,7 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
       if (currentTool !== 'cursor' || e.target === canvas) return;
       if (e.target.closest && e.target.closest('.dtv-tb, input, select, button, textarea')) return;
       if (e.button !== undefined && e.button !== 0) return;
+      if (!isInPlot(e)) return;
       const pt = pointFromEvent(e);
       if (pt.price === null || pt.price === undefined || Number.isNaN(pt.price)) return;
 
@@ -3260,6 +3306,7 @@ function createVlinePrimitive() {
     });
     resizeObs.observe(container);
     resizeCanvas();
+    try { chart.timeScale().subscribeSizeChange(syncCanvasSize); } catch (e) { /* bản thư viện cũ */ }
 
     function setAllHidden(v) {
       allDrawingsHidden = !!v;
