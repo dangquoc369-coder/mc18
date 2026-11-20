@@ -195,7 +195,7 @@ function ensureStyles() {
   // ===================== KHO STYLE NHỚ THEO CÔNG CỤ (DÙNG CHUNG CẢ 4 PANE) =====================
   // Dạng: { trendline: {color,width,dashed,opacity}, fib: {...cấu hình Fib...}, long: {..., rr}, ... }
   const TOOL_STYLES_KEY = 'drawing_tool_styles';
-  const STYLE_KEYS = ['color', 'width', 'dashed', 'opacity', 'rr', 'fill', 'textColor', 'fontSize', 'textH', 'textV', 'bold', 'italic', 'arrowEnd'];
+  const STYLE_KEYS = ['color', 'width', 'dashed', 'opacity', 'rr', 'lockRR', 'fill', 'textColor', 'fontSize', 'textH', 'textV', 'bold', 'italic', 'arrowEnd'];
   // Chữ ghi chú của Fib là riêng từng hình nên không nhớ
   const FIB_KEYS = Object.keys(FIB_DEFAULTS).filter((k) => k !== 'text');
   let toolStyles = null;
@@ -1159,7 +1159,9 @@ ctx.lineWidth = crispW(baseWidth);
         ctx.strokeRect(rx, ry, rw, rh);
         drawBoxText(d, rx, ry, rw, rh, baseColor);
         ctx.setLineDash([]);
-        if (showHandles) { drawHandle(x1, y1); drawHandle(x2, y2); }
+        if (showHandles) {
+          rectHandlePoints(x1, y1, x2, y2).forEach(([, hx, hy, sq]) => (sq ? drawSquareHandle(hx, hy) : drawHandle(hx, hy)));
+        }
 
       } else if (d.type === 'circle') {
         const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
@@ -1269,11 +1271,7 @@ ctx.lineWidth = crispW(baseWidth);
         const x2 = pointToX(d.p2), y2 = priceToY(d.p2.price);
         if ([x1, y1, x2, y2].some((v) => v === null || v === undefined)) { ctx.restore(); return; }
 
-        const rr = d.rr || 2;
-        const entryPrice = d.p1.price;
-        const stopPrice = d.p2.price;
-        const risk = d.type === 'long' ? entryPrice - stopPrice : stopPrice - entryPrice;
-        const targetPrice = d.type === 'long' ? entryPrice + risk * rr : entryPrice - risk * rr;
+        const { entry: entryPrice, stop: stopPrice, target: targetPrice, rr } = longShortTarget(d);
 
         const yEntry = y1;
         const yStop = y2;
@@ -1307,8 +1305,13 @@ ctx.lineWidth = crispW(baseWidth);
           ctx.fillStyle = '#22c9a0';
           fillTextC(`TP ${formatPrice(targetPrice)} (R:R 1:${rr})`, rx + 4, yTarget - 4);
         }
-        const showHandles = isSelected || (isHovered && !isCoarsePointer() && !drawings[idx].locked);
-        if (showHandles) { drawHandle(x1, y1); drawHandle(x2, y2); }
+        const bxEnd = x1 <= x2 ? rx + rw : rx;      // đầu đối diện điểm vào lệnh
+        if (showHandles) {
+          drawHandle(x1, yEntry);                    // nút tròn = điểm vào lệnh p1
+          drawSquareHandle(bxEnd, yEntry);
+          if (yTarget !== null && yTarget !== undefined) drawSquareHandle(x1, yTarget);
+          drawSquareHandle(x1, yStop);
+        }
 
       } else if (d.type === 'path') {
         const P = (d.pts || []).map((p) => ({ x: pointToX(p), y: priceToY(p.price) }));
@@ -1684,6 +1687,21 @@ ctx.lineWidth = crispW(baseWidth);
         if (hx !== null && Math.hypot(clickX - hx, clickY - getRect().height / 2) <= handleHitR()) return 'time';
       } else if (d.type === 'hray' || d.type === 'text') {
         if (checkHandle(d.p)) return 'p';
+            } else if (d.type === 'rectangle') {
+        const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
+        const x2 = pointToX(d.p2), y2 = priceToY(d.p2.price);
+        if (![x1, y1, x2, y2].every(isNum)) return null;
+        for (const [n, hx, hy] of rectHandlePoints(x1, y1, x2, y2)) {
+          if (Math.hypot(clickX - hx, clickY - hy) <= handleHitR()) return n;
+        }
+      } else if (d.type === 'long' || d.type === 'short') {
+        const g = positionGeom(d);
+        if (!g) return null;
+        const hit = (hx, hy) => isNum(hy) && Math.hypot(clickX - hx, clickY - hy) <= handleHitR();
+        if (hit(g.ax, g.yEntry)) return 'p1';          // dùng đúng đường kéo p1 cũ
+        if (hit(g.bx, g.yEntry)) return 'ls:right';
+        if (hit(g.ax, g.yTarget)) return 'ls:target';
+        if (hit(g.ax, g.yStop)) return 'ls:stop';
       } else if (d.pts) {
         for (let k = 0; k < d.pts.length; k++) if (checkHandle(d.pts[k])) return 'v' + k;
       } else if (d.p3) {
@@ -1697,6 +1715,132 @@ ctx.lineWidth = crispW(baseWidth);
       return null;
     }
 
+        // ===== Điểm neo kiểu TradingView =====
+    const isNum = (v) => v !== null && v !== undefined && !Number.isNaN(v);
+
+    function drawSquareHandle(x, y) {
+      if (!isNum(x) || !isNum(y)) return;
+      const s = isCoarsePointer() ? 18 : 12;
+      ctx.save();
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(x - s / 2, y - s / 2, s, s, 3);
+      else ctx.rect(x - s / 2, y - s / 2, s, s);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.strokeStyle = '#2962ff';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([]);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function shiftPointBy(pO, dx, dy) {
+      const xO = pointToX(pO), yO = priceToY(pO.price);
+      if (!isNum(xO) || !isNum(yO)) return pO;
+      return { time: xToPointInfo(xO + dx).time, price: yToPrice(yO + dy) };
+    }
+
+    // --- Hình chữ nhật: 4 góc + 4 cạnh ---
+    function rectHandlePoints(x1, y1, x2, y2) {
+      const L = Math.min(x1, x2), R = Math.max(x1, x2);
+      const T = Math.min(y1, y2), B = Math.max(y1, y2);
+      const mx = (L + R) / 2, my = (T + B) / 2;
+      return [
+        ['rect:LT', L, T, false], ['rect:RT', R, T, false],
+        ['rect:LB', L, B, false], ['rect:RB', R, B, false],
+        ['rect:T', mx, T, true], ['rect:B', mx, B, true],
+        ['rect:L', L, my, true], ['rect:R', R, my, true],
+      ];
+    }
+
+    // Điểm nào đang là trái/phải/trên/dưới (tính theo bản gốc lúc bắt đầu kéo)
+    function rectSides(d) {
+      const L = d.p1.time <= d.p2.time ? 'p1' : 'p2';
+      const T = d.p1.price >= d.p2.price ? 'p1' : 'p2';
+      return { L, R: L === 'p1' ? 'p2' : 'p1', T, B: T === 'p1' ? 'p2' : 'p1' };
+    }
+
+    function applyRectHandle(d, orig, name, pt) {
+      if (!isNum(pt.time) || !isNum(pt.price)) return;
+      const s = rectSides(orig);
+      const key = name.slice(5);
+      if (key.includes('L')) d[s.L] = { time: pt.time, price: d[s.L].price };
+      if (key.includes('R')) d[s.R] = { time: pt.time, price: d[s.R].price };
+      if (key.includes('T')) d[s.T] = { time: d[s.T].time, price: pt.price };
+      if (key.includes('B')) d[s.B] = { time: d[s.B].time, price: pt.price };
+    }
+
+        // Tính TP + R:R thực tế (theo chế độ đang chọn)
+    function longShortTarget(d) {
+      const entry = d.p1.price, stop = d.p2.price;
+      const long = d.type === 'long';
+      const risk = long ? entry - stop : stop - entry;
+      const free = d.lockRR === false && Number.isFinite(d.tpDist) && d.tpDist !== 0;
+      const target = free
+        ? entry + d.tpDist
+        : (long ? entry + risk * (d.rr || 2) : entry - risk * (d.rr || 2));
+      const rr = risk > 0 ? Math.round((Math.abs(target - entry) / risk) * 100) / 100 : (d.rr || 2);
+      return { entry, stop, risk, target, rr, free };
+    }
+
+    // Bật/tắt chế độ R:R, giữ nguyên vị trí TP hiện tại khi chuyển
+    function setLockRR(d, on) {
+      const t = longShortTarget(d);
+      if (on) {
+        d.rr = Math.max(0.1, t.rr);
+        d.lockRR = true;
+      } else {
+        d.tpDist = t.target - t.entry;
+        d.lockRR = false;
+      }
+    }
+
+        function positionGeom(d) {
+      const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
+      const x2 = pointToX(d.p2), y2 = priceToY(d.p2.price);
+      if (![x1, y1, x2, y2].every(isNum)) return null;
+      const t = longShortTarget(d);
+      const rx = Math.min(x1, x2), rw = Math.abs(x2 - x1) || 60;
+      return {
+        rr: t.rr, entry: t.entry, stop: t.stop, target: t.target,
+        rx, rw,
+        ax: x1,                         // đầu có điểm vào lệnh p1
+        bx: x1 <= x2 ? rx + rw : rx,    // đầu đối diện (thuộc về p2)
+        yEntry: y1, yStop: y2, yTarget: priceToY(t.target),
+      };
+    }
+
+        function applyPositionHandle(d, orig, name, pt, e) {
+      if (!isNum(pt.price)) return;
+      // Chế độ R:R tắt mà chưa có khoảng cách TP: chốt từ vị trí TP hiện tại
+      if (d.lockRR === false && !Number.isFinite(d.tpDist)) {
+        d.tpDist = longShortTarget(orig).target - orig.p1.price;
+      }
+      const long = d.type === 'long';
+
+      if (name === 'ls:stop') {                       // đổi SL
+        if (long ? pt.price >= d.p1.price : pt.price <= d.p1.price) return;
+        d.p2 = { time: d.p2.time, price: pt.price };
+
+      } else if (name === 'ls:right') {               // đổi độ rộng (đầu đối diện luôn là p2)
+        if (!isNum(pt.time)) return;
+        d.p2 = { time: pt.time, price: d.p2.price };
+
+      } else if (name === 'ls:target') {              // kéo TP
+        const entry = orig.p1.price;
+        if (d.lockRR === false) {
+          const dist = pt.price - entry;
+          if (long ? dist <= 0 : dist >= 0) return;
+          d.tpDist = dist;
+        } else {
+          const risk = long ? entry - orig.p2.price : orig.p2.price - entry;
+          if (risk <= 0) return;
+          const rr = (long ? pt.price - entry : entry - pt.price) / risk;
+          d.rr = Math.max(0.1, Math.round(rr * 100) / 100);
+        }
+      }
+    }
+
     function findDrawingAt(pt) {
       if (allDrawingsHidden) return null;
       const x = pointToX(pt);
@@ -1707,6 +1851,18 @@ ctx.lineWidth = crispW(baseWidth);
         const d = drawings[i];
         if (!isVisibleNow(d)) continue;
  
+                if (d.type === 'rectangle') {
+          if (i === selectedDrawingIndex) {
+            // Đã chọn: cả phía trong cũng thuộc về hình
+            const rx1 = pointToX(d.p1), ry1 = priceToY(d.p1.price);
+            const rx2 = pointToX(d.p2), ry2 = priceToY(d.p2.price);
+            if ([rx1, ry1, rx2, ry2].every(isNum) && boundsHit(x, y, [rx1, rx2], [ry1, ry2], hitTol())) return { index: i };
+          } else if (outlineHit(d, x, y)) {
+            return { index: i };               // Chưa chọn: chỉ chạm được nét viền
+          }
+          continue;
+        }
+
         // Hình đã tắt nền: chỉ chọn được khi chạm trúng ĐƯỜNG BAO, không chọn khi chạm vào bên trong
         if (d.fill === false && ['rectangle', 'circle', 'triangle', 'channel'].includes(d.type)) {
           if (outlineHit(d, x, y)) return { index: i };
@@ -1755,7 +1911,14 @@ ctx.lineWidth = crispW(baseWidth);
             if (hit) return { index: i };
           }
 
-        } else if (d.type === 'rectangle' || d.type === 'circle' || d.type === 'long' || d.type === 'short') {
+        } else if (d.type === 'long' || d.type === 'short') {
+          const g = positionGeom(d);
+          if (g) {
+            const ys = [g.yEntry, g.yStop];
+            if (isNum(g.yTarget)) ys.push(g.yTarget);
+            if (boundsHit(x, y, [g.rx, g.rx + g.rw], ys, 8)) return { index: i };
+          }
+        } else if (d.type === 'circle') {
           const x1 = pointToX(d.p1), y1 = priceToY(d.p1.price);
           const x2 = pointToX(d.p2), y2 = priceToY(d.p2.price);
           if (x1 !== null && y1 !== null && x2 !== null && y2 !== null) {
@@ -2028,6 +2191,22 @@ ctx.lineWidth = crispW(baseWidth);
         );
       }
  
+            if (d.type === 'long' || d.type === 'short') {
+        toolbarEl.appendChild(
+          makeToolbarBtn(
+            '<span style="font:700 11px sans-serif">R:R</span>',
+            'Bật: kéo SL thì TP chạy theo R:R · Tắt: kéo SL/TP tự do',
+            (btn) => {
+              setLockRR(d, d.lockRR === false);
+              btn.classList.toggle('active', d.lockRR !== false);
+              redraw();
+              rememberStyle(d);
+            },
+            d.lockRR !== false
+          )
+        );
+      }
+
       // Viết chữ trong hình chữ nhật
       if (d.type === 'rectangle') {
         toolbarEl.appendChild(makeToolbarBtn(ICON.textT, 'Viết chữ trong hình', () => openBoxTextEditor(idx), !!d.text));
@@ -2242,6 +2421,13 @@ ctx.lineWidth = crispW(baseWidth);
         </div>`;
       }
  
+            if (d.type === 'long' || d.type === 'short') {
+        html += `
+        <div class="dtv-modal-row">
+          <label class="dtv-check"><input type="checkbox" id="gLockRR" ${d.lockRR !== false ? 'checked' : ''}><span>Theo tỷ lệ R:R cài sẵn (kéo SL thì TP chạy theo)</span></label>
+        </div>`;
+      }
+
       return html;
     }
 
@@ -2268,7 +2454,7 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
         html += `
           <div class="dtv-modal-row">
             <span>Tỷ lệ R:R</span>
-            <div class="dtv-ctrls"><label class="dtv-mini">1 : <input type="number" step="any" min="0.1" id="coordRR" class="dtv-input" value="${esc(d.rr || 2)}"></label></div>
+            <div class="dtv-ctrls"><label class="dtv-mini">1 : <input type="number" step="any" min="0.1" id="coordRR" class="dtv-input" value="${esc(longShortTarget(d).rr)}"></label></div>
           </div>`;
       }
       return html || '<div class="dtv-modal-row"><span>Hình này không có toạ độ để chỉnh.</span></div>';
@@ -2468,10 +2654,14 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
   }
 }
         });
+          if (q('#gLockRR')) {
+          const on = q('#gLockRR').checked;
+          if (on !== (d.lockRR !== false)) setLockRR(d, on);
+        }
         const rrInput = q('#coordRR');
-        if (rrInput) {
+        if (rrInput && rrInput.value !== rrInput.defaultValue) {   // chỉ khi người dùng thật sự sửa R:R
           const rr = parseFloat(rrInput.value);
-          if (Number.isFinite(rr) && rr > 0) d.rr = rr;
+          if (Number.isFinite(rr) && rr > 0) { d.rr = rr; d.lockRR = true; }
         }
 
         // Visibility theo khung thời gian
@@ -2857,7 +3047,9 @@ const bar = lg !== null ? Math.round(lg * 100) / 100 : '';
         if (isDraggingHandle && draggedDrawingIndex !== null) {
           const d = drawings[draggedDrawingIndex];
           if (d) {
-            if (draggedHandleName === 'p1') d.p1 = pt;
+            if (draggedHandleName.startsWith('rect:')) applyRectHandle(d, draggedDrawingOriginal, draggedHandleName, pt);
+            else if (draggedHandleName.startsWith('ls:')) applyPositionHandle(d, draggedDrawingOriginal, draggedHandleName, pt, e);
+            else if (draggedHandleName === 'p1') d.p1 = pt;
             else if (draggedHandleName === 'p2') d.p2 = pt;
             else if (draggedHandleName === 'p3') d.p3 = pt;
             else if (draggedHandleName === 'p') d.p = pt;
