@@ -230,7 +230,7 @@ const MaSignalModule = (function () {
     const bull = comp.bull;
     const lookup = trailSeries && trailSeries.length ? makeLookup(trailSeries) : null;
     let pos = null;
-    let reDir = 0; // hướng cần vào lại sau khi bị quét SL (0 = không có)
+    let reArm = false; // vừa bị quét SL -> vào lệnh theo phe MACD hiện tại (cùng hoặc ngược lệnh cũ)
 
     const finish = (p, idx, price, reason) => {
       p.exitIdx = idx;
@@ -248,7 +248,7 @@ const MaSignalModule = (function () {
         const hit = checkExit(pos, bar);
         if (hit) {
           finish(pos, b, hit.price, hit.reason);
-          if (hit.reason === 'sl' && cfg.reentry) reDir = pos.dir; // bị quét SL -> xét vào lại
+          if (hit.reason === 'sl' && cfg.reentry) reArm = true;
           pos = null;
         }
       }
@@ -264,7 +264,7 @@ const MaSignalModule = (function () {
         if (cfg.closeOnFlip && ((pos.dir === 1 && flipSell) || (pos.dir === -1 && flipBuy))) {
           finish(pos, b + 1, next.open, 'flip');
           pos = null;
-          reDir = 0; // rơi xuống bước 4: tín hiệu đổi phe sẽ vào lệnh ngược
+          reArm = false; // rơi xuống bước 4: tín hiệu đổi phe sẽ vào lệnh ngược
         } else if (cfg.exitMode === 'trail' && lookup && b > pos.entryIdx) {
           const cur = lookup(bar.time);
           const prev = b > 0 ? lookup(candles[b - 1].time) : -1;
@@ -279,7 +279,7 @@ const MaSignalModule = (function () {
               // giá mở nến kế đã vượt qua SL mới -> coi như bị quét ngay
               if ((pos.dir === 1 && next.open <= cand) || (pos.dir === -1 && next.open >= cand)) {
                 finish(pos, b + 1, next.open, 'trail');
-                if (cfg.reentry) reDir = pos.dir;
+                if (cfg.reentry) reArm = true;
                 pos = null; // rơi xuống bước 4 (đổi phe -> lệnh ngược; còn cùng phe -> vào lại)
               } else {
                 pos.sl = cand;
@@ -294,8 +294,7 @@ const MaSignalModule = (function () {
       // 4) Hết lệnh: tìm tín hiệu để vào lệnh tại giá mở cửa nến kế tiếp
       //    - đổi phe (flipBuy/flipSell), hoặc
       //    - vào lại: MACD vẫn cùng phe với lệnh vừa bị quét SL
-      if (reDir !== 0 && !flipBuy && !flipSell && (bull[b] ? 1 : -1) !== reDir) reDir = 0;
-      const dir = flipBuy ? 1 : flipSell ? -1 : reDir;
+      const dir = flipBuy ? 1 : flipSell ? -1 : reArm ? (bull[b] ? 1 : -1) : 0;
       if (dir === 0) continue;
       const isReentry = !flipBuy && !flipSell;
 
@@ -317,7 +316,7 @@ const MaSignalModule = (function () {
       const risk = dir === 1 ? entry - sl : sl - entry;
       if (!(risk > 0)) continue; // chưa vào được: reDir được giữ để thử lại ở nến sau
 
-      reDir = 0;
+      reArm = false;
       pos = {
         dir,
         reentry: isReentry,
