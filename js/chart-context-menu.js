@@ -871,7 +871,7 @@
       closeDialog(false);
 
       const snapshot = ChartAppearance.get();
-      const themeGrid = currentTheme() === 'light' ? '#eef1f8' : '#161720';
+      const themeGrid = currentTheme() === 'light' ? '#eef1f8' : '#151922';
 
       dialogEl = el('div', 'cm-dialog-backdrop');
       dialogEl.innerHTML = `

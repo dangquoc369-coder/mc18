@@ -41,19 +41,23 @@ const ChartModule = (function () {
   // đây phải khớp thủ công với :root / :root[data-theme="light"] trong
   // css/style.css.
   const CHART_THEME = {
-    dark: {
-      background: '#0c0d14',
-      text: '#d1d4dc',
-      grid: '#161720',
-      border: '#202127',
-    },
-    light: {
-      background: '#ffffff',
-      text: '#131722',
-      grid: '#eef1f8',
-      border: '#e2e5ed',
-    },
-  };
+  dark: {
+  background: '#0b0e14',   // sâu hơn TradingView (#131722)
+  text: '#d1d4dc',
+  grid: '#151922',         // lưới nhạt hơn, không tranh với nến
+  border: '#1f2430',       // viền trục + vạch ngăn pane
+  crosshair: '#758696',
+  crosshairLabel: '#1f2430',
+},
+  light: {
+    background: '#ffffff',
+    text: '#131722',
+    grid: '#eef1f8',
+    border: '#e2e5ed',
+    crosshair: '#758696',      // giữ mặc định thư viện
+    crosshairLabel: '#131722',
+  },
+};
 
   const MAX_EMA_LINES = 10;
   // >1 = nhạy hơn. 1 = như mặc định, 1.8-2.5 là hợp với mobile
@@ -768,6 +772,10 @@ const ChartModule = (function () {
       if (!chart) return;
       const c = CHART_THEME[theme] || CHART_THEME.dark;
       chart.applyOptions({
+        crosshair: {
+          vertLine: { color: c.crosshair, labelBackgroundColor: c.crosshairLabel },
+          horzLine: { color: c.crosshair, labelBackgroundColor: c.crosshairLabel },
+        },
         layout: {
           background: { type: 'solid', color: c.background },
           textColor: c.text,
@@ -869,8 +877,10 @@ const ChartModule = (function () {
   },
 
   crosshair: {
-    mode: LightweightCharts.CrosshairMode.Normal
-  },
+  mode: LightweightCharts.CrosshairMode.Normal,
+  vertLine: { color: initialColors.crosshair, labelBackgroundColor: initialColors.crosshairLabel },
+  horzLine: { color: initialColors.crosshair, labelBackgroundColor: initialColors.crosshairLabel },
+},
 
   rightPriceScale: {
     borderColor: initialColors.border
