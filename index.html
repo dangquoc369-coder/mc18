@@ -9,10 +9,12 @@
 <!-- ===== PWA / "Thêm vào màn hình chính" - ẩn thanh Safari ===== -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<!-- "default" = status bar ĐẶC, nội dung nằm dưới nó. Trước đây "black-translucent" cho nội dung tràn lên dưới status bar nên iPadOS mới phủ lớp blur/fade lên header. -->
+<!-- Status bar ĐẶC, nội dung nằm dưới nó (KHÔNG dùng "black-translucent": nó cho nội dung tràn lên dưới status bar nên iPadOS mới phủ lớp blur/fade lên header).
+     Giá trị content ở đây chỉ là mặc định: script ngay bên dưới và theme.js đổi theo theme đã lưu:
+       nền tối -> "black" (dải đen đặc), nền sáng -> "default" (dải trắng đặc). -->
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="TradingPro">
-<!-- Không đặt theme-color: để thanh status bar tự theo chế độ sáng/tối của iPad (giống MetaTrader 5). -->
+<!-- Không đặt theme-color ở đây: theme.js sẽ tự thêm/cập nhật theo theme. -->
 <meta name="color-scheme" content="light dark">
 
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
@@ -25,7 +27,9 @@
      LẬP TỨC, TRƯỚC khi style.css tải xong và trang vẽ ra - tránh việc trang
      luôn hiện nền tối mặc định trong 1 nhịp rồi mới "nháy" sang nền sáng.
      theme.js (script cuối) chỉ cần đọc lại đúng giá trị này để đồng bộ nút
-     bấm, không set lại attribute nữa. -->
+     bấm, không set lại attribute nữa.
+     Cũng đặt luôn kiểu status bar theo theme (nền tối -> black, sáng -> default)
+     để lần mở app sau dải trên cùng đã đúng màu ngay từ đầu. -->
 <script>
   (function () {
     window.addEventListener('error', function (e) {
@@ -40,13 +44,17 @@
       }
     }, true);
 
+    var t = 'dark';
     try {
       var saved = localStorage.getItem('dq_tracker_theme_v1');
-      var t = saved === 'light' ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', t);
+      t = saved === 'light' ? 'light' : 'dark';
     } catch (err) {
-      document.documentElement.setAttribute('data-theme', 'dark');
+      t = 'dark';
     }
+    document.documentElement.setAttribute('data-theme', t);
+
+    var sb = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+    if (sb) sb.setAttribute('content', t === 'dark' ? 'black' : 'default');
   })();
 </script>
 
@@ -290,8 +298,9 @@
   <script src="js/trend-reference.js"></script>  <!-- thêm dòng này -->
   <!-- theme.js PHẢI nằm TRƯỚC chart.js: chart.js đọc ThemeModule.getTheme()
        ngay lúc khởi tạo mỗi pane (initChart) để tô màu chart lần đầu đúng
-       theme, không phải chờ tới lần đổi theme kế tiếp. -->
-  <script src="js/theme.js"></script>
+       theme, không phải chờ tới lần đổi theme kế tiếp.
+       ?v=... để ép trình duyệt/iOS tải lại bản theme.js mới (đổi số khi sửa file). -->
+  <script src="js/theme.js?v=20261123a"></script>
   <script src="js/chart-context-menu.js"></script>
   <script src="js/chart.js"></script>
   <script src="js/ichimoku-ui.js"></script>
