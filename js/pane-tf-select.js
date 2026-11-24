@@ -1,33 +1,35 @@
 /**
- * pane-tf-select.js (v3)
- * Trên khung symbol của TỪNG ô chart, CHỈ khi body.app-fullscreen:
- *   - dropdown SYMBOL (lấy từ watchlist)
- *   - dropdown KHUNG THỜI GIAN
- * Ngoài fullscreen: cả hai bị ẩn, không chiếm chỗ chart.
+ * pane-tf-select.js (v4)
+ * Trên khung symbol của TỪNG ô chart (CẢ ngoài lẫn trong fullscreen):
+ *   - dropdown SYMBOL (lấy từ watchlist) - bấm để đổi symbol của ô đó
+ *   - nhãn KHUNG THỜI GIAN:
+ *       + Fullscreen      : bấm được, đổi khung của ô (như cũ)
+ *       + Ngoài fullscreen: CHỈ HIỂN THỊ (không bấm), khung giờ đổi ở thanh topbar
+ *         chung; nhãn tự cập nhật theo 'pane:timeframeChanged'
  * Phụ thuộc: Store, EventBus, TIMEFRAMES, SelectFix (nạp sau symbol-size.js).
  */
 (function () {
   const STYLE_ID = 'paneTfSelectStyles';
- 
+
   // 15m giữ nguyên, còn lại in hoa: 1H, 4H, 1D, 1W... (khớp timeframe-fit.js)
   function tfLabel(v) {
     return /m$/.test(v) ? v : String(v).toUpperCase();
   }
- 
+
   // Tên symbol hiển thị gọn trên nút
   function symLabel(sym) {
     if (sym.endsWith('_PERP')) return sym.replace('_PERP', ' (Futures)');
     return sym.replace('OANDA:', '');
   }
- 
+
   function injectStyles() {
     if (document.getElementById(STYLE_ID)) return;
     const s = document.createElement('style');
     s.id = STYLE_ID;
     s.textContent = `
-      /* ---- Nút khung giờ ---- */
+      /* ---- Nút khung giờ (luôn hiện) ---- */
       .sfx-btn.pane-tf-btn {
-        display: none;
+        display: inline-flex;
         pointer-events: auto;
         min-width: 0;
         max-width: none;
@@ -46,11 +48,16 @@
       .sfx-btn.pane-tf-btn:hover,
       .sfx-btn.pane-tf-btn.open { border-color: var(--accent-blue); }
       .pane-tf-btn .sfx-c { display: none; }
-      body.app-fullscreen .sfx-btn.pane-tf-btn { display: inline-flex; }
- 
-      /* ---- Nút symbol (thay chữ .pane-symbol khi fullscreen) ---- */
+      /* Ngoài fullscreen: chỉ hiển thị, không bấm (đổi khung ở topbar) */
+      body:not(.app-fullscreen) .sfx-btn.pane-tf-btn {
+        pointer-events: none;
+        cursor: default;
+      }
+      body:not(.app-fullscreen) .sfx-btn.pane-tf-btn:hover { border-color: var(--border-color); }
+
+      /* ---- Nút symbol (thay chữ .pane-symbol, luôn hiện) ---- */
       .sfx-btn.pane-wl-btn {
-        display: none;
+        display: inline-flex;
         pointer-events: auto;
         min-width: 0;
         max-width: 150px;
@@ -68,14 +75,19 @@
       .sfx-btn.pane-wl-btn:hover,
       .sfx-btn.pane-wl-btn.open { background: var(--bg-hover); }
       .pane-wl-btn .sfx-c { font-size: 8px; }
-      body.app-fullscreen .sfx-btn.pane-wl-btn { display: inline-flex; }
-      body.app-fullscreen .chart-pane .pane-symbol { display: none; }
+      .chart-pane .pane-symbol { display: none; }
+
+      /* Cỡ khung symbol (nút "Aa" trên mobile) áp cho nút symbol/khung mới */
+      html[data-sym-size="s"] .sfx-btn.pane-wl-btn { font-size: 11px; }
+      html[data-sym-size="s"] .sfx-btn.pane-tf-btn { font-size: 9px; height: 15px; }
+      html[data-sym-size="xs"] .sfx-btn.pane-wl-btn { font-size: 10px; }
+      html[data-sym-size="xs"] .sfx-btn.pane-tf-btn { font-size: 8.5px; height: 14px; }
     `;
     document.head.appendChild(s);
   }
- 
+
   /* ===================== Khung giờ ===================== */
- 
+
   function buildTfSelect(paneId, current) {
     const sel = document.createElement('select');
     sel.className = 'pane-tf-select';
@@ -90,9 +102,9 @@
     sel.addEventListener('change', () => Store.setPaneTimeframe(paneId, sel.value));
     return sel;
   }
- 
+
   /* ===================== Symbol (watchlist) ===================== */
- 
+
   /** Dựng lại danh sách option = watchlist (+ symbol hiện tại nếu chưa có). */
   function fillSymbolOptions(sel, current) {
     const list = Store.getWatchlist();
@@ -106,7 +118,7 @@
     });
     sel.value = current; // SelectFix hook setter -> nhãn nút tự cập nhật
   }
- 
+
   function buildSymSelect(paneId, current) {
     const sel = document.createElement('select');
     sel.className = 'pane-wl-select';
@@ -115,15 +127,15 @@
     sel.addEventListener('change', () => Store.setPaneSymbol(paneId, sel.value));
     return sel;
   }
- 
+
   function refreshSymbolSelect(paneId) {
     const sel = document.querySelector('.pane-wl-select[data-pane-id="' + paneId + '"]');
     const p = Store.getPane(paneId);
     if (sel && p) fillSymbolOptions(sel, p.symbol);
   }
- 
+
   /* ===================== Gắn vào từng ô ===================== */
- 
+
   /** Bọc select bằng SelectFix; select phải đã nằm trong DOM. */
   function enhance(sel, btnClass, title) {
     if (typeof SelectFix === 'undefined') {
@@ -137,15 +149,15 @@
       btn.title = title;
     }
   }
- 
+
   function init() {
     injectStyles();
- 
+
     document.querySelectorAll('.chart-pane').forEach((pane) => {
       const row = pane.querySelector('.pane-symbol-row');
       const p = Store.getPane(pane.id);
       if (!row || !p) return;
- 
+
       // --- Symbol: ngay sau chữ .pane-symbol ---
       if (!row.querySelector('.pane-wl-select')) {
         const symEl = row.querySelector('.pane-symbol');
@@ -154,31 +166,31 @@
         else row.insertBefore(symSel, row.firstChild);
         enhance(symSel, 'pane-wl-btn', 'Đổi symbol (watchlist) của ô này');
       }
- 
+
       // --- Khung giờ: trước nút "Aa" (hoặc cuối hàng) ---
       if (!row.querySelector('.pane-tf-select')) {
         const tfSel = buildTfSelect(pane.id, p.timeframe);
         const aaBtn = row.querySelector('.sym-size-btn');
         if (aaBtn) row.insertBefore(tfSel, aaBtn);
         else row.appendChild(tfSel);
-        enhance(tfSel, 'pane-tf-btn', 'Đổi khung thời gian của ô này');
+        enhance(tfSel, 'pane-tf-btn', 'Khung thời gian của ô này');
       }
     });
- 
-    // Khung đổi từ nơi khác -> đồng bộ
+
+    // Khung đổi từ nơi khác (topbar chung...) -> đồng bộ nhãn
     EventBus.on('pane:timeframeChanged', ({ paneId, timeframe }) => {
       const sel = document.querySelector('.pane-tf-select[data-pane-id="' + paneId + '"]');
       if (sel && sel.value !== timeframe) sel.value = timeframe;
     });
- 
+
     // Symbol đổi từ nơi khác (sidebar, tìm kiếm...) -> đồng bộ
     EventBus.on('pane:symbolChanged', ({ paneId }) => refreshSymbolSelect(paneId));
- 
+
     // Watchlist thêm/bớt -> cập nhật danh sách của mọi ô
     EventBus.on('watchlist:changed', () => {
       Store.getState().panes.forEach((p) => refreshSymbolSelect(p.id));
     });
   }
- 
+
   init();
 })();
