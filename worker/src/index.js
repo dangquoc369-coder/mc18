@@ -671,14 +671,108 @@ async function runCronTick(env) {
   await checkAlertsAndNotify(env);
 }
 
+// =====================================================================
+// PATCH v2: THAY TOÀN BỘ hàm checkAlertsAndNotify() cũ trong src/index.js
+// bằng đoạn dưới đây (xoá luôn bản v1 nếu đã dán). Giữ nguyên mọi thứ khác,
+// kể cả fetchCoinGeckoPrices (vẫn là dự phòng cuối cùng).
+//
+// v2 sửa lỗi 403 từ Binance khi gọi từ Cloudflare Workers:
+//  - Chuỗi nguồn nến 1m: Binance -> OKX -> Bybit -> (CoinGecko cho spot).
+//  - Nguồn nào bị chặn (403/451/429) thì bỏ qua 10 phút trong isolate đó,
+//    không tốn thêm subrequest cho lần cron kế tiếp.
+//  - XAUUSD / XAUUSDT / XAUUSD_PERP đều lấy từ TradingView OANDA:XAUUSD.
+// =====================================================================
+
+const MAX_ALERT_SYMBOLS_PER_RUN = 15; // mỗi symbol ~1-2 subrequest; gói miễn phí tối đa 50/lần cron
+const SOURCE_COOLDOWN_MS = 10 * 60000;
+const DEAD_SOURCE_UNTIL = new Map(); // tên nguồn -> thời điểm (ms) được thử lại
+
+function isGoldAlias(symbol) {
+  const s = String(symbol || '').toUpperCase();
+  return isOandaSymbol(s) || /^XAU(USDT|USD)(_PERP)?$/.test(s);
+}
+
+function parseBinanceKlines(raw) {
+  if (!Array.isArray(raw) || !raw.length) return null;
+  return raw.map((k) => ({
+    time: Math.floor(k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4],
+  }));
+}
+function parseOkxKlines(j) {
+  if (!j || j.code !== '0' || !Array.isArray(j.data) || !j.data.length) return null;
+  return j.data
+    .map((k) => ({ time: Math.floor(+k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4] }))
+    .reverse(); // OKX trả mới nhất trước
+}
+function parseBybitKlines(j) {
+  const list = j && j.retCode === 0 && j.result && j.result.list;
+  if (!Array.isArray(list) || !list.length) return null;
+  return list
+    .map((k) => ({ time: Math.floor(+k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4] }))
+    .reverse(); // Bybit trả mới nhất trước
+}
+
+function candleSources(symbol) {
+  const isFut = symbol.endsWith('_PERP');
+  const clean = symbol.replace(/_PERP$/, '');
+  const m = clean.match(/^(.+?)(USDT|USDC)$/);
+  const list = [];
+  if (isFut) {
+    list.push({ name: 'binance-fapi', parse: parseBinanceKlines,
+      url: `https://fapi.binance.com/fapi/v1/klines?symbol=${clean}&interval=1m&limit=6` });
+  } else {
+    list.push({ name: 'binance-vision', parse: parseBinanceKlines,
+      url: `https://data-api.binance.vision/api/v3/klines?symbol=${clean}&interval=1m&limit=6` });
+    list.push({ name: 'binance-gcp', parse: parseBinanceKlines,
+      url: `https://api-gcp.binance.com/api/v3/klines?symbol=${clean}&interval=1m&limit=6` });
+  }
+  if (m) {
+    list.push({ name: 'okx', parse: parseOkxKlines,
+      url: `https://www.okx.com/api/v5/market/candles?instId=${m[1]}-${m[2]}${isFut ? '-SWAP' : ''}&bar=1m&limit=6` });
+    list.push({ name: 'bybit', parse: parseBybitKlines,
+      url: `https://api.bybit.com/v5/market/kline?category=${isFut ? 'linear' : 'spot'}&symbol=${clean}&interval=1&limit=6` });
+  }
+  return list;
+}
+
+// Trả về mảng nến 1m (tăng dần, time = giây) hoặc null.
+async function fetchAlertCandles(symbol) {
+  try {
+    if (isGoldAlias(symbol)) {
+      return await fetchOandaKlinesTV('XAUUSD', '1m', 6, null);
+    }
+    for (const src of candleSources(symbol)) {
+      if ((DEAD_SOURCE_UNTIL.get(src.name) || 0) > Date.now()) continue;
+      try {
+        const res = await fetch(src.url, {
+          headers: { 'User-Agent': 'dq-tracker-push/1.0', Accept: 'application/json' },
+        });
+        if (!res.ok) {
+          console.log(`[cron] ${src.name} lỗi ${res.status} cho ${symbol}`);
+          if (res.status === 403 || res.status === 451 || res.status === 429) {
+            DEAD_SOURCE_UNTIL.set(src.name, Date.now() + SOURCE_COOLDOWN_MS);
+          }
+          continue;
+        }
+        const candles = src.parse(await res.json());
+        if (candles && candles.length) return candles;
+      } catch (err) {
+        console.log(`[cron] ${src.name} ném lỗi cho ${symbol}:`, err && err.message);
+        DEAD_SOURCE_UNTIL.set(src.name, Date.now() + SOURCE_COOLDOWN_MS);
+      }
+    }
+  } catch (err) {
+    console.log(`[cron] lấy nến 1m lỗi ${symbol}:`, err && err.message);
+  }
+  return null;
+}
+
 async function checkAlertsAndNotify(env) {
   const allConfig = await readJSON(env.TRACKER_KV, ALERTS_CONFIG_KEY, {});
   const allState = await readJSON(env.TRACKER_KV, ALERTS_STATE_KEY, {});
   const subs = await readJSON(env.TRACKER_KV, SUBS_KEY, {});
 
-  console.log(
-    `[cron] devices=${Object.keys(allConfig).length} subs=${Object.keys(subs).length}`
-  );
+  console.log(`[cron] devices=${Object.keys(allConfig).length} subs=${Object.keys(subs).length}`);
 
   const symbolSet = new Set();
   Object.keys(allConfig).forEach((deviceId) => {
@@ -694,15 +788,32 @@ async function checkAlertsAndNotify(env) {
     return;
   }
 
-  const prices = await fetchCoinGeckoPrices(env, [...symbolSet]);
-  if (!prices) {
-    console.log('[cron] lỗi lấy giá từ CoinGecko.');
-    return;
+  // ---- Lấy nến 1m song song cho từng symbol ----
+  const allSymbols = [...symbolSet];
+  const fetchList = allSymbols.slice(0, MAX_ALERT_SYMBOLS_PER_RUN);
+  if (allSymbols.length > fetchList.length) {
+    console.log(`[cron] ${allSymbols.length} symbol > giới hạn ${MAX_ALERT_SYMBOLS_PER_RUN}, phần dư để lượt cron sau.`);
   }
-  console.log('[cron] giá hiện tại:', JSON.stringify(prices));
+  const candlesBySymbol = {};
+  await Promise.all(
+    fetchList.map(async (s) => {
+      candlesBySymbol[s] = await fetchAlertCandles(s);
+    })
+  );
+
+  // ---- Dự phòng CoinGecko cho symbol spot mà mọi nguồn nến đều lỗi ----
+  const needFallback = fetchList.filter(
+    (s) => (!candlesBySymbol[s] || !candlesBySymbol[s].length) && !isGoldAlias(s) && !s.endsWith('_PERP')
+  );
+  let fallbackPrices = {};
+  if (needFallback.length > 0) {
+    console.log('[cron] dùng CoinGecko dự phòng cho:', needFallback.join(', '));
+    fallbackPrices = (await fetchCoinGeckoPrices(env, needFallback)) || {};
+  }
 
   let stateChanged = false;
   let subsChanged = false;
+  const nowSec = Math.floor(Date.now() / 1000);
 
   for (const deviceId of Object.keys(allConfig)) {
     const list = allConfig[deviceId] || [];
@@ -713,23 +824,38 @@ async function checkAlertsAndNotify(env) {
       const st = deviceState[alertCfg.id] || (deviceState[alertCfg.id] = { side: null, triggered: false });
       if (st.triggered) continue;
 
-      const price = prices[alertCfg.symbol];
+      const candles = candlesBySymbol[alertCfg.symbol];
+      const hasCandles = Array.isArray(candles) && candles.length > 0;
+      const price = hasCandles ? candles[candles.length - 1].close : fallbackPrices[alertCfg.symbol];
       if (price === undefined || Number.isNaN(price)) continue;
 
-      const side = price >= alertCfg.price ? 'above' : 'below';
+      const level = alertCfg.price;
+      const side = price >= level ? 'above' : 'below';
 
       if (st.side === null || st.side === undefined) {
-        console.log(
-          `[cron] baseline mới cho ${deviceId}/${alertCfg.symbol}@${alertCfg.price}: giá hiện tại ${price} (${side})`
-        );
+        console.log(`[cron] baseline mới ${deviceId}/${alertCfg.symbol}@${level}: giá ${price} (${side})`);
         st.side = side;
+        st.t = nowSec;
         stateChanged = true;
         continue;
       }
+      if (!st.t) {
+        st.t = nowSec;
+        stateChanged = true;
+      }
 
-      if (st.side !== side) {
+      // (a) Giá đã đổi phía so với baseline
+      let hit = st.side !== side;
+
+      // (b) Hoặc có nến 1m nào (mở SAU lúc baseline) có biên độ chứa mức giá
+      if (!hit && hasCandles) {
+        const from = Math.ceil(st.t / 60) * 60;
+        hit = candles.some((c) => c.time >= from && c.low <= level && c.high >= level);
+      }
+
+      if (hit) {
         console.log(
-          `[cron] KÍCH HOẠT ${deviceId}/${alertCfg.symbol}@${alertCfg.price}: ${st.side} -> ${side}, giá=${price}, có subscription=${!!subscription}`
+          `[cron] KÍCH HOẠT ${deviceId}/${alertCfg.symbol}@${level}: giá=${price}, có subscription=${!!subscription}`
         );
         st.side = side;
         st.triggered = true;
@@ -738,7 +864,7 @@ async function checkAlertsAndNotify(env) {
         if (subscription) {
           const stillValid = await sendPush(env, subscription, {
             title: '🔔 Cảnh báo giá',
-            body: `${alertCfg.symbol} đã chạm mức ${price}`,
+            body: `${alertCfg.symbol} đã chạm mức ${level} (giá hiện tại ${price})`,
           });
           console.log(`[cron] gửi push cho ${deviceId} - subscription còn hợp lệ: ${stillValid}`);
           if (!stillValid) {

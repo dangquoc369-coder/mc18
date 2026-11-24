@@ -59,6 +59,36 @@ const ChartModule = (function () {
   },
 };
 
+  function hexLum(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    const f = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f((n >> 16) & 255) + 0.7152 * f((n >> 8) & 255) + 0.0722 * f(n & 255);
+  }
+
+  function mixHex(a, b, t) {
+    const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+    const ch = (sh) => Math.round(((pa >> sh) & 255) * (1 - t) + ((pb >> sh) & 255) * t);
+    return '#' + [16, 8, 0].map((sh) => ch(sh).toString(16).padStart(2, '0')).join('');
+  }
+
+  /** Màu chart theo theme; nếu người dùng chọn nền riêng thì chữ/lưới/viền tự thích ứng. */
+  function resolveChartColors(theme) {
+    const base = CHART_THEME[theme] || CHART_THEME.dark;
+    const ap = typeof ChartAppearance !== 'undefined' ? ChartAppearance.get() : null;
+    const custom = ap && (theme === 'light' ? ap.bgColorLight : ap.bgColorDark);
+    if (!custom) return base;
+    const isDark = hexLum(custom) < 0.4;
+    const text = isDark ? '#d1d4dc' : '#131722';
+    return {
+      ...base,
+      background: custom,
+      text,
+      grid: mixHex(custom, text, 0.07),
+      border: mixHex(custom, text, 0.14),
+      crosshairLabel: isDark ? mixHex(custom, '#ffffff', 0.18) : '#131722',
+    };
+  }
+
   const MAX_EMA_LINES = 10;
   // >1 = nhạy hơn. 1 = như mặc định, 1.8-2.5 là hợp với mobile
   const PINCH_ZOOM_GAIN = 2.0;
@@ -770,7 +800,7 @@ const ChartModule = (function () {
     /** Áp màu chart (nền/lưới/chữ/viền trục) theo theme hiện tại. */
     function applyChartTheme(theme) {
       if (!chart) return;
-      const c = CHART_THEME[theme] || CHART_THEME.dark;
+      const c = resolveChartColors(theme);
       chart.applyOptions({
         crosshair: {
           vertLine: { color: c.crosshair, labelBackgroundColor: c.crosshairLabel },
@@ -796,7 +826,7 @@ const ChartModule = (function () {
       if (!chart || typeof ChartAppearance === 'undefined') return;
       const a = ChartAppearance.get();
       const th = (typeof ThemeModule !== 'undefined' && ThemeModule.getTheme()) || 'dark';
-      const base = (CHART_THEME[th] || CHART_THEME.dark).grid;
+      const base = resolveChartColors(th).grid;
       const col = a.gridColor || base;
       chart.applyOptions({
         grid: {
@@ -818,7 +848,7 @@ const ChartModule = (function () {
           color: c.close >= c.open ? VOLUME_UP : VOLUME_DOWN,
         })));
       }
-      applyGridOptions();
+      applyChartTheme((typeof ThemeModule !== 'undefined' && ThemeModule.getTheme()) || 'dark');
     }
 
     /** Danh sách chỉ báo đang hiện, dùng để vẽ chú thích vào ảnh chụp chart. */
@@ -856,7 +886,7 @@ const ChartModule = (function () {
       containerRef = container;
 
       const initialTheme = (typeof ThemeModule !== 'undefined' && ThemeModule.getTheme()) || 'dark';
-      const initialColors = CHART_THEME[initialTheme] || CHART_THEME.dark;
+      const initialColors = resolveChartColors(initialTheme);
 
       chart = LightweightCharts.createChart(container, {
   autoSize: true, // để thư viện tự resize theo container

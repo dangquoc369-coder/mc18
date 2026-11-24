@@ -1,15 +1,18 @@
-  /**
+/**
    * js/chart-context-menu.js
    * Menu chuột phải cho chart (giống TradingView) + ảnh chụp + cài đặt giao diện chart.
    *
-   * Gồm 2 module toàn cục:
+   * Gồm 3 module toàn cục:
    *
    *  1) ChartAppearance  - cài đặt giao diện DÙNG CHUNG cho mọi pane, lưu cục bộ (LocalStore):
-   *       lưới ngang / dọc, màu lưới, màu nến tăng / giảm, độ mờ volume.
+   *       lưới ngang / dọc, màu lưới, màu nến tăng / giảm, độ mờ volume,
+   *       MÀU NỀN chart riêng cho nền tối và nền sáng.
    *       get() / set(partial) / reset() ; phát sự kiện EventBus 'chart:appearanceChanged'.
-   *       chart.js lắng nghe sự kiện này để áp màu nến + lưới cho từng pane.
+   *       chart.js lắng nghe sự kiện này để áp màu nến + lưới + nền cho từng pane.
    *
-   *  2) ChartContextMenu - menu chuột phải (máy tính) / nhấn giữ (iPad, điện thoại).
+   *  2) ColorPicker      - bảng màu tuỳ chỉnh (vùng sáng/đậm, thanh sắc độ, HEX, ống hút, màu gần đây).
+   *
+   *  3) ChartContextMenu - menu chuột phải (máy tính) / nhấn giữ (iPad, điện thoại).
    *       attach({ paneId, container, chart, resetView, getDrawingTool, getLegendEntries })
    *         -> trả về { destroy }
    *
@@ -18,7 +21,7 @@
    *   Thang giá  >  Tự động co giãn | Thường | Logarit | Phần trăm
    *   Hiện lưới (bật / tắt)
    *   Lưu ảnh chart (Ctrl + Alt + S) | Sao chép ảnh chart (Ctrl + Alt + C)
-   *   Cài đặt chart...  (lưới, màu nến, độ mờ volume)
+   *   Cài đặt chart...  (lưới, màu nền, màu nến, độ mờ volume)
    *
    * Phải nạp SAU utils/local-store/storage/theme và TRƯỚC chart.js.
    */
@@ -35,7 +38,12 @@
       upColor: '#089981',
       downColor: '#F23645',
       volumeAlpha: 0.5,
+      bgColorDark: null,  // null = màu nền mặc định của nền tối
+      bgColorLight: null, // null = màu nền mặc định của nền sáng
     });
+
+    // Màu hiển thị khi chưa chọn gì (khớp CHART_THEME trong chart.js)
+    const BG_DEFAULTS = Object.freeze({ bgColorDark: '#0b0e14', bgColorLight: '#ffffff' });
 
     const PRESETS = [
       { id: 'tv', label: 'TradingView', up: '#089981', down: '#F23645' },
@@ -57,6 +65,8 @@
         upColor: isHex(s.upColor) ? s.upColor : DEFAULTS.upColor,
         downColor: isHex(s.downColor) ? s.downColor : DEFAULTS.downColor,
         volumeAlpha: Number.isFinite(a) ? Math.min(1, Math.max(0.1, a)) : DEFAULTS.volumeAlpha,
+        bgColorDark: isHex(s.bgColorDark) ? s.bgColorDark : null,
+        bgColorLight: isHex(s.bgColorLight) ? s.bgColorLight : null,
       };
     }
 
@@ -87,6 +97,20 @@
       return { ...state };
     }
 
+    // Đẩy màu nền của theme đang dùng ra biến CSS (nền HTML quanh chart)
+    function applyBgVar() {
+      try {
+        const th = (typeof ThemeModule !== 'undefined' && ThemeModule.getTheme && ThemeModule.getTheme()) || 'dark';
+        const a = get();
+        const c = th === 'light' ? a.bgColorLight : a.bgColorDark;
+        const root = document.documentElement;
+        if (c) root.style.setProperty('--chart-bg', c);
+        else root.style.removeProperty('--chart-bg');
+      } catch (err) {
+        /* bỏ qua */
+      }
+    }
+
     // Gộp nhiều thay đổi liên tiếp (kéo ô chọn màu / thanh trượt) thành 1 lần phát / khung hình
     function emit() {
       if (emitRaf !== null) return;
@@ -99,6 +123,7 @@
     function set(partial) {
       state = sanitize({ ...get(), ...(partial || {}) });
       write(state);
+      applyBgVar();
       emit();
       return get();
     }
@@ -106,15 +131,280 @@
     function reset() {
       state = sanitize(null);
       write(state);
+      applyBgVar();
       emit();
       return get();
     }
 
-    return { get, set, reset, PRESETS, DEFAULTS };
+    // Áp màu nền đã lưu ngay khi tải trang, và đổi theo khi bấm nút sáng/tối
+    applyBgVar();
+    try {
+      if (typeof EventBus !== 'undefined') EventBus.on('theme:changed', applyBgVar);
+    } catch (err) {
+      /* bỏ qua */
+    }
+
+    return { get, set, reset, PRESETS, DEFAULTS, BG_DEFAULTS };
   })();
 
   /* ========================================================================
-  *  2. CHART CONTEXT MENU
+  *  2. COLOR PICKER (bảng màu tuỳ chỉnh: SV + Hue + HEX + ống hút + màu gần đây)
+  * ====================================================================== */
+  const ColorPicker = (function () {
+    const RECENT_KEY = 'chart_color_recent';
+    let pop = null;
+    let cleanup = null;
+    let anchorRef = null;
+
+    const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+    function normHex(s) {
+      let h = String(s || '').trim().replace(/^#/, '');
+      if (/^[0-9a-f]{3}$/i.test(h)) h = h.split('').map((c) => c + c).join('');
+      return /^[0-9a-f]{6}$/i.test(h) ? '#' + h.toLowerCase() : null;
+    }
+
+    function hexToHsv(hex, prevH) {
+      const n = parseInt(hex.slice(1), 16);
+      const r = ((n >> 16) & 255) / 255;
+      const g = ((n >> 8) & 255) / 255;
+      const b = (n & 255) / 255;
+      const mx = Math.max(r, g, b);
+      const mn = Math.min(r, g, b);
+      const d = mx - mn;
+      let h = prevH || 0;
+      if (d > 0) {
+        if (mx === r) h = ((g - b) / d) % 6;
+        else if (mx === g) h = (b - r) / d + 2;
+        else h = (r - g) / d + 4;
+        h *= 60;
+        if (h < 0) h += 360;
+      }
+      return { h, s: mx === 0 ? 0 : d / mx, v: mx };
+    }
+
+    function hsvToHex(h, s, v) {
+      const f = (n) => {
+        const k = (n + h / 60) % 6;
+        return v - v * s * Math.max(0, Math.min(k, 4 - k, 1));
+      };
+      const to = (x) => Math.round(x * 255).toString(16).padStart(2, '0');
+      return '#' + to(f(5)) + to(f(3)) + to(f(1));
+    }
+
+    function readRecent() {
+      try {
+        const r = typeof LocalStore !== 'undefined' ? LocalStore.read(RECENT_KEY, []) : [];
+        return Array.isArray(r) ? r.filter((c) => normHex(c)).slice(0, 10) : [];
+      } catch (err) {
+        return [];
+      }
+    }
+
+    function pushRecent(hex) {
+      try {
+        const list = [hex].concat(readRecent().filter((c) => c !== hex)).slice(0, 10);
+        if (typeof LocalStore !== 'undefined') LocalStore.write(RECENT_KEY, list);
+      } catch (err) {
+        /* bỏ qua */
+      }
+    }
+
+    function close() {
+      if (cleanup) cleanup();
+      cleanup = null;
+      if (pop) pop.remove();
+      pop = null;
+      anchorRef = null;
+    }
+
+    function drag(el, fn, onEnd) {
+      el.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        el.setPointerCapture(e.pointerId);
+        fn(e);
+        const mv = (ev) => fn(ev);
+        const up = () => {
+          el.removeEventListener('pointermove', mv);
+          el.removeEventListener('pointerup', up);
+          el.removeEventListener('pointercancel', up);
+          if (onEnd) onEnd();
+        };
+        el.addEventListener('pointermove', mv);
+        el.addEventListener('pointerup', up);
+        el.addEventListener('pointercancel', up);
+      });
+    }
+
+    /** opts: { value:'#rrggbb', swatches:[...], onChange(hex) } - bấm lại cùng nút = đóng. */
+    function open(anchor, opts) {
+      if (pop && anchorRef === anchor) {
+        close();
+        return;
+      }
+      close();
+      anchorRef = anchor;
+
+      let hex = normHex(opts.value) || '#000000';
+      let { h, s, v } = hexToHsv(hex, 0);
+
+      pop = document.createElement('div');
+      pop.className = 'cp-pop';
+      pop.innerHTML =
+        '<div class="cp-sv"><div class="cp-thumb"></div></div>' +
+        '<div class="cp-hue"><div class="cp-thumb"></div></div>' +
+        '<div class="cp-row"><span class="cp-prev"></span>' +
+        '<input class="cp-hex" maxlength="7" spellcheck="false" autocomplete="off" aria-label="Mã màu HEX">' +
+        '<button type="button" class="cp-eye" title="Ống hút màu từ màn hình" aria-label="Ống hút màu">' +
+        '<svg viewBox="0 0 24 24"><path d="M14 6l4 4M4 20l1-4 9-9 3 3-9 9-4 1zM15 5l1.5-1.5a2.1 2.1 0 0 1 3 3L18 8"/></svg></button></div>' +
+        '<div class="cp-label">Gợi ý</div><div class="cp-sw cp-sug"></div>' +
+        '<div class="cp-label cp-rlabel">Dùng gần đây</div><div class="cp-sw cp-recent"></div>';
+      document.body.appendChild(pop);
+
+      const sv = pop.querySelector('.cp-sv');
+      const svThumb = sv.querySelector('.cp-thumb');
+      const hue = pop.querySelector('.cp-hue');
+      const hueThumb = hue.querySelector('.cp-thumb');
+      const hexInput = pop.querySelector('.cp-hex');
+      const prev = pop.querySelector('.cp-prev');
+      const eye = pop.querySelector('.cp-eye');
+
+      function paint(updateInput) {
+        sv.style.background =
+          'linear-gradient(to top,#000,rgba(0,0,0,0)),linear-gradient(to right,#fff,rgba(255,255,255,0)),hsl(' + h + ',100%,50%)';
+        svThumb.style.left = s * 100 + '%';
+        svThumb.style.top = (1 - v) * 100 + '%';
+        svThumb.style.background = hex;
+        hueThumb.style.left = (h / 360) * 100 + '%';
+        hueThumb.style.background = 'hsl(' + h + ',100%,50%)';
+        prev.style.background = hex;
+        if (updateInput) hexInput.value = hex.toUpperCase();
+      }
+
+      function commit() {
+        paint(true);
+        if (typeof opts.onChange === 'function') opts.onChange(hex);
+      }
+
+      function setHex(nh, save) {
+        const n = normHex(nh);
+        if (!n) return;
+        hex = n;
+        ({ h, s, v } = hexToHsv(n, h));
+        commit();
+        if (save) {
+          pushRecent(n);
+          renderRecent();
+        }
+      }
+
+      drag(
+        sv,
+        (e) => {
+          const r = sv.getBoundingClientRect();
+          s = clamp((e.clientX - r.left) / r.width, 0, 1);
+          v = 1 - clamp((e.clientY - r.top) / r.height, 0, 1);
+          hex = hsvToHex(h, s, v);
+          commit();
+        },
+        () => {
+          pushRecent(hex);
+          renderRecent();
+        }
+      );
+
+      drag(
+        hue,
+        (e) => {
+          const r = hue.getBoundingClientRect();
+          h = clamp((e.clientX - r.left) / r.width, 0, 1) * 360;
+          hex = hsvToHex(h, s, v);
+          commit();
+        },
+        () => {
+          pushRecent(hex);
+          renderRecent();
+        }
+      );
+
+      hexInput.addEventListener('input', () => {
+        const n = normHex(hexInput.value);
+        if (!n) return;
+        hex = n;
+        ({ h, s, v } = hexToHsv(n, h));
+        paint(false);
+        if (typeof opts.onChange === 'function') opts.onChange(hex);
+      });
+      hexInput.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') {
+          setHex(hexInput.value, true);
+          hexInput.blur();
+        }
+      });
+      hexInput.addEventListener('blur', () => paint(true));
+
+      if (window.EyeDropper) {
+        eye.addEventListener('click', async () => {
+          try {
+            const r = await new window.EyeDropper().open();
+            setHex(r.sRGBHex, true);
+          } catch (err) {
+            /* người dùng huỷ */
+          }
+        });
+      } else {
+        eye.style.display = 'none';
+      }
+
+      function fillSw(box, list) {
+        box.innerHTML = '';
+        list.forEach((c) => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'cp-swatch';
+          b.style.background = c;
+          b.title = c.toUpperCase();
+          b.addEventListener('click', () => setHex(c, true));
+          box.appendChild(b);
+        });
+      }
+      function renderRecent() {
+        if (!pop) return;
+        const list = readRecent();
+        pop.querySelector('.cp-rlabel').style.display = list.length ? '' : 'none';
+        pop.querySelector('.cp-recent').style.display = list.length ? '' : 'none';
+        fillSw(pop.querySelector('.cp-recent'), list);
+      }
+      fillSw(pop.querySelector('.cp-sug'), (opts.swatches || []).map(normHex).filter(Boolean));
+      renderRecent();
+      paint(true);
+
+      // Định vị: dưới nút, tự lật lên nếu hết chỗ, không tràn mép màn hình
+      const ar = anchor.getBoundingClientRect();
+      const pr = pop.getBoundingClientRect();
+      const left = clamp(ar.right - pr.width, 8, window.innerWidth - pr.width - 8);
+      let top = ar.bottom + 6;
+      if (top + pr.height > window.innerHeight - 8) top = Math.max(8, ar.top - pr.height - 6);
+      pop.style.left = left + 'px';
+      pop.style.top = top + 'px';
+
+      const onDown = (e) => {
+        if (pop && !pop.contains(e.target) && !anchor.contains(e.target)) close();
+      };
+      document.addEventListener('pointerdown', onDown, true);
+      window.addEventListener('resize', close);
+      cleanup = () => {
+        document.removeEventListener('pointerdown', onDown, true);
+        window.removeEventListener('resize', close);
+      };
+    }
+
+    return { open, close };
+  })();
+
+  /* ========================================================================
+  *  3. CHART CONTEXT MENU
   * ====================================================================== */
   const ChartContextMenu = (function () {
     // Đổi chữ hiển thị ở đây nếu muốn
@@ -146,7 +436,7 @@
       grid: svg('<path d="M4 4h16v16H4zM4 12h16M12 4v16"/>'),
       camera: svg('<path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>'),
       copy: svg('<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/>'),
-      gear: svg('<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1"/>'),
+      gear: (typeof Icons !== 'undefined' && Icons.settings || '').replace(/<svg [^>]*>/, '<svg viewBox="0 0 24 24" aria-hidden="true">'),
       check: svg('<path d="M5 12l5 5 9-10"/>'),
       chev: svg('<path d="M9 6l6 6-6 6"/>'),
     };
@@ -284,7 +574,7 @@
       return fromEl || paneInfo(h.paneId).symbol || '';
     }
 
-      function paintBox(ctx, node, cr, s, dx) {
+    function paintBox(ctx, node, cr, s, dx) {
       dx = dx || 0;
       const r = node.getBoundingClientRect();
       if (!r.width || !r.height) return null;
@@ -311,133 +601,131 @@
       ctx.fillText(text, (r.left - cr.left + r.width / 2) * s + dx, (r.top - cr.top + r.height / 2) * s + 0.5 * s);
     }
 
-      function drawHeader(ctx, h, cr, s) {
-    const pane = h.container.closest('.chart-pane');
-    const row = pane && pane.querySelector('.pane-symbol-row');
-    const fg = cssVar('--text-primary', '#e6e9f0');
-    const bg = cssVar('--overlay-bg', 'rgba(16,20,28,0.86)');
+    function drawHeader(ctx, h, cr, s) {
+      const pane = h.container.closest('.chart-pane');
+      const row = pane && pane.querySelector('.pane-symbol-row');
+      const fg = cssVar('--text-primary', '#e6e9f0');
+      const bg = cssVar('--overlay-bg', 'rgba(16,20,28,0.86)');
 
-    const rr = row ? row.getBoundingClientRect() : null;
-    const rowVisible = !!(rr && rr.width > 0 && rr.height > 0);
-    const rcs = row ? getComputedStyle(row) : null;
+      const rr = row ? row.getBoundingClientRect() : null;
+      const rowVisible = !!(rr && rr.width > 0 && rr.height > 0);
+      const rcs = row ? getComputedStyle(row) : null;
 
-    const padL = ((rcs && parseFloat(rcs.paddingLeft)) || 4) * s;
-    const padR = ((rcs && parseFloat(rcs.paddingRight)) || 4) * s;
-    const gapPx = ((rcs && parseFloat(rcs.columnGap)) || 6) * s;
+      const padL = ((rcs && parseFloat(rcs.paddingLeft)) || 4) * s;
+      const padR = ((rcs && parseFloat(rcs.paddingRight)) || 4) * s;
+      const gapPx = ((rcs && parseFloat(rcs.columnGap)) || 6) * s;
 
-    const left = rowVisible ? (rr.left - cr.left) * s : 2 * s;
-    const top = rowVisible ? (rr.top - cr.top) * s : 2 * s;
-    const rowH = rowVisible ? rr.height * s : 22 * s;
+      const left = rowVisible ? (rr.left - cr.left) * s : 2 * s;
+      const top = rowVisible ? (rr.top - cr.top) * s : 2 * s;
+      const rowH = rowVisible ? rr.height * s : 22 * s;
 
-    // ---- Gom các phần của hàng: tên symbol, giá, %, đếm ngược ----
-    const parts = [];
-    const addPart = (node, text, fallbackFont) => {
-      if (!text) return;
-      let font = fallbackFont;
-      let color = fg;
-      let size = 13 * s;
-      let badgeBg = null;
-      let padX = 0;
-      let radius = 0;
-      if (node) {
-        const cs = getComputedStyle(node);
-        size = (parseFloat(cs.fontSize) || 13) * s;
-        font = cs.fontStyle + ' ' + cs.fontWeight + ' ' + size + 'px ' + cs.fontFamily;
-        if (visibleColor(cs.color)) color = cs.color;
-        if (visibleColor(cs.backgroundColor)) {
-          badgeBg = cs.backgroundColor;
-          padX = (parseFloat(cs.paddingLeft) || 0) * s;
-          radius = (parseFloat(cs.borderTopLeftRadius) || 0) * s;
+      // ---- Gom các phần của hàng: tên symbol, giá, %, đếm ngược ----
+      const parts = [];
+      const addPart = (node, text, fallbackFont) => {
+        if (!text) return;
+        let font = fallbackFont;
+        let color = fg;
+        let size = 13 * s;
+        let badgeBg = null;
+        let padX = 0;
+        let radius = 0;
+        if (node) {
+          const cs = getComputedStyle(node);
+          size = (parseFloat(cs.fontSize) || 13) * s;
+          font = cs.fontStyle + ' ' + cs.fontWeight + ' ' + size + 'px ' + cs.fontFamily;
+          if (visibleColor(cs.color)) color = cs.color;
+          if (visibleColor(cs.backgroundColor)) {
+            badgeBg = cs.backgroundColor;
+            padX = (parseFloat(cs.paddingLeft) || 0) * s;
+            radius = (parseFloat(cs.borderTopLeftRadius) || 0) * s;
+          }
         }
+        ctx.font = font;
+        parts.push({ text, font, color, size, badgeBg, padX, radius, w: ctx.measureText(text).width + padX * 2 });
+      };
+
+      const symNode = row && row.querySelector('.pane-symbol');
+      addPart(symNode, getSymbolText(h, symNode), '700 ' + 13 * s + 'px ' + FONT_UI);
+
+      if (row) {
+        ['.price', '.change', '.candle-countdown'].forEach((sel) => {
+          const n = row.querySelector(sel);
+          if (!n) return;
+          const r = n.getBoundingClientRect();
+          if (!r.width || !r.height) return; // phần tử đang ẩn
+          addPart(n, (n.textContent || '').trim());
+        });
       }
-      ctx.font = font;
-      parts.push({ text, font, color, size, badgeBg, padX, radius, w: ctx.measureText(text).width + padX * 2 });
-    };
 
-    const symNode = row && row.querySelector('.pane-symbol');
-    addPart(symNode, getSymbolText(h, symNode), '700 ' + 13 * s + 'px ' + FONT_UI);
+      // ---- Vẽ nền khung ----
+      let totalW = padL + padR + gapPx * Math.max(0, parts.length - 1);
+      parts.forEach((p) => { totalW += p.w; });
 
-    if (row) {
-      ['.price', '.change', '.candle-countdown'].forEach((sel) => {
-        const n = row.querySelector(sel);
-        if (!n) return;
-        const r = n.getBoundingClientRect();
-        if (!r.width || !r.height) return; // phần tử đang ẩn
-        addPart(n, (n.textContent || '').trim());
-      });
-    }
-
-    // ---- Vẽ nền khung ----
-    let totalW = padL + padR + gapPx * Math.max(0, parts.length - 1);
-    parts.forEach((p) => { totalW += p.w; });
-
-    if (rcs && visibleColor(rcs.backgroundColor)) {
-      ctx.fillStyle = rcs.backgroundColor;
-      roundRectPath(ctx, left, top, totalW, rowH, (parseFloat(rcs.borderTopLeftRadius) || 0) * s);
-      ctx.fill();
-    }
-
-    // ---- Vẽ tuần tự, cùng một đường cơ sở ----
-    const maxSize = parts.reduce((m, p) => Math.max(m, p.size), 0);
-    const cy = top + rowH / 2;
-    const baseY = cy + maxSize * 0.35;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'alphabetic';
-
-    let x = left + padL;
-    parts.forEach((p) => {
-      if (p.badgeBg) {
-        const bh = p.size * 1.45;
-        ctx.fillStyle = p.badgeBg;
-        roundRectPath(ctx, x, cy - bh / 2, p.w, bh, p.radius);
+      if (rcs && visibleColor(rcs.backgroundColor)) {
+        ctx.fillStyle = rcs.backgroundColor;
+        roundRectPath(ctx, left, top, totalW, rowH, (parseFloat(rcs.borderTopLeftRadius) || 0) * s);
         ctx.fill();
       }
-      ctx.font = p.font;
-      ctx.fillStyle = p.color;
-      ctx.fillText(p.text, x + p.padX, baseY);
-      x += p.w + gapPx;
-    });
 
-    const bottom = top + rowH;
+      // ---- Vẽ tuần tự, cùng một đường cơ sở ----
+      const maxSize = parts.reduce((m, p) => Math.max(m, p.size), 0);
+      const cy = top + rowH / 2;
+      const baseY = cy + maxSize * 0.35;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
 
-    // ---- Danh sách chỉ báo đang hiện ----
-    const entries = typeof h.opts.getLegendEntries === 'function' ? h.opts.getLegendEntries() : [];
-    if (!entries.length) return;
+      let x = left + padL;
+      parts.forEach((p) => {
+        if (p.badgeBg) {
+          const bh = p.size * 1.45;
+          ctx.fillStyle = p.badgeBg;
+          roundRectPath(ctx, x, cy - bh / 2, p.w, bh, p.radius);
+          ctx.fill();
+        }
+        ctx.font = p.font;
+        ctx.fillStyle = p.color;
+        ctx.fillText(p.text, x + p.padX, baseY);
+        x += p.w + gapPx;
+      });
 
-    const fs = 10.5 * s;
-    const chipH2 = 18 * s;
-    const padX = 7 * s;
-    const gap = 4 * s;
-    const dotR = 3.5 * s;
-    const maxX = cr.width * s - 70 * s;
+      const bottom = top + rowH;
 
-    ctx.font = '500 ' + fs + 'px ' + FONT_UI;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
+      // ---- Danh sách chỉ báo đang hiện ----
+      const entries = typeof h.opts.getLegendEntries === 'function' ? h.opts.getLegendEntries() : [];
+      if (!entries.length) return;
 
-    let lx = left;
-    let ly = bottom + 4 * s;
-    entries.forEach((en) => {
-      const tw = ctx.measureText(en.text).width;
-      const w = padX * 2 + dotR * 2 + 5 * s + tw;
-      if (lx + w > maxX && lx > left) {
-        lx = left;
-        ly += chipH2 + gap;
-      }
-      ctx.fillStyle = bg;
-      roundRectPath(ctx, lx, ly, w, chipH2, 4 * s);
-      ctx.fill();
-      ctx.fillStyle = en.color || '#787b86';
-      ctx.beginPath();
-      ctx.arc(lx + padX + dotR, ly + chipH2 / 2, dotR, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = fg;
-      ctx.fillText(en.text, lx + padX + dotR * 2 + 5 * s, ly + chipH2 / 2 + 0.5 * s);
-      lx += w + gap;
-    });
-  }
+      const fs = 10.5 * s;
+      const chipH2 = 18 * s;
+      const padX = 7 * s;
+      const gap = 4 * s;
+      const dotR = 3.5 * s;
+      const maxX = cr.width * s - 70 * s;
 
-     
+      ctx.font = '500 ' + fs + 'px ' + FONT_UI;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+
+      let lx = left;
+      let ly = bottom + 4 * s;
+      entries.forEach((en) => {
+        const tw = ctx.measureText(en.text).width;
+        const w = padX * 2 + dotR * 2 + 5 * s + tw;
+        if (lx + w > maxX && lx > left) {
+          lx = left;
+          ly += chipH2 + gap;
+        }
+        ctx.fillStyle = bg;
+        roundRectPath(ctx, lx, ly, w, chipH2, 4 * s);
+        ctx.fill();
+        ctx.fillStyle = en.color || '#787b86';
+        ctx.beginPath();
+        ctx.arc(lx + padX + dotR, ly + chipH2 / 2, dotR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = fg;
+        ctx.fillText(en.text, lx + padX + dotR * 2 + 5 * s, ly + chipH2 / 2 + 0.5 * s);
+        lx += w + gap;
+      });
+    }
 
     function drawFooter(ctx, h, top, footerH, width, s) {
       const p = paneInfo(h.paneId);
@@ -462,7 +750,7 @@
       ctx.fillText('TradingPro - NĐQ', width - 10 * s, top + footerH / 2 + 0.5 * s);
     }
 
-      // Ảnh xuất tối thiểu gấp đôi độ phân giải CSS (màn 1x vẫn ra ảnh 2x, chữ header/footer vẽ vector nên sắc nét)
+    // Ảnh xuất tối thiểu gấp đôi độ phân giải CSS (màn 1x vẫn ra ảnh 2x, chữ header/footer vẽ vector nên sắc nét)
     const MIN_EXPORT_SCALE = 2;
 
     function buildScreenshotCanvas(h) {
@@ -495,7 +783,7 @@
     }
 
 
-      function visibleHandles() {
+    function visibleHandles() {
       return Array.from(instances.values()).filter(
         (h) => h.container.offsetParent !== null && h.container.clientWidth > 0 && h.container.clientHeight > 0
       );
@@ -615,7 +903,7 @@
       return 'saved';
     }
 
-      function makeCanvas(h, all) {
+    function makeCanvas(h, all) {
       try {
         return all ? buildAllCanvas() : buildScreenshotCanvas(h);
       } catch (err) {
@@ -689,7 +977,7 @@
           onClick: () => ChartAppearance.set({ gridVert: !gridOn, gridHorz: !gridOn }),
         },
         { type: 'sep' },
-              ...(multi
+        ...(multi
           ? [
               { label: LABELS.saveThis, icon: ICONS.camera, shortcut: kbd('Ctrl + Alt + S'), onClick: () => doSave(h, false) },
               { label: LABELS.copyThis, icon: ICONS.copy, shortcut: kbd('Ctrl + Alt + C'), onClick: () => doCopy(h, false) },
@@ -736,6 +1024,7 @@
 
         const ic = el('span', 'cm-ic');
         ic.innerHTML = it.checked ? ICONS.check : it.icon || '';
+        if (it.icon === ICONS.gear) ic.classList.add('cm-ic-gear');
         row.appendChild(ic);
         row.appendChild(el('span', 'cm-label', it.label));
         if (it.shortcut) row.appendChild(el('span', 'cm-kbd', it.shortcut));
@@ -857,9 +1146,10 @@
     }
 
     /* ====================================================================
-    *  HỘP CÀI ĐẶT CHART (lưới + màu nến) - áp dụng trực tiếp, Huỷ = hoàn lại
+    *  HỘP CÀI ĐẶT CHART (lưới + màu nền + màu nến) - áp dụng trực tiếp, Huỷ = hoàn lại
     * ================================================================== */
     function closeDialog(restore) {
+      ColorPicker.close();
       if (dialogCleanup) dialogCleanup(restore);
       dialogCleanup = null;
       if (dialogEl) dialogEl.remove();
@@ -890,6 +1180,23 @@
                 <span class="cm-ctrls">
                   <label class="cm-inline"><input type="checkbox" id="cmGridAuto"> Theo giao diện</label>
                   <input type="color" id="cmGridColor" class="cm-color">
+                </span>
+              </div>
+            </div>
+            <div class="cm-group">
+              <div class="cm-group-title">Màu nền chart</div>
+              <div class="cm-row">
+                <span>Nền tối</span>
+                <span class="cm-ctrls">
+                  <button type="button" class="cm-colorbtn" id="cmBgDark"><span class="cm-colorchip"></span><span class="cm-colorhex"></span></button>
+                  <button type="button" class="cm-btn cm-mini" id="cmBgDarkReset">Mặc định</button>
+                </span>
+              </div>
+              <div class="cm-row">
+                <span>Nền sáng</span>
+                <span class="cm-ctrls">
+                  <button type="button" class="cm-colorbtn" id="cmBgLight"><span class="cm-colorchip"></span><span class="cm-colorhex"></span></button>
+                  <button type="button" class="cm-btn cm-mini" id="cmBgLightReset">Mặc định</button>
                 </span>
               </div>
             </div>
@@ -930,6 +1237,11 @@
         presetsEl.appendChild(b);
       });
 
+      const BG_KEYS = [
+        ['bgColorDark', '#cmBgDark', '#cmBgDarkReset'],
+        ['bgColorLight', '#cmBgLight', '#cmBgLightReset'],
+      ];
+
       function sync() {
         const a = ChartAppearance.get();
         q('#cmGridH').checked = a.gridHorz;
@@ -945,8 +1257,38 @@
           const p = ChartAppearance.PRESETS.find((x) => x.id === b.dataset.id);
           b.classList.toggle('active', !!p && p.up.toLowerCase() === a.upColor.toLowerCase() && p.down.toLowerCase() === a.downColor.toLowerCase());
         });
+        BG_KEYS.forEach(([k, b, r]) => {
+          const val = a[k] || ChartAppearance.BG_DEFAULTS[k];
+          q(b + ' .cm-colorchip').style.background = val;
+          q(b + ' .cm-colorhex').textContent = val.toUpperCase() + (a[k] ? '' : ' · mặc định');
+          q(r).disabled = !a[k];
+        });
       }
       sync();
+
+      // Màu gợi ý cho bảng màu nền
+      const BG_SWATCHES = {
+        bgColorDark: ['#000000', '#05070a', '#0b0e14', '#10141c', '#131722', '#161b26', '#1e222d', '#2a2e39', '#0d1117', '#14110f'],
+        bgColorLight: ['#ffffff', '#fbfcfe', '#f8f9fb', '#f4f1ea', '#eef1f6', '#e8ecf3', '#fff8e7', '#f1f5ee', '#e9e4f0', '#dfe3ea'],
+      };
+      BG_KEYS.forEach(([k, b, r]) => {
+        q(b).addEventListener('click', () => {
+          const a = ChartAppearance.get();
+          ColorPicker.open(q(b), {
+            value: a[k] || ChartAppearance.BG_DEFAULTS[k],
+            swatches: BG_SWATCHES[k],
+            onChange: (hex) => {
+              ChartAppearance.set({ [k]: hex });
+              sync();
+            },
+          });
+        });
+        q(r).addEventListener('click', () => {
+          ChartAppearance.set({ [k]: null });
+          ColorPicker.close();
+          sync();
+        });
+      });
 
       q('#cmGridH').addEventListener('change', (e) => ChartAppearance.set({ gridHorz: e.target.checked }));
       q('#cmGridV').addEventListener('change', (e) => ChartAppearance.set({ gridVert: e.target.checked }));
@@ -969,6 +1311,7 @@
       });
       q('#cmReset').addEventListener('click', () => {
         ChartAppearance.reset();
+        ColorPicker.close();
         sync();
       });
 
@@ -1084,12 +1427,12 @@
           x: e.clientX,
           y: e.clientY,
           timer: setTimeout(() => {
-    const { x, y } = lp || { x: e.clientX, y: e.clientY };
-    cancelLongPress();
-    try { h.chart.clearCrosshairPosition(); } catch (_) {}
-    if (navigator.vibrate) navigator.vibrate(8);
-    openMenu(h, x, y);
-  }, LONG_PRESS_MS),
+            const { x, y } = lp || { x: e.clientX, y: e.clientY };
+            cancelLongPress();
+            try { h.chart.clearCrosshairPosition(); } catch (_) { /* bỏ qua */ }
+            if (navigator.vibrate) navigator.vibrate(8);
+            openMenu(h, x, y);
+          }, LONG_PRESS_MS),
         };
         window.addEventListener('pointermove', onLpMove, true);
         window.addEventListener('pointerup', cancelLongPress, true);
@@ -1111,5 +1454,6 @@
       return { destroy: h.destroy };
     }
 
+    
     return { attach, closeMenu, openSettings };
   })();

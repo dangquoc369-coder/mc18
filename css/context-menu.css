@@ -25,7 +25,7 @@
 .cm-menu {
   position: fixed;
   z-index: 10050;
-  max-width: min(92vw, 320px);
+  max-width: min(92vw, 360px);
   animation: cm-in 0.1s ease-out;
 }
 
@@ -74,7 +74,7 @@
 .cm-label { flex: 1; white-space: nowrap; }
 
 .cm-kbd {
-  margin-left: 22px;
+  margin-left: auto;
   color: var(--text-secondary);
   font-size: 12px;
   opacity: 0.85;
@@ -316,3 +316,139 @@
   .cm-range { width: 100px; }
   .cm-preset { font-size: 11px; }
 }
+
+.cm-ic.cm-ic-gear svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.8;
+}
+
+/* ===================== NÚT MÀU + BẢNG MÀU ===================== */
+.cm-colorbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 10px 0 4px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md, 6px);
+  background: var(--bg-main);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+.cm-colorbtn:hover { border-color: var(--accent-blue); }
+.cm-colorchip {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid rgba(128, 128, 128, 0.45);
+}
+.cm-btn.cm-mini { padding: 5px 10px; font-size: 11.5px; }
+.cm-btn:disabled { opacity: 0.4; cursor: default; pointer-events: none; }
+
+.cp-pop {
+  position: fixed;
+  z-index: 10200;
+  width: 232px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg, 8px);
+  box-shadow: var(--shadow-md);
+  font-family: var(--font);
+  color: var(--text-primary);
+  animation: cm-in 0.1s ease-out;
+}
+.cp-sv {
+  position: relative;
+  height: 140px;
+  border-radius: 6px;
+  cursor: crosshair;
+  touch-action: none;
+}
+.cp-hue {
+  position: relative;
+  height: 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  touch-action: none;
+  background: linear-gradient(to right, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%);
+}
+.cp-thumb {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 2px 5px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+.cp-hue .cp-thumb { top: 50%; }
+.cp-row { display: flex; align-items: center; gap: 8px; }
+.cp-prev {
+  flex: 0 0 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid rgba(128, 128, 128, 0.45);
+}
+.cp-hex {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md, 6px);
+  background: var(--bg-main);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  outline: none;
+}
+.cp-hex:focus { border-color: var(--accent-blue); }
+.cp-eye {
+  flex: 0 0 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md, 6px);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.cp-eye:hover { color: var(--text-primary); border-color: var(--accent-blue); }
+.cp-eye svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.cp-label {
+  margin-bottom: -4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.cp-sw { display: flex; flex-wrap: wrap; gap: 6px; }
+.cp-swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 5px;
+  border: 1px solid rgba(128, 128, 128, 0.5);
+  cursor: pointer;
+}
+.cp-swatch:hover { transform: scale(1.12); border-color: var(--accent-blue); }

@@ -3242,3 +3242,9 @@ html[data-sym-size="xs"] .candle-countdown { display: none; }
     display: none !important;
   }
 }
+
+/* Nền HTML quanh chart theo màu nền người dùng chọn (Cài đặt chart) */
+.chart-pane,
+.pane-chart-container {
+  background: var(--chart-bg, var(--bg-main));
+}

@@ -98,7 +98,7 @@ const DrawingModule = (function () {
   const ICON = {
     lock: '<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>',
     unlock: '<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/></svg>',
-    gear: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1"/></svg>',
+    gear: (typeof Icons !== 'undefined' && Icons.settings || '').replace(/<svg [^>]*>/, '<svg viewBox="0 0 24 24">'),
     copy: '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg>',
     grip: '<svg viewBox="0 0 24 24" class="grip"><circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/></svg>',
     dashed: '<svg viewBox="0 0 24 24"><path d="M3 12h4M10 12h4M17 12h4"/></svg>',
@@ -170,6 +170,7 @@ textarea.dtv-input{width:100%;min-height:56px;resize:vertical;font-family:inheri
 .dtv-undo-toast button{display:flex;align-items:center;gap:6px;height:36px;padding:0 14px;border-radius:18px;border:1px solid rgba(255,255,255,.18);background:#1e222d;color:#fff;font-size:12px;font-weight:600;font-family:inherit;box-shadow:0 4px 16px rgba(0,0,0,.5);cursor:pointer;touch-action:manipulation}
 .dtv-undo-toast button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 @keyframes dtv-toast-in{from{opacity:0;transform:translateX(-50%) translateY(6px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+.dtv-tb-btn.dtv-gear svg{width:15px;height:15px;stroke-width:1.8}
 `;
 
 function ensureStyles() {
@@ -2213,7 +2214,11 @@ ctx.lineWidth = crispW(baseWidth);
       }
  
       // Cài đặt chi tiết (bánh răng)
-      toolbarEl.appendChild(makeToolbarBtn(ICON.gear, 'Cài đặt chi tiết', () => openSettingsModal(idx)));
+      {
+  const gearBtn = makeToolbarBtn(ICON.gear, 'Cài đặt chi tiết', () => openSettingsModal(idx));
+  gearBtn.classList.add('dtv-gear');
+  toolbarEl.appendChild(gearBtn);
+}
       toolbarEl.appendChild(makeToolbarBtn(ICON.copy, 'Nhân bản', () => cloneDrawing(idx)));
       toolbarEl.appendChild(
         makeToolbarBtn(d.locked ? ICON.lock : ICON.unlock, d.locked ? 'Mở khoá' : 'Khoá vị trí', () => {
