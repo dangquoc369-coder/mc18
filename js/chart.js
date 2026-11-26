@@ -96,7 +96,23 @@ const ChartModule = (function () {
   const MIN_BAR_SPACING = 0.5;
   const DEFAULT_BAR_SPACING = 6; // độ rộng nến mặc định khi Reset chart view (giống TradingView ~6-9)
   const EMA_SOURCES = ['close', 'open', 'high', 'low'];
+  const FUTURE_INITIAL_BARS = 60;   // số nến tương lai có sẵn khi load / reset
+const FUTURE_CHUNK_BARS = 100;    // mỗi lần kéo tới sát mép thì nạp thêm bấy nhiêu
+const FUTURE_TRIGGER_BARS = 30;   // còn cách mép tương lai <30 nến thì nạp thêm
+const FUTURE_MAX_BARS = 5000;
 
+/** Cộng 1 bước nến theo khung giờ: ngày = 1 ngày, tuần = 7 ngày, tháng = tháng lịch. */
+function stepTime(t, tf, fallbackStep) {
+  const m = /^(\d+)([mhdwM])$/.exec(tf || '');
+  if (!m) return t + fallbackStep;
+  const k = parseInt(m[1], 10);
+  if (m[2] === 'M') {
+    const d = new Date(t * 1000);
+    d.setUTCMonth(d.getUTCMonth() + k);
+    return Math.floor(d.getTime() / 1000);
+  }
+  return t + k * { m: 60, h: 3600, d: 86400, w: 604800 }[m[2]];
+}
   
 
   function isHexColor(c) {
@@ -657,6 +673,53 @@ const ChartModule = (function () {
     }
 
     let currentCandles = [];
+    let futureSeries = null;
+let futureBars = 0;
+let futureBusy = false;
+let suppressFutureUntil = 0;   // chặn tự nạp thêm trong lúc đang reset view
+
+function renderFutureTimes() {
+  if (!futureSeries) return;
+  const n = currentCandles.length;
+  if (n < 2 || futureBars <= 0) { futureSeries.setData([]); return; }
+  const pane = Store.getPane(paneId);
+  const tf = pane ? pane.timeframe : null;
+  let step = 60;
+  let min = Infinity;
+  for (let i = Math.max(1, n - 10); i < n; i++) {
+    const dt = currentCandles[i].time - currentCandles[i - 1].time;
+    if (dt > 0 && dt < min) min = dt;
+  }
+  if (Number.isFinite(min)) step = min;
+  const data = [];
+  let t = currentCandles[n - 1].time;
+  for (let i = 0; i < futureBars; i++) {
+    t = stepTime(t, tf, step);
+    data.push({ time: t });          // whitespace: chỉ có mốc thời gian
+  }
+  futureSeries.setData(data);
+}
+
+/** Kéo sát mép tương lai thì nạp thêm; giữ nguyên vị trí đang xem. */
+function maybeExtendFuture(range) {
+  if (futureBusy || !futureSeries || !chart || !range) return;
+if (performance.now() < suppressFutureUntil) return;
+  const n = currentCandles.length;
+  if (n < 2 || futureBars >= FUTURE_MAX_BARS) return;
+  if (range.to < n - 1 + futureBars - FUTURE_TRIGGER_BARS) return;
+  futureBusy = true;
+  try {
+    const ts = chart.timeScale();
+    futureBars = Math.min(FUTURE_MAX_BARS, futureBars + FUTURE_CHUNK_BARS);
+    renderFutureTimes();
+    const after = ts.getVisibleLogicalRange();
+    if (after && (Math.abs(after.from - range.from) > 0.01 || Math.abs(after.to - range.to) > 0.01)) {
+      ts.setVisibleLogicalRange({ from: range.from, to: range.to });
+    }
+  } finally {
+    futureBusy = false;
+  }
+}
     
     let ichimoku = sanitizeIchimoku(null);
     const ichiSeries = {};      // chỉ tạo series cho đường đang hiển thị
@@ -793,6 +856,7 @@ const ChartModule = (function () {
         currentCandles[lastIndex] = candle;
       } else {
         currentCandles.push(candle);
+        renderFutureTimes();
       }
       scheduleRecompute(true);
     }
@@ -930,6 +994,14 @@ const ChartModule = (function () {
         wickVisible: false,
       });
       candleSeries.attachPrimitive(new ThickWickPrimitive(() => currentCandles));
+      futureSeries = chart.addSeries(LightweightCharts.LineSeries, {
+  color: 'rgba(0,0,0,0)',
+  lineWidth: 1,
+  priceLineVisible: false,
+  lastValueVisible: false,
+  crosshairMarkerVisible: false,
+  autoscaleInfoProvider: () => null,
+}, 0);
       applyGridOptions();
 
       breakout.init(chart, candleSeries);
@@ -950,6 +1022,7 @@ const ChartModule = (function () {
 
       chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
         if (!range) return;
+        maybeExtendFuture(range);
         if (range.from < 15 && !loadingOlder && !noMoreOlder) {
           EventBus.emit('pane:needMoreHistory', { paneId });
         }
@@ -1049,7 +1122,7 @@ function setupPinchZoom(container) {
     ts.applyOptions({ barSpacing: spacing });
 
     // Giữ nến dưới điểm neo đứng yên: tính lại rightOffset
-    const lastIndex = currentCandles.length - 1;
+    const lastIndex = currentCandles.length - 1 + futureBars;
     const W = ts.width();
     const rightOffset = (W - anchorX) / spacing - 0.5 - (lastIndex - anchorLogical);
     ts.scrollToPosition(rightOffset, false);
@@ -1148,20 +1221,22 @@ function setupPinchZoom(container) {
       try {
         try { chart.clearCrosshairPosition(); } catch (err) {}
 
-        // Bật lại autoScale dọc trước
+                suppressFutureUntil = performance.now() + 400;
+        futureBars = FUTURE_INITIAL_BARS;
+        renderFutureTimes();
         autoFitPrice();
 
-        // 2. Reset trục ngang (Time Scale) về độ zoom mặc định và cuộn về nến mới nhất
+        // 2. Reset trục ngang: độ zoom mặc định, nến cuối cách mép phải VIEW_RIGHT_PAD nến.
+        // Đặt thẳng theo chỉ số nến nên không phụ thuộc số nến tương lai đang có.
         ts.resetTimeScale();
         ts.applyOptions({
           barSpacing: DEFAULT_BAR_SPACING,
-          rightOffset: VIEW_RIGHT_PAD,
           fixLeftEdge: false,
           fixRightEdge: false,
         });
-
-        // Nhảy thẳng tới nến mới nhất với khoảng đệm lề phải VIEW_RIGHT_PAD
-        ts.scrollToPosition(VIEW_RIGHT_PAD, false);
+        const to = currentCandles.length - 1 + VIEW_RIGHT_PAD;
+        const from = to - w / DEFAULT_BAR_SPACING + 1;
+        ts.setVisibleLogicalRange({ from, to });
 
         // Kích hoạt tính lại vùng giá khớp với số nến hiển thị mới
         requestAnimationFrame(() => {
@@ -2001,12 +2076,15 @@ function setupPinchZoom(container) {
       renderIndicators(currentCandles);
       runBreakout();
       renderAlertLines();
+      futureBars = FUTURE_INITIAL_BARS;
+      renderFutureTimes();
       resetView(); // luôn nhảy tới vùng có nến mới nhất
     }
 
     function clearData() {
       maTrailCandles = null;
       breakoutTrailCandles = null;
+      if (futureSeries) futureSeries.setData([]); futureBars = 0;
       if (candleSeries) candleSeries.setData([]);
       if (volumeSeries) volumeSeries.setData([]);
       emaSeriesMap.forEach((s) => s.setData([]));
@@ -2156,6 +2234,7 @@ function setupPinchZoom(container) {
       vlineHosts[2] = { host: null, prim: null };
       if (chart) chart.remove();
       chart = null;
+      futureSeries = null;
       emaSeriesMap.clear();
     }
 
