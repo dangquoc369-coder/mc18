@@ -17,8 +17,10 @@
  * WATCHDOG chống "socket zombie" (Binance): mỗi 10s quét mọi luồng, luồng nào
  * im lặng quá ngưỡng (60s; trendref 25s) thì tự kết nối lại. OANDA bỏ qua.
  *
- * KHUNG TỔNG HỢP (20m/45m/3h/2d) trên Binance: subscribe khung BASE rồi gộp
- * qua createSyntheticAggregator() (utils.js) trước khi emit.
+ * KHUNG TỔNG HỢP (10m/20m/45m/3h/2d/2w) trên Binance: subscribe khung BASE rồi gộp
+ * qua createSyntheticAggregator() (utils.js) trước khi emit. makeSyntheticFeed()
+ * nạp trước các nến base gần nhất (REST) vào bộ gộp để nến gộp đang chạy luôn đủ
+ * open/high/low/volume dù mở chart giữa chừng một nến.
  */
 
 function getWsUrlForProvider(provider, streamName) {
@@ -70,6 +72,23 @@ function parseBinanceKline(msg) {
   };
 }
 
+/** Nạp trước các nến base gần nhất vào bộ gộp rồi mới cho nến live đi qua,
+ *  để nến gộp đang chạy có đủ open/high/low/volume của các nến base trước đó. */
+function makeSyntheticFeed(symbol, interval, emit, isCurrent) {
+  const agg = createSyntheticAggregator(interval);
+  const info = getSyntheticInfo(interval);
+  let ready = false;
+  const queue = [];
+  const handle = (base) => { if (isCurrent()) emit(agg.push(base)); };
+
+  fetchKlinesRaw(symbol, info.base, info.factor + 1, null)
+    .then((bases) => bases.forEach((b) => agg.push(b)))   // chỉ nạp, không emit
+    .catch(() => {})
+    .finally(() => { ready = true; queue.splice(0).forEach(handle); });
+
+  return (base) => (ready ? handle(base) : queue.push(base));
+}
+
 function connectKlineStream(paneId, symbol, interval) {
   const entry = getOrCreateEntry(paneId);
   closeKlineSocket(paneId);
@@ -84,13 +103,20 @@ function connectKlineStream(paneId, symbol, interval) {
 
   const synthetic = isSyntheticInterval(interval);
   const wsInterval = synthetic ? getSyntheticInfo(interval).base : interval;
-  entry.aggregators.kline = synthetic ? createSyntheticAggregator(interval) : null;
-
+  entry.aggregators.kline = null;
+ 
   const cleanSymbol = getCleanSymbol(symbol).toLowerCase();
   const wsUrl = getWsUrlForProvider(provider, `${cleanSymbol}@kline_${wsInterval}`);
   const socket = new WebSocket(wsUrl);
   entry.klineSocket = socket;
   entry.lastMessageAt.kline = Date.now();
+  const feed = synthetic
+    ? makeSyntheticFeed(
+        symbol, interval,
+        (candle) => EventBus.emit('kline:update', { paneId, candle }),
+        () => entry.klineSocket === socket
+      )
+    : null;
 
   socket.onopen = () => {
     EventBus.emit('ws:status', { paneId, status: 'connected' });
@@ -99,8 +125,8 @@ function connectKlineStream(paneId, symbol, interval) {
   socket.onmessage = (event) => {
     entry.lastMessageAt.kline = Date.now();
     const baseCandle = parseBinanceKline(JSON.parse(event.data));
-    const candle = entry.aggregators.kline ? entry.aggregators.kline.push(baseCandle) : baseCandle;
-    EventBus.emit('kline:update', { paneId, candle });
+    if (feed) feed(baseCandle);
+    else EventBus.emit('kline:update', { paneId, candle: baseCandle });
   };
 
   socket.onerror = () => {
@@ -132,19 +158,26 @@ function connectHigherTFKlineStream(paneId, symbol, interval) {
 
   const synthetic = isSyntheticInterval(interval);
   const wsInterval = synthetic ? getSyntheticInfo(interval).base : interval;
-  entry.aggregators.htf = synthetic ? createSyntheticAggregator(interval) : null;
+  entry.aggregators.htf = null;
 
   const cleanSymbol = getCleanSymbol(symbol).toLowerCase();
   const wsUrl = getWsUrlForProvider(provider, `${cleanSymbol}@kline_${wsInterval}`);
   const socket = new WebSocket(wsUrl);
   entry.htfKlineSocket = socket;
   entry.lastMessageAt.htf = Date.now();
+  const feed = synthetic
+    ? makeSyntheticFeed(
+        symbol, interval,
+        (candle) => EventBus.emit('kline:update:htf', { paneId, candle }),
+        () => entry.htfKlineSocket === socket
+      )
+    : null;
 
   socket.onmessage = (event) => {
     entry.lastMessageAt.htf = Date.now();
     const baseCandle = parseBinanceKline(JSON.parse(event.data));
-    const candle = entry.aggregators.htf ? entry.aggregators.htf.push(baseCandle) : baseCandle;
-    EventBus.emit('kline:update:htf', { paneId, candle });
+    if (feed) feed(baseCandle);
+    else EventBus.emit('kline:update:htf', { paneId, candle: baseCandle });
   };
 
   socket.onclose = () => {
@@ -171,19 +204,26 @@ function connectSLKlineStream(paneId, symbol, interval) {
 
   const synthetic = isSyntheticInterval(interval);
   const wsInterval = synthetic ? getSyntheticInfo(interval).base : interval;
-  entry.aggregators.sl = synthetic ? createSyntheticAggregator(interval) : null;
+  entry.aggregators.sl = null;
 
   const cleanSymbol = getCleanSymbol(symbol).toLowerCase();
   const wsUrl = getWsUrlForProvider(provider, `${cleanSymbol}@kline_${wsInterval}`);
   const socket = new WebSocket(wsUrl);
   entry.slKlineSocket = socket;
   entry.lastMessageAt.sl = Date.now();
+  const feed = synthetic
+    ? makeSyntheticFeed(
+        symbol, interval,
+        (candle) => EventBus.emit('kline:update:sl', { paneId, candle }),
+        () => entry.slKlineSocket === socket
+      )
+    : null;
 
   socket.onmessage = (event) => {
     entry.lastMessageAt.sl = Date.now();
     const baseCandle = parseBinanceKline(JSON.parse(event.data));
-    const candle = entry.aggregators.sl ? entry.aggregators.sl.push(baseCandle) : baseCandle;
-    EventBus.emit('kline:update:sl', { paneId, candle });
+    if (feed) feed(baseCandle);
+    else EventBus.emit('kline:update:sl', { paneId, candle: baseCandle });
   };
 
   socket.onclose = () => {
@@ -210,20 +250,26 @@ function connectTrendRefKlineStream(paneId, role, symbol, interval) {
 
   const synthetic = isSyntheticInterval(interval);
   const wsInterval = synthetic ? getSyntheticInfo(interval).base : interval;
-  entry.aggregators.trendref[role] = synthetic ? createSyntheticAggregator(interval) : null;
+  entry.aggregators.trendref[role] = null;
 
   const cleanSymbol = getCleanSymbol(symbol).toLowerCase();
   const wsUrl = getWsUrlForProvider(provider, `${cleanSymbol}@kline_${wsInterval}`);
   const socket = new WebSocket(wsUrl);
   entry.trendRefSockets[role] = socket;
   entry.lastMessageAt.trendref[role] = Date.now();
+  const feed = synthetic
+    ? makeSyntheticFeed(
+        symbol, interval,
+        (candle) => EventBus.emit('kline:update:trendref', { paneId, role, candle }),
+        () => entry.trendRefSockets[role] === socket
+      )
+    : null;
 
   socket.onmessage = (event) => {
     entry.lastMessageAt.trendref[role] = Date.now();
     const baseCandle = parseBinanceKline(JSON.parse(event.data));
-    const agg = entry.aggregators.trendref[role];
-    const candle = agg ? agg.push(baseCandle) : baseCandle;
-    EventBus.emit('kline:update:trendref', { paneId, role, candle });
+    if (feed) feed(baseCandle);
+    else EventBus.emit('kline:update:trendref', { paneId, role, candle: baseCandle });
   };
 
   socket.onclose = () => {
@@ -438,9 +484,17 @@ function oandaSubscribe(paneId, key, symbol, interval, periodMs, onUpdate) {
     const agg = createSyntheticAggregator(interval);
     fetchInterval = info.base;
     const inner = onUpdate;
+    let primed = false;
     onUpdate = (changed, quote, all) => {
-      // nến base đến theo thứ tự thời gian -> gộp dần thành nến 10m
-      const merged = changed.map((b) => agg.push(b));
+      // nến base đến theo thứ tự thời gian -> gộp dần thành nến 10m / 2w
+      let merged = changed.map((b) => agg.push(b));
+      if (!primed && merged.length > 0) {
+        primed = true;
+        // Lô đầu tiên: bộ gộp còn rỗng nên nến gộp CŨ (không phải nến đang chạy)
+        // có thể thiếu nến con đầu -> bỏ, chỉ giữ nến đang chạy (nến cuối, đã đủ nến con).
+        const lastTime = merged[merged.length - 1].time;
+        merged = merged.filter((c) => c.time === lastTime);
+      }
       inner(merged, quote, all);
     };
   }
