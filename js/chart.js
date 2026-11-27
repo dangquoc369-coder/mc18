@@ -1092,8 +1092,13 @@ function setupPinchZoom(container) {
   let startSpacing = 0;
   let anchorLogical = null;
   let anchorX = 0;
+  let pinching = false;
 
   const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+
+  function setScrollEnabled(on) {
+    try { chart && chart.applyOptions({ handleScroll: on }); } catch (err) { /* bỏ qua */ }
+  }
 
   function onStart(e) {
     if (e.touches.length !== 2 || !chart) {
@@ -1107,6 +1112,12 @@ function setupPinchZoom(container) {
     // Điểm giữa 2 ngón = điểm neo, zoom quanh điểm này
     anchorX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
     anchorLogical = ts.coordinateToLogical(anchorX);
+    if (anchorLogical === null) {
+      startDist = 0;
+      return;
+    }
+    pinching = true;
+    setScrollEnabled(false); // thư viện không được kéo chart cùng lúc với pinch
   }
 
   function onMove(e) {
@@ -1114,22 +1125,31 @@ function setupPinchZoom(container) {
     e.preventDefault();
 
     const ts = chart.timeScale();
+    const W = ts.width();
+    if (!W) return;
+
     const ratio = dist(e.touches) / startDist;
     const spacing = Math.min(
       MAX_BAR_SPACING,
       Math.max(MIN_BAR_SPACING, startSpacing * Math.pow(ratio, PINCH_ZOOM_GAIN))
     );
-    ts.applyOptions({ barSpacing: spacing });
 
-    // Giữ nến dưới điểm neo đứng yên: tính lại rightOffset
-    const lastIndex = currentCandles.length - 1 + futureBars;
-    const W = ts.width();
-    const rightOffset = (W - anchorX) / spacing - 0.5 - (lastIndex - anchorLogical);
-    ts.scrollToPosition(rightOffset, false);
+    // Đặt khung nhìn theo chỉ số nến TUYỆT ĐỐI (không phụ thuộc rightOffset /
+    // số nến tương lai) sao cho nến dưới điểm neo đứng yên.
+    const to = anchorLogical + (W - anchorX) / spacing - 0.5;
+    const from = to - W / spacing + 1;
+
+    suppressFutureUntil = performance.now() + 150; // không tự nạp nến tương lai khi đang zoom
+    ts.setVisibleLogicalRange({ from, to });
   }
 
   function onEnd(e) {
     if (e.touches.length < 2) startDist = 0;
+    // Chỉ bật lại cuộn khi đã nhấc hết ngón, tránh 1 ngón còn lại kéo chart nhảy
+    if (pinching && e.touches.length === 0) {
+      pinching = false;
+      setScrollEnabled(true);
+    }
   }
 
   container.addEventListener('touchstart', onStart, { passive: true });
@@ -1142,6 +1162,7 @@ function setupPinchZoom(container) {
     container.removeEventListener('touchmove', onMove);
     container.removeEventListener('touchend', onEnd);
     container.removeEventListener('touchcancel', onEnd);
+    if (pinching) setScrollEnabled(true);
     pinchCleanup = null;
   };
 }
