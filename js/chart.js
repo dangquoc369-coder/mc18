@@ -99,7 +99,7 @@ const ChartModule = (function () {
   const FUTURE_INITIAL_BARS = 60;   // số nến tương lai có sẵn khi load / reset
 const FUTURE_CHUNK_BARS = 100;    // mỗi lần kéo tới sát mép thì nạp thêm bấy nhiêu
 const FUTURE_TRIGGER_BARS = 30;   // còn cách mép tương lai <30 nến thì nạp thêm
-const FUTURE_MAX_BARS = 5000;
+const FUTURE_MAX_BARS = 10000;
 
 /** Cộng 1 bước nến theo khung giờ: ngày = 1 ngày, tuần = 7 ngày, tháng = tháng lịch. */
 function stepTime(t, tf, fallbackStep) {
